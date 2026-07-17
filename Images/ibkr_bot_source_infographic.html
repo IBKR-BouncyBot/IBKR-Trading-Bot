@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=1600, initial-scale=1" />
+<title>IBKR Trading Bot v3.0.13 - Source-Derived Default Algorithm</title>
+<style>
+  @font-face {
+    font-family: 'InterDisplay';
+    src: url('file:///usr/share/fonts/opentype/inter/InterDisplay-Medium.otf') format('opentype');
+    font-weight: 500;
+  }
+  @font-face {
+    font-family: 'Inter';
+    src: url('file:///usr/share/fonts/truetype/inter/Inter-Regular.ttf') format('truetype');
+    font-weight: 400;
+  }
+  @font-face {
+    font-family: 'Inter';
+    src: url('file:///usr/share/fonts/truetype/inter/Inter-SemiBold.ttf') format('truetype');
+    font-weight: 600;
+  }
+  @font-face {
+    font-family: 'Inter';
+    src: url('file:///usr/share/fonts/truetype/inter/Inter-Bold.ttf') format('truetype');
+    font-weight: 800;
+  }
+  :root {
+    --navy: #071629;
+    --navy2: #0d2d52;
+    --ink: #12243a;
+    --muted: #52667d;
+    --line: #d9e3ef;
+    --bg: #eef3f8;
+    --white: #ffffff;
+    --green: #16845a;
+    --green-soft: #e9f7f1;
+    --blue: #1769c2;
+    --blue-soft: #eaf3ff;
+    --purple: #6a42b8;
+    --purple-soft: #f2edff;
+    --orange: #d96016;
+    --orange-soft: #fff1e7;
+    --teal: #0d7d84;
+    --teal-soft: #e8f7f7;
+    --red: #c73636;
+    --gold: #ffcf4a;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; width: 1600px; height: 2750px; background: var(--bg); }
+  body { font-family: Inter, Arial, sans-serif; color: var(--ink); }
+  .page { width: 1600px; height: 2750px; overflow: hidden; position: relative; background:
+      radial-gradient(circle at 93% 4%, rgba(70, 150, 255, .12), transparent 20%),
+      linear-gradient(180deg, #f7faff 0%, #eef3f8 100%); }
+  .header {
+    height: 250px;
+    padding: 34px 52px 30px 52px;
+    color: white;
+    background: linear-gradient(120deg, #061325 0%, #0a2546 58%, #123d6b 100%);
+    position: relative;
+    overflow: hidden;
+  }
+  .header:after {
+    content: '';
+    position: absolute;
+    width: 520px; height: 520px;
+    border-radius: 50%;
+    right: -160px; top: -260px;
+    border: 2px solid rgba(136, 198, 255, .2);
+    box-shadow: 0 0 0 55px rgba(136, 198, 255, .04), 0 0 0 110px rgba(136, 198, 255, .035);
+  }
+  .eyebrow { font-size: 20px; letter-spacing: 3.4px; text-transform: uppercase; color: #8fcaff; font-weight: 800; }
+  h1 { margin: 10px 0 4px; font-size: 58px; line-height: 1.04; letter-spacing: -1.5px; font-weight: 800; }
+  .subtitle { font-size: 25px; color: #cde5ff; font-weight: 500; margin-top: 7px; }
+  .source-badge {
+    position: absolute; right: 52px; top: 36px; z-index: 2;
+    background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.26);
+    padding: 12px 18px; border-radius: 999px; font-weight: 800; font-size: 18px;
+  }
+  .cycle-strip {
+    margin-top: 25px; display: flex; align-items: center; gap: 14px; font-size: 20px; font-weight: 700;
+  }
+  .cycle-strip .step { padding: 8px 13px; border-radius: 9px; background: rgba(255,255,255,.09); }
+  .cycle-strip .arrow { color: var(--gold); font-size: 26px; }
+
+  .content { padding: 18px 34px 0; }
+  .adaptive-note {
+    height: 84px; border-radius: 20px; background: #fff9dd; border: 2px solid #f0cf55;
+    display: grid; grid-template-columns: 74px 1fr; align-items: center; padding: 0 24px;
+    box-shadow: 0 8px 22px rgba(18,36,58,.08);
+  }
+  .note-icon { width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; background: #f8cf3e; color: #2c2a1d; font-size: 28px; font-weight: 900; }
+  .adaptive-note strong { font-size: 24px; }
+  .adaptive-note span { font-size: 21px; color: #5a5133; }
+
+  .gate {
+    margin-top: 14px; height: 210px; background: white; border-radius: 24px; border: 1px solid #d5e1ee;
+    box-shadow: 0 12px 28px rgba(18,36,58,.08); padding: 20px 24px 18px;
+  }
+  .gate-head { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
+  .gate-shield { width: 48px; height: 48px; border-radius: 14px; background: #eaf3ff; color: var(--blue); display: grid; place-items: center; }
+  .gate h2 { margin: 0; font-size: 29px; color: var(--navy2); }
+  .gate-sub { font-size: 18px; color: var(--muted); margin-left: auto; font-weight: 600; }
+  .chips { display: flex; flex-wrap: wrap; gap: 10px 12px; }
+  .chip { font-size: 17px; line-height: 1; padding: 11px 14px 11px 37px; border-radius: 999px; background: #f3f7fb; border: 1px solid #dce6f0; position: relative; font-weight: 600; color: #263b52; }
+  .chip:before { content: '✓'; position: absolute; left: 13px; top: 8px; color: var(--green); font-size: 20px; font-weight: 900; }
+  .gate-foot { margin-top: 14px; padding-top: 12px; border-top: 1px dashed #cbd8e6; font-size: 18px; color: #4f6277; font-weight: 600; }
+
+  .flow { margin-top: 14px; }
+  .stage {
+    position: relative; background: white; border-radius: 26px; border: 1px solid #d6e0eb;
+    box-shadow: 0 12px 28px rgba(18,36,58,.075); overflow: hidden;
+    display: grid; grid-template-columns: 245px 1fr 455px; column-gap: 24px;
+    padding: 22px 26px 20px 26px;
+  }
+  .stage.s1 { height: 345px; border-left: 9px solid var(--green); }
+  .stage.s2 { height: 300px; border-left: 9px solid var(--blue); }
+  .stage.s3 { height: 380px; border-left: 9px solid var(--purple); }
+  .stage.s4 { height: 310px; border-left: 9px solid var(--orange); }
+  .stage.s5 { height: 265px; border-left: 9px solid var(--teal); }
+  .stage-number { position: absolute; left: 18px; top: 18px; width: 52px; height: 52px; border-radius: 50%; color: white; display: grid; place-items: center; font-size: 27px; font-weight: 800; z-index: 2; }
+  .s1 .stage-number { background: var(--green); } .s2 .stage-number { background: var(--blue); }
+  .s3 .stage-number { background: var(--purple); } .s4 .stage-number { background: var(--orange); }
+  .s5 .stage-number { background: var(--teal); }
+  .visual { border-radius: 20px; height: 100%; display: flex; align-items: center; justify-content: center; padding: 48px 10px 8px; position: relative; }
+  .s1 .visual { background: var(--green-soft); } .s2 .visual { background: var(--blue-soft); }
+  .s3 .visual { background: var(--purple-soft); } .s4 .visual { background: var(--orange-soft); }
+  .s5 .visual { background: var(--teal-soft); }
+  .visual-label { position:absolute; top:16px; left:80px; right:12px; font-weight:800; font-size:18px; letter-spacing:.3px; }
+  .s1 .visual-label { color: var(--green); } .s2 .visual-label { color: var(--blue); }
+  .s3 .visual-label { color: var(--purple); } .s4 .visual-label { color: var(--orange); }
+  .s5 .visual-label { color: var(--teal); }
+  .stage-main h3 { margin: 2px 0 9px; font-size: 31px; color: var(--ink); letter-spacing: -.4px; }
+  .stage-main .lead { margin: 0 0 10px; color: #334a62; font-size: 20px; font-weight: 600; }
+  .points { list-style:none; margin: 0; padding: 0; }
+  .points li { position: relative; padding-left: 25px; margin: 7px 0; font-size: 18.5px; line-height: 1.28; color: #2e4359; }
+  .points li:before { content: ''; width: 9px; height: 9px; border-radius: 50%; position:absolute; left:2px; top:7px; background: #7990a8; }
+  .s1 .points li:before { background: var(--green); } .s2 .points li:before { background: var(--blue); }
+  .s3 .points li:before { background: var(--purple); } .s4 .points li:before { background: var(--orange); }
+  .s5 .points li:before { background: var(--teal); }
+  .stage-side { display:flex; flex-direction:column; gap:10px; }
+  .formula { background: #091a2f; color: white; border-radius: 16px; padding: 13px 16px; }
+  .formula .kicker { font-size: 15px; color: #8fcaff; letter-spacing: 1.1px; text-transform:uppercase; font-weight:800; margin-bottom:6px; }
+  .formula code { font-family: 'DejaVu Sans Mono', monospace; font-size: 17px; line-height: 1.35; color: #fff; white-space: normal; }
+  .formula .explain { margin-top:7px; color:#c9d9ea; font-size:15.5px; line-height:1.25; }
+  .mini-card { border-radius: 14px; padding: 11px 14px; font-size: 16.5px; line-height: 1.28; font-weight: 600; }
+  .s1 .mini-card { background: var(--green-soft); color: #1d644c; }
+  .s2 .mini-card { background: var(--blue-soft); color: #1c578f; }
+  .s3 .mini-card { background: var(--purple-soft); color: #55338f; }
+  .s4 .mini-card { background: var(--orange-soft); color: #9b4b1c; }
+  .s5 .mini-card { background: var(--teal-soft); color: #17666b; }
+  .tag-row { display:flex; gap:7px; flex-wrap:wrap; }
+  .tag { font-size:14px; font-weight:800; padding:6px 9px; border-radius:999px; border:1px solid #d8e2ed; background:#f7f9fc; color:#40556a; }
+  .arrow-down { height: 24px; display:grid; place-items:center; }
+  .arrow-down svg { width: 46px; height: 24px; }
+
+  .defaults {
+    margin-top: 14px; height: 330px; background: linear-gradient(120deg, #071629, #0d2d52); color:white;
+    border-radius: 24px; padding: 20px 24px 18px; box-shadow: 0 12px 28px rgba(18,36,58,.12);
+  }
+  .defaults h2 { margin: 0 0 14px; font-size: 29px; }
+  .default-grid { display:grid; grid-template-columns: 1fr 1fr 1.15fr; gap:18px; }
+  .default-col { background: rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.13); border-radius:18px; padding:14px 16px; height:255px; }
+  .default-col h4 { margin:0 0 9px; font-size:20px; }
+  .default-col.on h4 { color:#7ee4a8; } .default-col.off h4 { color:#ffbd8d; } .default-col.num h4 { color:#8fcaff; }
+  .default-col ul { list-style:none; padding:0; margin:0; columns:2; column-gap:16px; }
+  .default-col li { font-size:15.5px; line-height:1.23; margin:0 0 7px; break-inside:avoid; padding-left:20px; position:relative; color:#e6eef7; }
+  .default-col.on li:before { content:'✓'; position:absolute; left:0; color:#7ee4a8; font-weight:900; }
+  .default-col.off li:before { content:'○'; position:absolute; left:0; color:#ffbd8d; font-weight:900; }
+  .default-col.num ul { columns:1; }
+  .default-col.num li:before { content:'•'; position:absolute; left:3px; color:#8fcaff; font-weight:900; }
+  .footer { height: 64px; display:flex; align-items:center; justify-content:space-between; padding: 0 12px; color:#50657b; font-size:15.5px; }
+  .footer strong { color:#263c52; }
+  .footer .version { font-weight:800; color:#1a4d7b; }
+  .small-caution { color:#6b4c2b; font-size:15px; font-weight:700; }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="header">
+    <div class="source-badge">SOURCE-DERIVED • DEFAULTS VERIFIED</div>
+    <div class="eyebrow">Portable desktop strategy • IB Gateway / TWS</div>
+    <h1>IBKR TRADING BOT v3.0.13</h1>
+    <div class="subtitle">Default trading algorithm — one long-only stock cycle at a time</div>
+    <div class="cycle-strip">
+      <span class="step">ATR WARMUP</span><span class="arrow">→</span>
+      <span class="step">DROP WATCH</span><span class="arrow">→</span>
+      <span class="step">BUY TRAIL</span><span class="arrow">→</span>
+      <span class="step">MIN-PROFIT WAIT</span><span class="arrow">→</span>
+      <span class="step">SELL TRAIL</span><span class="arrow">→</span>
+      <span class="step">RECORD + REPEAT</span>
+    </div>
+  </header>
+
+  <main class="content">
+    <section class="adaptive-note">
+      <div class="note-icon">!</div>
+      <div><strong>Important default behavior:</strong> <span>ATR adaptation is ON. After warmup, ATR-derived percentages drive orders. Manual 2.00% / 1.00% / 3.00% / 1.00% values remain saved fallbacks.</span></div>
+    </section>
+
+    <section class="gate">
+      <div class="gate-head">
+        <div class="gate-shield">
+          <svg width="30" height="30" viewBox="0 0 30 30" fill="none"><path d="M15 2.5 25 6.5v7.2c0 6.1-4.2 10.8-10 13.8-5.8-3-10-7.7-10-13.8V6.5L15 2.5Z" stroke="currentColor" stroke-width="2.4"/><path d="m10.2 15.2 3.1 3.1 6.6-7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+        <h2>Before a new BUY: fail-closed controller gate</h2>
+        <div class="gate-sub">These checks are separate from optional hard-risk limits</div>
+      </div>
+      <div class="chips">
+        <span class="chip">Confirmed STK / USD / SMART contract</span>
+        <span class="chip">Local API socket + upstream IBKR connected</span>
+        <span class="chip">Post-reconnect reconciliation complete</span>
+        <span class="chip">Fresh actual ticker event</span>
+        <span class="chip">RTH open and current</span>
+        <span class="chip">Live data in live mode</span>
+        <span class="chip">No unsold app-owned quantity</span>
+        <span class="chip">IBKR what-if preflight succeeds</span>
+      </div>
+      <div class="gate-foot">Default session guard: no new BUY in the first 5 minutes or last 15 minutes of RTH; cancel an unfilled BUY trail 5 minutes before close.</div>
+    </section>
+
+    <section class="flow">
+      <article class="stage s1">
+        <div class="stage-number">1</div>
+        <div class="visual">
+          <div class="visual-label">ATR WARMUP + ANCHOR</div>
+          <svg width="210" height="170" viewBox="0 0 210 170" fill="none">
+            <path d="M14 143H198M18 22v126" stroke="#9bcab7" stroke-width="2"/>
+            <path d="M22 126 54 103 82 108 108 69 139 50 162 31 190 82" stroke="#16845a" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M22 119h167" stroke="#d35b5b" stroke-width="2.5" stroke-dasharray="7 7"/>
+            <circle cx="162" cy="31" r="7" fill="#16845a"/><circle cx="190" cy="82" r="7" fill="#c73636"/>
+            <text x="109" y="22" font-size="15" fill="#16845a" font-weight="800">ANCHOR</text>
+            <text x="90" y="138" font-size="14" fill="#b23e3e" font-weight="800">DROP TRIGGER</text>
+          </svg>
+        </div>
+        <div class="stage-main">
+          <h3>Collect RTH data, then watch for the initial drop</h3>
+          <p class="lead">Only newly consumed ticker events can warm ATR, set the anchor, or advance the strategy.</p>
+          <ul class="points">
+            <li>Observed prices are bucketed into <strong>60-second OHLC bars</strong>; ATR period 14 needs <strong>15 distinct bar buckets</strong>.</li>
+            <li>During default warmup, Stage 1 has <strong>no armed drop trigger</strong>; the manual drop percentage is ignored.</li>
+            <li>When ATR becomes ready, that price becomes a <strong>fresh anchor</strong>; a later event must make the drop.</li>
+            <li>Before entry, any new high ratchets the anchor upward.</li>
+          </ul>
+        </div>
+        <div class="stage-side">
+          <div class="formula"><div class="kicker">Stage-1 trigger</div><code>drop trigger = anchor × (1 − drop% / 100)</code><div class="explain">Entry becomes eligible when selected price ≤ trigger.</div></div>
+          <div class="mini-card"><strong>Adaptive defaults:</strong> drop 1.50× ATR%, BUY trail 0.75×, minimum profit 1.00×, SELL trail 1.00×. Clamp: 0.10%–20.00%.</div>
+          <div class="tag-row"><span class="tag">Manual drop fallback 2.00%</span><span class="tag">RTH-only samples</span></div>
+        </div>
+      </article>
+      <div class="arrow-down"><svg viewBox="0 0 46 24"><path d="M23 1v16M15 11l8 8 8-8" fill="none" stroke="#6d8196" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+
+      <article class="stage s2">
+        <div class="stage-number">2</div>
+        <div class="visual">
+          <div class="visual-label">ENTRY ORDER</div>
+          <svg width="210" height="150" viewBox="0 0 210 150" fill="none">
+            <path d="M18 125H194M18 20v108" stroke="#a8c8e9" stroke-width="2"/>
+            <path d="M25 52 55 82 84 112 112 98 143 72 177 41" stroke="#1769c2" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M83 112h97" stroke="#d96016" stroke-width="2.5" stroke-dasharray="7 7"/>
+            <path d="M147 69 178 39" stroke="#1769c2" stroke-width="5"/><path d="m166 41 13-3-3 13" fill="none" stroke="#1769c2" stroke-width="4"/>
+            <text x="88" y="132" font-size="14" fill="#c55215" font-weight="800">DROP REACHED</text>
+            <text x="122" y="28" font-size="14" fill="#1769c2" font-weight="800">REBOUND</text>
+          </svg>
+        </div>
+        <div class="stage-main">
+          <h3>Submit the BUY trail and size whole shares</h3>
+          <ul class="points">
+            <li>At the drop condition, calculate a projected BUY stop above the current price.</li>
+            <li>Default budget is <strong>$10,000 + positive completed app net P/L for the ticker</strong> because reinvestment is ON.</li>
+            <li>Positive trail → native IBKR <strong>BUY TRAIL</strong>. A 0.00% trail → immediate <strong>market BUY</strong>.</li>
+            <li>After any positive fill, record the actual average fill, cancel the unfilled remainder, and manage only the filled quantity.</li>
+          </ul>
+        </div>
+        <div class="stage-side">
+          <div class="formula"><div class="kicker">Entry math</div><code>BUY stop = price × (1 + BUY trail%)<br>qty = floor(budget / sizing price)</code><div class="explain">Slippage buffer is OFF by default, so sizing price equals the projected stop.</div></div>
+          <div class="mini-card">Order: <strong>GTC</strong>, <strong>outsideRth=False</strong>, whole shares, app-owned <strong>IBKRBOT|…</strong> reference.</div>
+          <div class="tag-row"><span class="tag">Manual BUY fallback 1.00%</span><span class="tag">Partial fill accepted</span></div>
+        </div>
+      </article>
+      <div class="arrow-down"><svg viewBox="0 0 46 24"><path d="M23 1v16M15 11l8 8 8-8" fill="none" stroke="#6d8196" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+
+      <article class="stage s3">
+        <div class="stage-number">3</div>
+        <div class="visual">
+          <div class="visual-label">POSITION OPEN</div>
+          <svg width="210" height="160" viewBox="0 0 210 160" fill="none">
+            <path d="M16 132H196M18 22v114" stroke="#c3b3e5" stroke-width="2"/>
+            <path d="M24 121 50 104 76 111 101 82 130 91 157 54 188 38" stroke="#6a42b8" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M24 107h164" stroke="#6a42b8" stroke-width="2" stroke-dasharray="7 7"/>
+            <path d="M24 57h164" stroke="#d96016" stroke-width="2.5" stroke-dasharray="7 7"/>
+            <text x="31" y="102" font-size="13" fill="#6a42b8" font-weight="800">AVG BUY</text>
+            <text x="58" y="50" font-size="11" fill="#bd4f16" font-weight="800">REQUIRED LAST PRICE</text>
+          </svg>
+        </div>
+        <div class="stage-main">
+          <h3>Wait until the final SELL can protect minimum gross profit</h3>
+          <p class="lead">The profit reference is the <strong>actual average BUY fill</strong> — not the Stage-1 anchor.</p>
+          <ul class="points">
+            <li>Default minimum profit is ATR-adapted at <strong>1.00× ATR%</strong>; manual fallback is 3.00%.</li>
+            <li>Default final SELL trail is ATR-adapted at <strong>1.00× ATR%</strong>; manual fallback is 1.00%.</li>
+            <li>The final exit is not submitted until the selected price reaches the required level and SELL checks permit submission.</li>
+            <li><strong>Protective SELL is OFF by default.</strong> If enabled, it is placed after a positive BUY fill.</li>
+          </ul>
+        </div>
+        <div class="stage-side">
+          <div class="formula"><div class="kicker">Profit activation</div><code>minimum SELL stop = avg BUY × (1 + min profit%)<br>required price = minimum stop / (1 − SELL trail%)</code><div class="explain">Commissions and actual market-order slippage are not guaranteed by this threshold.</div></div>
+          <div class="mini-card">Optional protective trail default: <strong>3.00%</strong>; protective ATR adaptation is OFF.</div>
+          <div class="tag-row"><span class="tag">Slippage planning OFF</span><span class="tag">No fixed profit guarantee</span></div>
+        </div>
+      </article>
+      <div class="arrow-down"><svg viewBox="0 0 46 24"><path d="M23 1v16M15 11l8 8 8-8" fill="none" stroke="#6d8196" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+
+      <article class="stage s4">
+        <div class="stage-number">4</div>
+        <div class="visual">
+          <div class="visual-label">PROFIT-PROTECTING EXIT</div>
+          <svg width="210" height="150" viewBox="0 0 210 150" fill="none">
+            <path d="M18 125H195M18 19v109" stroke="#efc4a9" stroke-width="2"/>
+            <path d="M24 114 55 91 83 78 110 49 139 57 166 30 190 47" stroke="#d96016" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M25 124 67 124 67 106 111 106 111 82 151 82 151 61 191 61" stroke="#c73636" stroke-width="3" stroke-dasharray="6 5"/>
+            <circle cx="190" cy="47" r="7" fill="#d96016"/><path d="M184 52 161 74" stroke="#c73636" stroke-width="3"/>
+            <text x="48" y="139" font-size="11" fill="#c73636" font-weight="800">TRAILING STOP RATCHETS UP</text>
+          </svg>
+        </div>
+        <div class="stage-main">
+          <h3>Cancel/replace safely, then exit through IBKR</h3>
+          <ul class="points">
+            <li>Positive SELL trail → native IBKR <strong>SELL TRAIL</strong> for remaining app-owned shares.</li>
+            <li>A 0.00% SELL trail → <strong>market SELL</strong> once the minimum-profit threshold is reached.</li>
+            <li>If a protective SELL is working, request cancellation and wait until it is confirmed nonworking before final SELL submission.</li>
+            <li>After acceptance, <strong>IBKR controls the live trailing stop</strong>; the app polls and records broker state.</li>
+          </ul>
+        </div>
+        <div class="stage-side">
+          <div class="formula"><div class="kicker">Order construction</div><code>SELL TRAIL • remaining whole shares<br>GTC • outsideRth=False • IBKRBOT|…</code><div class="explain">Initial stop is rounded down to minimum tick and may not be below the required profit floor.</div></div>
+          <div class="mini-card"><strong>Market-style execution warning:</strong> gaps, latency, liquidity and broker behavior can fill below the projected stop or threshold.</div>
+        </div>
+      </article>
+      <div class="arrow-down"><svg viewBox="0 0 46 24"><path d="M23 1v16M15 11l8 8 8-8" fill="none" stroke="#6d8196" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+
+      <article class="stage s5">
+        <div class="stage-number">5</div>
+        <div class="visual">
+          <div class="visual-label">RECORD + REPEAT</div>
+          <svg width="210" height="128" viewBox="0 0 210 128" fill="none">
+            <ellipse cx="73" cy="31" rx="43" ry="15" fill="#0d7d84" opacity=".22" stroke="#0d7d84" stroke-width="3"/>
+            <path d="M30 31v49c0 8 19 15 43 15s43-7 43-15V31" stroke="#0d7d84" stroke-width="4"/>
+            <path d="M30 54c0 8 19 15 43 15s43-7 43-15M30 76c0 8 19 15 43 15s43-7 43-15" stroke="#0d7d84" stroke-width="3"/>
+            <path d="M131 86c10 19 37 25 55 10 16-14 16-40 1-54" stroke="#0d7d84" stroke-width="5" stroke-linecap="round"/>
+            <path d="m177 37 13 4-4 13" stroke="#0d7d84" stroke-width="4" fill="none"/>
+          </svg>
+        </div>
+        <div class="stage-main">
+          <h3>Persist the completed cycle and optionally start the next one</h3>
+          <ul class="points">
+            <li>SQLite records orders, executions, commissions, gross/net P/L, UTC timestamps, audit and recovery events.</li>
+            <li><strong>Auto-repeat ON</strong>; another Stage-1 cycle starts unless stop-after-current-cycle or an enabled completed-cycle cap stops it.</li>
+            <li><strong>Reinvest profits ON</strong>; only positive completed app net P/L is added to the next base budget.</li>
+          </ul>
+        </div>
+        <div class="stage-side">
+          <div class="mini-card"><strong>Recovery:</strong> reconcile persisted state, open app-owned orders, recent executions, contract/account facts and unsold local fill quantity.</div>
+          <div class="tag-row"><span class="tag">One active cycle</span><span class="tag">Long-only</span><span class="tag">Whole shares</span><span class="tag">Portable SQLite</span></div>
+        </div>
+      </article>
+    </section>
+
+    <section class="defaults">
+      <h2>Verified new-configuration defaults</h2>
+      <div class="default-grid">
+        <div class="default-col on">
+          <h4>ON by default</h4>
+          <ul>
+            <li>ATR adaptive percentages</li>
+            <li>Adapt minimum profit with ATR</li>
+            <li>Block BUY until ATR ready</li>
+            <li>Block delayed data in live mode</li>
+            <li>IBKR what-if preflight</li>
+            <li>Stale-data guard</li>
+            <li>Session-timing guard</li>
+            <li>RTH-only order submission</li>
+            <li>Auto-repeat</li>
+            <li>Reinvest positive profits</li>
+          </ul>
+        </div>
+        <div class="default-col off">
+          <h4>OFF by default</h4>
+          <ul>
+            <li>Protective SELL</li>
+            <li>Protective SELL ATR adaptation</li>
+            <li>Slippage planning buffer</li>
+            <li>Hard risk-limit master</li>
+            <li>Recent-volatility filter</li>
+          </ul>
+        </div>
+        <div class="default-col num">
+          <h4>Key numeric defaults</h4>
+          <ul>
+            <li>Investment: $10,000; exchange SMART; USD stock; GTC</li>
+            <li>ATR: 14 periods, 60-second bars, 15 buckets to ready</li>
+            <li>Freshness: price 3 s, bid/ask 3 s, RTH status 60 s</li>
+            <li>Session: first 5 min / last 15 min / cancel BUY 5 min</li>
+            <li>Manual fallbacks: drop 2% / BUY 1% / profit 3% / SELL 1%</li>
+            <li>Stored inactive values: protective 3%, slippage 0.5%, hard spread 1%</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <div><strong>Source basis:</strong> README.md • app/models.py • app/strategy.py • docs/STRATEGY_RULES.md • docs/CONFIGURATION_REFERENCE.md • docs/ORDER_FLOW.md</div>
+      <div class="version">IBKR Portable Trading Bot v3.0.13</div>
+    </footer>
+  </main>
+</div>
+</body>
+</html>
