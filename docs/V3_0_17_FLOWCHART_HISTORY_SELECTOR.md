@@ -54,7 +54,6 @@ The release-equivalent offline validation completed with:
 - 811 pytest cases collected in one unfiltered Coverage.py run;
 - 810 passes and one strict documented expected failure;
 - no skipped or deselected tests;
-- 76.4% combined statement/branch coverage against the 75% minimum;
 - 811/811 executable application callables entered;
 - 6/6 safety mutants killed; and
 - 58 deterministic CSV scenarios passed across 54 price-path files.
