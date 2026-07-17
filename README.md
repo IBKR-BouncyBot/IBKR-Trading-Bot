@@ -1,5 +1,7 @@
 # IBKR Portable Trading Bot v3.0.17
 
+![Simple-view](Images/Trading-Simple-view.png)
+
 A Windows desktop application that automates one long-only Interactive Brokers stock-trading cycle at a time through Trader Workstation (TWS) or IB Gateway.
 
 The application watches a confirmed stock contract, waits for a configurable decline, enters on a rebound, and delays its normal profit-taking exit until the configured minimum-profit condition can be protected. An optional protective SELL may be submitted earlier after a BUY fill. The application uses IBKR-native trailing-stop or market orders, persists its state in a local SQLite database, and provides recovery, audit, and diagnostic tools for application-owned orders and fills.
@@ -15,6 +17,7 @@ The application watches a confirmed stock contract, waits for a configurable dec
 - [What the bot does](#what-the-bot-does)
 - [Trading cycle](#trading-cycle)
 - [Core features](#core-features)
+- [Screenshots](#screenshots)
 - [Advanced features](#advanced-features)
 - [What the bot does not do](#what-the-bot-does-not-do)
 - [Requirements and dependencies](#requirements-and-dependencies)
@@ -27,6 +30,7 @@ The application watches a confirmed stock contract, waits for a configurable dec
 - [Project structure](#project-structure)
 - [Documentation](#documentation)
 - [Release history](#release-history)
+- [Thank me](#thank-me)
 - [License](#license)
 
 ## What the bot does
@@ -89,6 +93,11 @@ An optional protective SELL trail can be submitted immediately after a BUY fill.
 
 The application records fills, commissions received from IBKR, gross and net P/L, timing, order references, and audit events. With auto-repeat enabled, another cycle starts unless **Stop after current cycle** is active or the enabled hard-risk maximum completed-cycle cap has been reached.
 
+</p>
+<p float="center">
+  <img src="Images/IBKR_Trading_Bot_v3.0.13_Source_Derived_Algorithm" width="50%" />
+</p>
+
 ## Core features
 
 - PySide6 desktop GUI with connection, strategy, flowchart, history, and reconciliation views.
@@ -103,6 +112,23 @@ The application records fills, commissions received from IBKR, gross and net P/L
 - Single-instance lock to reduce the risk of two copies using the same database and API client configuration.
 - UTC audit timestamps throughout the application.
 - CSV trade-history export and diagnostic audit bundles.
+
+## Screenshots
+
+<p float="left">
+  <img src="Images/Trading-Simple-view.png" width="33%" />
+  <img src="Images/Trading-Advanced-view-1.png" width="33%" />
+  <img src="Images/Trading-Advanced-view-2.png" width="33%" />
+</p>
+<p float="left">
+  <img src="Images/Trading-Advanced-view-3.png" width="33%" />
+  <img src="Images/Strategy-flowchart-History-1.png" width="33%" />
+  <img src="Images/Strategy-flowchart-History-2.png" width="33%" />
+</p>
+<p float="center">
+  <img src="Images/Trade-history.png" width="50%" />
+  <img src="Images/Trade-history-Audit-log.png" width="50%" />
+</p>
 
 ## Advanced features
 
@@ -482,13 +508,21 @@ Start with the [documentation index](docs/README.md). Current authoritative guid
 
 Superseded release-specific documents are indexed under [docs/legacy](docs/legacy/README.md) and are retained only for traceability.
 
+
 ## Release history
 
-- [v3.0.17 release note](docs/V3_0_17_FLOWCHART_HISTORY_SELECTOR.md) — flowchart history selection in every GUI mode, one unfiltered Windows pytest run, and this documentation-only public-repository preparation.
+- [v3.0.17 release note](docs/V3_0_17_FLOWCHART_HISTORY_SELECTOR.md) — First open source release! - flowchart history selection in every GUI mode, one unfiltered Windows pytest run, and this documentation-only public-repository preparation.
 - [CHANGELOG.md](CHANGELOG.md) — consolidated release history.
 - [Archived release notes](docs/legacy/README.md) — implementation history for v3.0.16 and earlier.
 
 This documentation update remains part of v3.0.17 and does not change trading, broker, persistence, recovery, or GUI behavior.
+
+## Thank me
+
+Cardano / ADA : addr1q85w2v474ywzx868s69pghygek3vrhxm69e7c6ysuf28qhv8kmj5wd059grxl82f8h5mtyzl87cvqj8ldv2e0las7tnsdej9ax
+Midnight / NIGHT: addr1qyre4dsc3xdgcr8w3lmfdy038f9w0statt7q7d8urfvgyh58kmj5wd059grxl82f8h5mtyzl87cvqj8ldv2e0las7tnsu66x8a 
+Etherium / ETH : 0xe1283022e1166df70092ff3094a1d2bd79102c3a
+Solana / SOL : 78EG5myV7Xjx4iNWt7mnn3BHULMNhLchFAcggnyeiiyb
 
 ## License
 
