@@ -1,0 +1,63 @@
+# Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.pyright/
+
+# Build output
+build/
+dist/
+release/
+*.spec
+build_pyinstaller.log
+build_pyinstaller.log.*
+
+# Credentials and private material
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Local runtime state
+*.sqlite
+*.sqlite3
+*.db
+bot_state.sqlite
+bot_state.sqlite-*
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+ibkr_trading_bot.lock
+backups/
+exports/
+audit_exports/
+ibkr_bot_audit_bundle_*.zip
+logs/
+debug_reports/
+debug_captures/
+
+# Test output
+run_tests_pytest.log
+run_tests_coverage.log
+run_tests_callable_coverage.log
+run_tests_soak.log
+run_tests_mutation_smoke.log
+run_tests_simulations.log
+.coverage
+.coverage.*
+coverage.json
+coverage.xml
+htmlcov/
+
+# Editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini

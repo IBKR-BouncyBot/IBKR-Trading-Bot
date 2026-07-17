@@ -1,0 +1,63 @@
+[project]
+name = "ibkr-portable-trading-bot"
+version = "3.0.17"
+description = "Portable Windows GUI trading bot for IBKR TWS/IB Gateway API"
+requires-python = ">=3.11"
+dependencies = [
+    "PySide6>=6.7,<7",
+    "ib_async>=2.1.0,<3",
+    "tzdata>=2025.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<9",
+    "coverage>=7.6,<8",
+    "ruff>=0.8,<1",
+    "pyright[nodejs]>=1.1,<2",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = [
+    "soak: bounded high-volume deterministic tests; included in the complete Windows pytest and coverage run",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 160
+extend-exclude = ["build", "dist", ".venv", "__pycache__"]
+
+[tool.ruff.lint]
+# The gate targets likely correctness defects, import ordering, and a small
+# set of unambiguous simplifications. Broad formatting/style rewrites are not
+# imposed on trading and recovery logic.
+select = ["E9", "F", "B006", "B007", "B018", "B904", "I001", "SIM101", "SIM103"]
+ignore = []
+
+[tool.pyright]
+pythonVersion = "3.11"
+typeCheckingMode = "basic"
+include = ["app/models.py", "app/strategy.py", "app/storage.py"]
+exclude = ["build", "dist", ".venv", "tests"]
+reportMissingImports = "warning"
+reportMissingTypeStubs = "none"
+reportUnknownMemberType = "none"
+reportUnknownVariableType = "none"
+reportUnknownArgumentType = "none"
+
+[tool.coverage.run]
+branch = true
+source = ["app", "main"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 75
+precision = 1
+
+[tool.coverage.json]
+show_contexts = false
+
+[tool.coverage.xml]
+output = "coverage.xml"
