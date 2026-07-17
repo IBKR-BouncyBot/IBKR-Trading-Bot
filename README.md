@@ -95,7 +95,7 @@ The application records fills, commissions received from IBKR, gross and net P/L
 
 </p>
 <p float="center">
-  <img src="Images/IBKR_Trading_Bot_v3.0.13_Source_Derived_Algorithm" width="50%" />
+  <img src="Images/IBKR_Trading_Bot_v3.0.13_Source_Derived_Algorithm.png" width="50%" />
 </p>
 
 ## Core features
