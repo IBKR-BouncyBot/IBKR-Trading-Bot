@@ -1,0 +1,8 @@
+time,price,sell_slippage_pct,note
+09:30:00,100.0000,0,anchor
+09:31:00,95.0000,0,BUY trail submits with 5 percent sizing buffer
+09:32:00,93.0000,0,low watermark
+09:33:00,94.8600,0,BUY fills
+09:34:00,111.0000,0,buffered safe SELL trigger reached
+09:35:00,112.0000,0,SELL trail ratchets
+09:36:00,110.8800,5,SELL triggers with 5 percent adverse slippage

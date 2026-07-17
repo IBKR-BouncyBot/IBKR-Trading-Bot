@@ -1,0 +1,4 @@
+time,price,note
+09:30:00,100.0000,initial anchor
+09:31:00,110.0000,anchor resets upward
+09:32:00,104.5001,just above the reset-anchor drop trigger; no order

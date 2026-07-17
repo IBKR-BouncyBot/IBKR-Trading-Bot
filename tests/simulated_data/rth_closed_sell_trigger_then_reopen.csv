@@ -1,0 +1,9 @@
+time,price,rth_open,note
+09:30:00,100.0000,1,anchor
+09:31:00,95.0000,1,BUY trail submits
+09:32:00,93.0000,1,low watermark
+09:33:00,94.8600,1,BUY fills
+09:34:00,105.4000,0,profit trigger reached while closed; SELL submission blocked
+09:35:00,105.5000,1,RTH reopens; SELL trail submits
+09:36:00,106.0000,1,SELL trail ratchets
+09:37:00,104.9400,1,SELL fills

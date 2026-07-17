@@ -1,0 +1,8 @@
+time,price,note
+09:30:00,1.0000,low-price anchor
+09:31:00,0.9500,exact initial drop
+09:32:00,0.9000,BUY trail lower low
+09:33:00,0.9180,exact 2 percent rebound
+09:34:00,1.0200,exact safe SELL activation
+09:35:00,1.0500,SELL trail ratchets
+09:36:00,1.0395,exact 1 percent stop

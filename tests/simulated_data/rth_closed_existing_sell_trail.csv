@@ -1,0 +1,8 @@
+time,price,rth_open,note
+09:30:00,100.0000,1,anchor
+09:31:00,95.0000,1,BUY trail submits
+09:32:00,93.0000,1,low watermark
+09:33:00,94.8600,1,BUY fills
+09:34:00,105.4000,1,SELL trail submits while open
+09:35:00,110.0000,0,RTH closes but existing native trail keeps working
+09:36:00,108.9000,0,existing native SELL trail fills while RTH flag is closed

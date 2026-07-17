@@ -1,0 +1,8 @@
+time,price,note
+09:30:00,12.3456,four-decimal anchor
+09:31:00,11.7283,rounded exact 5 percent trigger
+09:32:00,11.1111,low watermark
+09:33:00,11.3333,rounded exact 2 percent BUY stop
+09:34:00,12.5926,rounded safe SELL activation
+09:35:00,12.7777,SELL trail high watermark
+09:36:00,12.6499,rounded exact 1 percent SELL stop

@@ -1,0 +1,8 @@
+time,price,note
+09:30:00,100.0000,anchor
+09:31:00,95.0000,BUY trail submits
+09:32:00,94.0000,first lower low
+09:33:00,92.0000,second lower low
+09:34:00,90.0000,third lower low sets stop to 91.8
+09:35:00,91.7999,just below current stop
+09:36:00,91.8000,exact current stop; BUY fills

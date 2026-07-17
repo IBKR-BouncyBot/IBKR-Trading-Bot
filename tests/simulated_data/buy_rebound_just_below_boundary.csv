@@ -1,0 +1,5 @@
+time,price,note
+09:30:00,100.0000,anchor
+09:31:00,95.0000,BUY trail submits
+09:32:00,93.0000,low watermark
+09:33:00,94.8599,one ten-thousandth below stop; order remains active

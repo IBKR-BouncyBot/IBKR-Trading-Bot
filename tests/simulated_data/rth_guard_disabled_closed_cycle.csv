@@ -1,0 +1,8 @@
+time,price,rth_open,note
+09:30:00,100.0000,0,anchor with RTH flag closed
+09:31:00,95.0000,0,entry is allowed only because rth_only is disabled
+09:32:00,93.0000,0,BUY trail lower low
+09:33:00,94.8600,0,BUY fills
+09:34:00,105.4000,0,SELL trail submits
+09:35:00,106.0000,0,SELL trail ratchets
+09:36:00,104.9400,0,SELL fills

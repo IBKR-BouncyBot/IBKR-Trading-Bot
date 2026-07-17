@@ -1,0 +1,8 @@
+time,price,buy_slippage_pct,sell_slippage_pct,note
+09:30:00,100.0000,0,0,anchor
+09:31:00,95.0000,0,0,BUY trail submits
+09:32:00,93.0000,0,0,low watermark
+09:33:00,94.8600,1,0,BUY fills with 1 percent adverse slippage
+09:34:00,107.0000,0,0,SELL trail submits using actual BUY fill
+09:35:00,109.0000,0,0,SELL trail ratchets
+09:36:00,107.9100,0,1,SELL fills with 1 percent adverse slippage

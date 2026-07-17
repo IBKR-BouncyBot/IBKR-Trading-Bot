@@ -1,0 +1,8 @@
+time,price,note
+09:30:00,100.0000,anchor
+09:31:00,90.0000,gap below drop threshold submits BUY trail
+09:32:00,89.0000,BUY trail ratchets lower
+09:33:00,90.7800,exact 2 percent rebound from 89; BUY fills
+09:34:00,101.0000,minimum-profit condition reached; SELL trail submits
+09:35:00,102.0000,SELL trail ratchets upward
+09:36:00,100.9800,exact 1 percent fall from 102; SELL fills

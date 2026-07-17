@@ -1,0 +1,5 @@
+index,price,rth_open,note
+0,100.00,1,initial anchor
+1,94.00,0,drop reached outside RTH; should block BUY
+2,93.00,0,still blocked
+3,94.00,1,RTH opens and BUY can be submitted

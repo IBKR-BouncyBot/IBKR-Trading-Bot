@@ -1,0 +1,5 @@
+time,price,rth_open,note
+09:30:00,100.0000,0,anchor while RTH is closed
+09:31:00,95.0000,0,drop reached but entry blocked
+09:32:00,90.0000,0,still blocked
+09:33:00,92.0000,0,rebound remains below anchor and no order is created

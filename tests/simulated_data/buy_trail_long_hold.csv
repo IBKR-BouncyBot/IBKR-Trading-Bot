@@ -1,0 +1,13 @@
+time,price,note
+09:30:00,100.0000,anchor
+09:31:00,95.0000,BUY trail submits
+09:32:00,94.0000,new low
+09:33:00,93.0000,new low
+09:34:00,92.0000,new low
+09:35:00,91.0000,new low
+09:36:00,90.0000,new low
+09:37:00,90.5000,rebound below stop
+09:38:00,90.9000,rebound below stop
+09:39:00,91.2000,rebound below 91.8 stop
+09:40:00,91.5000,still below stop
+09:41:00,91.7999,just below stop after a long hold

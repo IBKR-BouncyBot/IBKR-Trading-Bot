@@ -1,0 +1,8 @@
+time,price,note
+09:30:00,100.0000,anchor
+09:31:00,95.0000,BUY trail submits for planned quantity
+09:32:00,93.0000,low watermark
+09:33:00,94.8600,BUY trigger; simulator fills 40 percent
+09:34:00,105.4000,SELL trail submits for filled quantity only
+09:35:00,106.0000,SELL trail ratchets
+09:36:00,104.9400,SELL fills the partial position
