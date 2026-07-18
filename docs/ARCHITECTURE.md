@@ -66,7 +66,20 @@ The fixed five-button command bar is the dashboard workflow control surface. The
 - reconcile stored state with broker facts;
 - initiate backups, reports, and market-data captures.
 
-The worker-loop order is deliberate: dispatch broker callbacks, verify the local socket, verify the separate Gateway/TWS-to-IBKR link, reconcile once after an upstream restoration, consume actual market-data events, advance the strategy, then poll or submit broker actions. No strategy advancement, order polling, or new transmission occurs while the upstream link is unavailable. New order submissions fail closed when required broker, RTH, recovery, or price facts are uncertain.
+The worker uses one serialized thread but schedules responsibilities from independent monotonic deadlines:
+
+| Responsibility | Default cadence | Behavior |
+|---|---:|---|
+| GUI commands | immediate | `Queue.get()` wakes the worker as soon as a command arrives; it is not tied to a periodic sleep. |
+| Broker callbacks/connectivity | 50 ms | Pumps `ib_async`, drains callbacks, updates local/upstream state, and completes post-restoration reconciliation before strategy work is allowed. |
+| Strategy | 100 ms | Performs a zero-timeout read of existing subscription/order state and advances the state machine only from a newly identified market-data event. |
+| GUI snapshot | 500 ms | Emits the latest in-memory controller state and cached database summary. |
+| Database snapshot | 1 s | Refreshes read-heavy recent-event, history-summary, and GUI guard facts. |
+| Maintenance | 1 s | Updates stale-cycle housekeeping and owns the human-readable report; the report itself remains internally limited to once per 60 seconds unless forced. |
+
+The order within a due cycle is deliberate: broker callbacks and connectivity are processed first; strategy runs only if that broker cycle confirms readiness; database, GUI, and maintenance work then run on their own deadlines. No strategy advancement, order polling, or new transmission occurs while the upstream link is unavailable. New order submissions fail closed when required broker, RTH, recovery, or price facts are uncertain. Commands can bring broker, strategy, and GUI deadlines forward without resetting the database or maintenance clocks.
+
+Cadence separation does not weaken durability. State transitions, order intent/submission facts, fills, recovery results, and resume checkpoints are persisted synchronously where they occur. Only read-heavy display facts are cached. Order preflight deliberately bypasses that cache and rereads the application-owned position ledger and configured hard-risk totals from SQLite.
 
 ## Strategy layer
 
@@ -97,6 +110,8 @@ It does not import Qt, connect to IBKR, or write SQLite. The controller validate
 
 The adapter does not own strategy stages. It returns broker facts or raises a broker error that causes the controller to pause or enter recovery. On code 1101 it discards obsolete market-data handles so future reads issue new subscriptions. On code 1102 it retains the active handles but clears update metadata until a new ticker event arrives. The production adapter requires event identity; if `pendingTickersEvent` cannot be registered, populated cached fields remain diagnostic only and no strategy price is produced.
 
+Scheduled price reads are nonblocking: the adapter inspects the current subscription immediately and returns without sleeping when the timeout is zero. Bounded explicit reads first inspect the same snapshot and wait only if data is still absent, in slices no longer than 50 ms. Periodic order polling likewise consumes cached `Trade` state immediately; a missing cache entry can start a throttled `reqOpenOrders` refresh, with the response handled by a later broker callback cycle. Explicit connect/recovery/cancel paths retain their bounded waits.
+
 ## Storage layer
 
 `app/storage.py` owns the portable SQLite schema and data access. It stores:
@@ -111,6 +126,8 @@ The adapter does not own strategy stages. It returns broker facts or raises a br
 
 SQLite connections are short-lived and scoped to each storage operation. Schema changes are additive and idempotent so an older portable database can be opened without destructive migration.
 
+The controller’s database snapshot cadence reduces repeated read-only connections used for recent events, history totals, and top-bar guard display. This cache is diagnostic only and can be up to one cadence old. Trading-state writes and order authorization checks are not deferred to it.
+
 The resume-checkpoint transaction writes the latest connection draft, strategy draft, active cycle, `last_resume_checkpoint` metadata, and its audit event together. The controller normally performs this in the worker after applying safe active-cycle edits without re-evaluating the last market price. A bounded direct-storage fallback uses the same checkpoint ID, and the transaction begins with an immediate write lock so a delayed worker and fallback cannot duplicate the logical checkpoint.
 
 The storage layer also creates restore-validated online backups and audit bundles. Its persisted BUY and SELL fills define the application-owned unsold quantity used by BUY gating, Stop, window-close, and Reconciliation actions. It is not the sole source for live order status; recovery compares it with broker facts.
@@ -119,7 +136,8 @@ The storage layer also creates restore-validated online backups and audit bundle
 
 - The Qt GUI runs in the main thread.
 - `TradingController` runs a dedicated Python worker thread.
-- GUI commands are queued to the worker.
+- GUI commands are queued to the worker and wake its interruptible wait immediately.
+- Broker, strategy, GUI, database-snapshot, and maintenance deadlines are independent, but all controller/broker side effects remain serialized on the same worker.
 - Worker snapshots and events are emitted back through Qt signals.
 - A lightweight headless signal implementation is used only by tests/build validation when `IBKR_BOT_HEADLESS_SIGNALS=1`.
 - Broker calls are kept in the worker path to avoid concurrent access from GUI callbacks.

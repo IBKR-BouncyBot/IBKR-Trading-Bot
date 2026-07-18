@@ -362,6 +362,7 @@ class IbAsyncTwsAdapter(BrokerAdapter):
     _GENERIC_TICK_LIST = "232"
     _AUTO_MODE_SEQUENCE = (1, 3, 2, 4)  # live, delayed, frozen, delayed-frozen.
     _AUTO_RESCAN_SECONDS = 60.0
+    _MARKET_DATA_WAIT_SLICE_SECONDS = 0.05
 
     def __init__(self) -> None:
         self.ib: Any = None
@@ -855,7 +856,6 @@ class IbAsyncTwsAdapter(BrokerAdapter):
         self._clear_market_data_subscriptions()
         try:
             self.ib.reqMarketDataType(mode)
-            self.ib.sleep(0.25)
             self._active_market_data_type = mode
         except Exception:
             # Keep the previous active mode unknown if TWS rejected the request.
@@ -1281,29 +1281,61 @@ class IbAsyncTwsAdapter(BrokerAdapter):
 
     def _try_price_for_contract(self, contract: QualifiedContract, timeout: float, note: str = "") -> MarketPriceSnapshot:
         ticker_obj = self._request_ticker(contract, "")
-        deadline = time.monotonic() + max(0.0, float(timeout))
         snapshot = self._snapshot_from_ticker(ticker_obj, contract, note)
-        while time.monotonic() < deadline:
-            self.ib.sleep(0.25)
+        wait_seconds = max(0.0, float(timeout))
+        if self._snapshot_has_subscription_data(snapshot) or wait_seconds <= 0:
+            return snapshot
+
+        deadline = time.monotonic() + wait_seconds
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return snapshot
+            self.ib.sleep(min(self._MARKET_DATA_WAIT_SLICE_SECONDS, remaining))
             snapshot = self._snapshot_from_ticker(ticker_obj, contract, note)
             if self._snapshot_has_subscription_data(snapshot):
                 return snapshot
-        return snapshot
 
     def _try_market_data_variants(self, contract: QualifiedContract, timeout: float) -> Optional[MarketPriceSnapshot]:
-        primary = self._candidate_primary_exchange(contract)
+        wait_seconds = max(0.0, float(timeout))
+        if wait_seconds <= 0:
+            primary = str(
+                contract.primary_exchange
+                or getattr(contract.raw, "primaryExchange", "")
+                or ""
+            ).upper()
+        else:
+            primary = self._candidate_primary_exchange(contract)
         if not primary:
             return None
         variants: list[tuple[str, QualifiedContract]] = []
         raw_exchange = str(getattr(contract.raw, "exchange", "") or "").upper()
         if raw_exchange == "SMART":
-            smart_primary = self._qualified_market_data_variant(contract, f"SMART:{primary}")
+            if wait_seconds <= 0:
+                key = (
+                    contract.ticker.upper().strip(),
+                    str(getattr(contract.raw, "currency", "") or "USD").upper(),
+                    f"SMART:{primary}",
+                    "",
+                )
+                smart_primary = self._variant_cache.get(key)
+            else:
+                smart_primary = self._qualified_market_data_variant(contract, f"SMART:{primary}")
             if smart_primary is not None:
                 variants.append((f"SMART:{primary}", smart_primary))
-        direct = self._qualified_market_data_variant(contract, primary)
+        if wait_seconds <= 0:
+            key = (
+                contract.ticker.upper().strip(),
+                str(getattr(contract.raw, "currency", "") or "USD").upper(),
+                primary,
+                "",
+            )
+            direct = self._variant_cache.get(key)
+        else:
+            direct = self._qualified_market_data_variant(contract, primary)
         if direct is not None:
             variants.append((primary, direct))
-        per_variant_timeout = max(0.5, min(2.0, float(timeout)))
+        per_variant_timeout = 0.0 if wait_seconds <= 0 else max(0.5, min(2.0, wait_seconds))
         for note, variant in variants:
             try:
                 snapshot = self._try_price_for_contract(variant, per_variant_timeout, note)
@@ -1314,13 +1346,15 @@ class IbAsyncTwsAdapter(BrokerAdapter):
         return None
 
     def _price_snapshot_for_active_mode(self, contract: QualifiedContract, timeout: float = 1.0) -> MarketPriceSnapshot:
-        snapshot = self._try_price_for_contract(contract, timeout, "")
+        wait_seconds = max(0.0, float(timeout))
+        snapshot = self._try_price_for_contract(contract, wait_seconds, "")
         if self._snapshot_has_subscription_data(snapshot):
             return snapshot
 
         # Keep order routing on SMART, but for market data also try the more
         # explicit request forms: SMART:PRIMARY and direct primary exchange.
-        variant_snapshot = self._try_market_data_variants(contract, timeout=min(2.0, max(0.5, float(timeout))))
+        variant_timeout = 0.0 if wait_seconds <= 0 else min(2.0, max(0.5, wait_seconds))
+        variant_snapshot = self._try_market_data_variants(contract, timeout=variant_timeout)
         if variant_snapshot is not None and self._snapshot_has_subscription_data(variant_snapshot):
             return variant_snapshot
 
@@ -1330,17 +1364,21 @@ class IbAsyncTwsAdapter(BrokerAdapter):
         if (self._active_market_data_type or self._market_data_type) not in {2, 4}:
             try:
                 generic_ticker = self._request_ticker(contract, self._GENERIC_TICK_LIST)
-                generic_deadline = time.monotonic() + min(1.5, max(0.0, float(timeout)))
                 generic_snapshot = self._snapshot_from_ticker(generic_ticker, contract, "generic 232")
-                while time.monotonic() < generic_deadline:
-                    self.ib.sleep(0.25)
+                generic_snapshot.generic_ticks = self._GENERIC_TICK_LIST
+                if self._snapshot_has_subscription_data(generic_snapshot):
+                    return generic_snapshot
+                generic_wait = min(1.5, wait_seconds)
+                generic_deadline = time.monotonic() + generic_wait
+                while generic_wait > 0:
+                    remaining = generic_deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    self.ib.sleep(min(self._MARKET_DATA_WAIT_SLICE_SECONDS, remaining))
                     generic_snapshot = self._snapshot_from_ticker(generic_ticker, contract, "generic 232")
                     generic_snapshot.generic_ticks = self._GENERIC_TICK_LIST
                     if self._snapshot_has_subscription_data(generic_snapshot):
                         return generic_snapshot
-                generic_snapshot.generic_ticks = self._GENERIC_TICK_LIST
-                if self._snapshot_has_subscription_data(generic_snapshot):
-                    return generic_snapshot
             except Exception as exc:
                 snapshot.error = str(exc)
         return snapshot
@@ -1370,6 +1408,28 @@ class IbAsyncTwsAdapter(BrokerAdapter):
         mode becomes available after login/subscription changes.
         """
         now = time.monotonic()
+        wait_seconds = max(0.0, float(timeout))
+        if wait_seconds <= 0:
+            selected = self._auto_selected_market_data_type
+            if selected not in self._AUTO_MODE_SEQUENCE:
+                selected = self._active_market_data_type
+            if selected not in self._AUTO_MODE_SEQUENCE:
+                selected = self._AUTO_MODE_SEQUENCE[0]
+            mode = int(selected)
+            self._apply_market_data_type_to_tws(mode)
+            snapshot = self._price_snapshot_for_active_mode(contract, timeout=0.0)
+            attempts = [{
+                "mode": mode,
+                "price": snapshot.price,
+                "source": snapshot.source,
+                "status": snapshot.status,
+                "request_exchange": snapshot.request_exchange,
+                "request_primary_exchange": snapshot.request_primary_exchange,
+            }]
+            if self._snapshot_has_subscription_data(snapshot):
+                self._auto_selected_market_data_type = mode
+            return self._annotate_auto_snapshot(snapshot, selected_mode=mode, attempts=attempts)
+
         modes: list[int]
         cached = self._auto_selected_market_data_type
         if cached in self._AUTO_MODE_SEQUENCE and now - self._last_auto_rescan_monotonic < self._AUTO_RESCAN_SECONDS:
@@ -1383,7 +1443,7 @@ class IbAsyncTwsAdapter(BrokerAdapter):
 
         attempts: list[dict[str, Any]] = []
         first_snapshot: Optional[MarketPriceSnapshot] = None
-        per_mode_timeout = max(0.35, min(1.25, float(timeout)))
+        per_mode_timeout = max(0.35, min(1.25, wait_seconds))
         for mode in modes:
             self._apply_market_data_type_to_tws(mode)
             snapshot = self._price_snapshot_for_active_mode(contract, timeout=per_mode_timeout)
@@ -1912,14 +1972,28 @@ class IbAsyncTwsAdapter(BrokerAdapter):
                     return
         raise BrokerAdapterError(f"Could not find open order to cancel: {order_ref}")
 
-    def refresh_open_trades_cache(self, *, force: bool = False) -> None:
+    def refresh_open_trades_cache(
+        self,
+        *,
+        force: bool = False,
+        wait_timeout: float = 0.5,
+    ) -> None:
+        """Refresh app-owned open-trade handles.
+
+        Explicit connect/recovery/cancel operations retain the bounded default
+        wait. The periodic strategy poll passes ``wait_timeout=0`` because the
+        broker cadence already pumps callbacks; it may request a refresh, but it
+        never blocks the controller while waiting for the response.
+        """
         if not self.is_connected():
             return
         now = time.monotonic()
         if force or now - self._last_open_trades_refresh_monotonic >= self._open_trades_refresh_min_seconds:
             try:
                 self.ib.reqOpenOrders()
-                self.ib.sleep(0.5)
+                bounded_wait = max(0.0, float(wait_timeout))
+                if bounded_wait > 0:
+                    self.ib.sleep(bounded_wait)
                 self._last_open_trades_refresh_monotonic = now
             except Exception:
                 pass
@@ -2178,11 +2252,18 @@ class IbAsyncTwsAdapter(BrokerAdapter):
 
 
     def poll_order(self, order_ref: str) -> Optional[PolledOrderState]:
+        """Return the latest cached order state without sleeping.
+
+        ``TradingController`` pumps the ib_async event loop on the faster broker
+        cadence before strategy evaluation. Sleeping here would serialize that
+        broker cadence behind every order poll. A cache miss can initiate a
+        throttled open-order request, but its response is consumed by a later
+        broker cycle instead of blocking this call.
+        """
         if not self.is_connected():
             raise BrokerAdapterError("Not connected to TWS.")
         trade = self._trades_by_ref.get(order_ref)
         if trade is not None:
-            self.ib.sleep(0.1)
             return self._to_polled_order_state(trade)
         try:
             trades = list(self.ib.trades() or [])
@@ -2193,10 +2274,9 @@ class IbAsyncTwsAdapter(BrokerAdapter):
             if ref == order_ref:
                 self._trades_by_ref[ref] = trade
                 return self._to_polled_order_state(trade)
-        self.refresh_open_trades_cache(force=True)
+        self.refresh_open_trades_cache(force=False, wait_timeout=0.0)
         trade = self._trades_by_ref.get(order_ref)
         if trade is not None:
-            self.ib.sleep(0.1)
             return self._to_polled_order_state(trade)
         return None
 

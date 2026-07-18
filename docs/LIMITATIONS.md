@@ -1,6 +1,6 @@
 # Limitations and non-goals
 
-This document states the boundaries of v3.0.17. Treat each limitation as an operational constraint, not as a future guarantee.
+This document states the boundaries of v3.0.18. Treat each limitation as an operational constraint, not as a future guarantee.
 
 ## Strategy scope
 

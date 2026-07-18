@@ -5224,7 +5224,7 @@ class CycleAuditDialog(QDialog):
         lines = [
             "EXAMPLE CYCLE LOG",
             "=" * 80,
-            "This is built-in v3.0.17 example data only. It verifies the history, timeline, market-capture, and raw-log UI; it is not stored as a completed cycle.",
+            "This is built-in v3.0.18 example data only. It verifies the history, timeline, market-capture, and raw-log UI; it is not stored as a completed cycle.",
             f"Ticker: {row.get('ticker')}",
             f"Cycle: {row.get('cycle_number')}",
             f"BUY: {row.get('buy_filled_qty')} shares @ {cls._money(row.get('avg_buy_price'))}",
@@ -5270,7 +5270,7 @@ class MainWindow(QMainWindow):
         self._stop_dialog_exit_requested = False
         self._system_shutdown_in_progress = False
         self._last_system_shutdown_session_key = ""
-        self.setWindowTitle("IBKR Portable Trading Bot v3.0.17")
+        self.setWindowTitle("IBKR Portable Trading Bot v3.0.18")
         self.resize(1440, 950)
 
         self._autosave_timer = QTimer(self)

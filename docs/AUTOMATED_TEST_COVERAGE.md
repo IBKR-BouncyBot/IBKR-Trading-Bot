@@ -1,8 +1,8 @@
 # Automated test coverage specification
 
-This document defines the automated verification scope for v3.0.17. It is the maintainer-facing map between the application modules, test layers, and repository quality gates.
+This document defines the automated verification scope for v3.0.18. It is the maintainer-facing map between the application modules, test layers, and repository quality gates.
 
-The v3.0.17 offline test architecture includes focused coverage for shutdown checkpoints, GUI responsiveness, broker connectivity, reconciliation, and flowchart history selection. Tests use temporary databases, deterministic clocks and data, protocol-shaped broker doubles, and headless Qt doubles. They do not connect to IBKR, launch TWS/Gateway, or transmit orders.
+The v3.0.18 offline test architecture includes focused coverage for shutdown checkpoints, event-driven worker scheduling, independent cadences, nonblocking broker reads, GUI responsiveness, broker connectivity, reconciliation, and flowchart history selection. Tests use temporary databases, deterministic clocks and data, protocol-shaped broker doubles, and headless Qt doubles. They do not connect to IBKR, launch TWS/Gateway, or transmit orders.
 
 ## Test objectives
 
@@ -23,7 +23,7 @@ The callable gate is derived from the effective function map in `coverage.json`.
 
 | Application module | Executable callables entered | Primary automated focus |
 |---|---:|---|
-| `app/controller.py` | 165 / 165 | Command queue, lifecycle, connectivity, guards, recovery, execution reconstruction, order-side effects, snapshots |
+| `app/controller.py` | 176 / 176 | Event-driven command queue, independent broker/strategy/database/GUI/maintenance cadences, lifecycle, connectivity, guards, recovery, execution reconstruction, order-side effects, snapshots |
 | `app/flowchart_model.py` | 9 / 9 | Stage-card construction, labels, details, filtering |
 | `app/gui.py` | 324 / 324 | Formatting, blocker/recovery classification, widget state, command gating, timelines, panels, dialogs, layout helpers |
 | `app/ib_adapter.py` | 99 / 99 | Data normalization, event ownership, connectivity, market data, contracts, orders, executions, positions |
@@ -38,9 +38,9 @@ The callable gate is derived from the effective function map in `coverage.json`.
 | `app/strategy.py` | 21 / 21 | Five-stage transitions, fills, partial fills, editable settings, error states |
 | `app/timeline_scaling.py` | 28 / 28 | Parsing, filtering, robust bounds, downsampling, marker/time-axis placement |
 | `main.py` | 3 / 3 | Stable palette setup, single-instance startup, window lifecycle, cleanup |
-| **Total** | **811 / 811** | All effective executable application callables |
+| **Total** | **822 / 822** | All effective executable application callables |
 
-The counts are a snapshot of v3.0.17. The gate recalculates them from the current source and coverage report on every full test run. Adding a callable without a test causes the callable-coverage step to fail.
+The counts are a snapshot of v3.0.18. The gate recalculates them from the current source and coverage report on every full test run. Adding a callable without a test causes the callable-coverage step to fail.
 
 ## Test layers
 
