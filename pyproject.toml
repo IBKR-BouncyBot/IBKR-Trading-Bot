@@ -1,6 +1,6 @@
 [project]
 name = "ibkr-portable-trading-bot"
-version = "3.0.17"
+version = "3.0.18"
 description = "Portable Windows GUI trading bot for IBKR TWS/IB Gateway API"
 requires-python = ">=3.11"
 dependencies = [
