@@ -16,8 +16,8 @@ def test_v305_remaining_gui_imports_follow_ruff_order():
 
 
 def test_v305_version_and_patch_documentation_are_current():
-    assert "IBKR Portable Trading Bot v3.0.17" in GUI
-    assert "# IBKR Portable Trading Bot v3.0.17" in README
-    assert 'version = "3.0.17"' in PYPROJECT
+    assert "IBKR Portable Trading Bot v3.0.18" in GUI
+    assert "# IBKR Portable Trading Bot v3.0.18" in README
+    assert 'version = "3.0.18"' in PYPROJECT
     assert "v3.0.5 final Ruff GUI import-order correction" in ARCHIVE
     assert "v3.0.5 final Ruff GUI import-order correction" in DOC

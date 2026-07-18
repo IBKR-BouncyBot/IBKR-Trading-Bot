@@ -6,8 +6,8 @@ CONTROLLER = Path("app/controller.py").read_text(encoding="utf-8")
 
 
 def test_v121_version_labels_are_current():
-    assert "IBKR Portable Trading Bot v3.0.17" in GUI
-    assert "# IBKR Portable Trading Bot v3.0.17" in README
+    assert "IBKR Portable Trading Bot v3.0.18" in GUI
+    assert "# IBKR Portable Trading Bot v3.0.18" in README
     assert 'self._visual_refresh_timer.setInterval(75)' in GUI
     assert 'self._history_filter_timer.setInterval(200)' in GUI
     assert 'now - self._last_human_report_monotonic < 60.0' in CONTROLLER
@@ -143,7 +143,11 @@ def test_v22_startup_resume_requires_explicit_start_click():
     controller = Path("app/controller.py").read_text(encoding="utf-8")
     assert 'self._startup_resume_required = self._cycle_needs_operator_start(self.active_cycle)' in controller
     assert 'click 4. Start strategy to resume monitoring/recovery.' in controller
-    assert "if self._startup_resume_required:\n            self._refresh_confirmed_market_data_if_due()\n            return" in controller
+    assert (
+        "if self._startup_resume_required:\n"
+        "            self._refresh_confirmed_market_data_if_due(timeout=read_timeout)\n"
+        "            return"
+    ) in controller
 
 
 def test_v28_windows_build_reverts_to_v22_fast_packaging_path():

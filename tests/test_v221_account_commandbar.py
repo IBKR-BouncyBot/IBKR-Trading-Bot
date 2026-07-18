@@ -66,6 +66,6 @@ def test_command_bar_done_search_and_confirm_are_disabled_while_strategy_runs():
 
 
 def test_v221_version_strings():
-    assert "IBKR Portable Trading Bot v3.0.17" in GUI
-    assert '# IBKR Portable Trading Bot v3.0.17' in Path("README.md").read_text(encoding="utf-8")
-    assert 'version = "3.0.17"' in Path("pyproject.toml").read_text(encoding="utf-8")
+    assert "IBKR Portable Trading Bot v3.0.18" in GUI
+    assert '# IBKR Portable Trading Bot v3.0.18' in Path("README.md").read_text(encoding="utf-8")
+    assert 'version = "3.0.18"' in Path("pyproject.toml").read_text(encoding="utf-8")
