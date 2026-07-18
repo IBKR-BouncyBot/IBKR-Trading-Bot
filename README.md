@@ -513,9 +513,9 @@ Superseded release-specific documents are indexed under [docs/legacy](docs/legac
 
 - [v3.0.18 release note](docs/V3_0_18_EVENT_DRIVEN_CADENCES.md) — v3.0.18 removes two fixed waits from scheduled runtime work and separates controller responsibilities onto independent monotonic cadences
 - [CHANGELOG.md](CHANGELOG.md) — consolidated release history.
-- [Archived release notes](docs/legacy/README.md) — implementation history for v3.0.16 and earlier.
+- [Archived release notes](docs/legacy/README.md) — implementation history for v3.0.17 and earlier.
 
-This documentation update remains part of v3.0.17 and does not change trading, broker, persistence, recovery, or GUI behavior.
+This documentation update remains part of v3.0.18 and does not change trading, broker, persistence, recovery, or GUI behavior.
 
 ## Thank me
 
