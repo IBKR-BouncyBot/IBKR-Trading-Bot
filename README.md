@@ -1,4 +1,4 @@
-# IBKR Portable Trading Bot v3.0.17
+# IBKR Portable Trading Bot v3.0.18
 
 ![Simple-view](Images/Trading-Simple-view.png)
 
@@ -511,7 +511,7 @@ Superseded release-specific documents are indexed under [docs/legacy](docs/legac
 
 ## Release history
 
-- [v3.0.17 release note](docs/V3_0_17_FLOWCHART_HISTORY_SELECTOR.md) — First open source release! - flowchart history selection in every GUI mode, one unfiltered Windows pytest run, and this documentation-only public-repository preparation.
+- [v3.0.18 release note](docs/V3_0_18_EVENT_DRIVEN_CADENCES.md) — v3.0.18 removes two fixed waits from scheduled runtime work and separates controller responsibilities onto independent monotonic cadences
 - [CHANGELOG.md](CHANGELOG.md) — consolidated release history.
 - [Archived release notes](docs/legacy/README.md) — implementation history for v3.0.16 and earlier.
 
