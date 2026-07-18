@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import zipfile
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -129,7 +130,7 @@ def test_backup_reason_is_filename_sanitized_and_bounded(tmp_path: Path) -> None
 
 def test_missing_tables_and_corrupt_files_fail_restore_readiness(tmp_path: Path) -> None:
     incomplete = tmp_path / "incomplete.sqlite"
-    with sqlite3.connect(incomplete) as con:
+    with closing(sqlite3.connect(incomplete)) as con, con:
         con.execute("CREATE TABLE app_settings (key TEXT PRIMARY KEY)")
     corrupt = tmp_path / "corrupt.sqlite"
     corrupt.write_bytes(b"not sqlite")

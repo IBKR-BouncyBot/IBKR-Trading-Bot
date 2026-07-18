@@ -331,12 +331,13 @@ def test_poll_order_uses_cached_trade_without_full_open_order_refresh():
     class FakeIB:
         def __init__(self):
             self.req_open_orders = 0
+            self.sleep_calls = []
         def isConnected(self):
             return True
         def reqOpenOrders(self):
             self.req_open_orders += 1
         def sleep(self, seconds):
-            pass
+            self.sleep_calls.append(seconds)
         def trades(self):
             return []
         def openTrades(self):
@@ -351,6 +352,7 @@ def test_poll_order_uses_cached_trade_without_full_open_order_refresh():
     assert state is not None
     assert state.status == "Submitted"
     assert fake.req_open_orders == 0
+    assert fake.sleep_calls == []
 
 
 def test_open_app_orders_forces_broker_refresh():

@@ -2,6 +2,29 @@
 
 This file summarizes behavior-changing and maintenance releases represented by the repository. Historical implementation notes remain in `docs/legacy/` for traceability. Current behavior is documented in `README.md` and the current guides linked from `docs/README.md`.
 
+## v3.0.18
+
+### Changed
+
+- Replaced the fixed one-second controller sleep with an interruptible command wait and independent monotonic deadlines for broker callbacks (50 ms), strategy evaluation (100 ms), GUI snapshots (500 ms), database snapshot reads (1 s), and maintenance (1 s).
+- Changed scheduled quote reads to inspect existing subscriptions with a zero timeout. Explicit confirmation, start, and recovery paths retain bounded waits, but every price helper now checks the initial snapshot before sleeping and uses wait slices no longer than 50 ms instead of an unconditional 250 ms delay.
+- Made periodic order polling nonblocking: cached trade state is returned immediately, and a cache miss may request a throttled open-order refresh whose callback is consumed by a later broker cadence.
+- Moved read-heavy event, history, and GUI guard queries onto the database cadence and human-readable report generation onto the maintenance cadence. Safety-critical cycle, order, and execution persistence and live order-preflight queries remain synchronous.
+- Increased the application, package, Windows release, documentation, and regression-test version metadata from v3.0.17 to v3.0.18.
+
+### Safety boundaries
+
+- Strategy formulas, order types, quantity calculations, fill handling, RTH checks at the final submission boundary, reconciliation rules, and backup behavior are unchanged. Broker and strategy work remain serialized on the single controller worker thread.
+- The one-second database cadence applies only to read-heavy snapshot, history, and guard display data. Order intent, state transitions, fills, recovery facts, and resume checkpoints are still written immediately; BUY preflight reads the live SQLite ledger and risk totals rather than the GUI cache.
+- Scheduled broker, quote, and order-state reads no longer sleep. User-requested operations that require a bounded broker response, including confirmation, start, recovery, cancellation, and what-if checks, may still wait explicitly.
+- Shutdown now preempts an older queued command after the stop event is set, preventing a pending broker action from being executed during teardown.
+
+### Documentation and tests
+
+- Added event-driven scheduler, independent-cadence, immediate command wake-up, shutdown preemption, nonblocking market-data and order-polling, database-cache isolation, and live-preflight regression tests.
+- Added a release-metadata consistency regression covering the GUI title, package version, Windows build version, current documentation, changelog, and release-note placement.
+- Added [`docs/V3_0_18_EVENT_DRIVEN_CADENCES.md`](docs/V3_0_18_EVENT_DRIVEN_CADENCES.md) and archived the v3.0.17 release note under `docs/legacy/`.
+
 ## v3.0.17
 
 ### Changed
@@ -22,7 +45,7 @@ This file summarizes behavior-changing and maintenance releases represented by t
 - Added test-infrastructure regressions requiring the Windows full-test path to contain one unfiltered pytest invocation and no separate soak-only pass.
 - Completed a same-version public-repository documentation audit: current guides were corrected, superseded notes moved to `docs/legacy/`, a security policy and archive index were added, and generated/sensitive-file exclusions were expanded.
 - Adopted the PolyForm Noncommercial License 1.0.0 and included `LICENSE` and `SECURITY.md` in assembled Windows release folders.
-- Added [`docs/V3_0_17_FLOWCHART_HISTORY_SELECTOR.md`](docs/V3_0_17_FLOWCHART_HISTORY_SELECTOR.md).
+- Added [`docs/V3_0_17_FLOWCHART_HISTORY_SELECTOR.md`](docs/legacy/V3_0_17_FLOWCHART_HISTORY_SELECTOR.md).
 
 ## v3.0.16
 

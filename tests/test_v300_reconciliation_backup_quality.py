@@ -116,9 +116,9 @@ def test_v300_metadata_reconciliation_ui_and_quality_config_are_present():
     readme = Path("README.md").read_text(encoding="utf-8")
     script = Path("scripts/run_quality_checks.py").read_text(encoding="utf-8")
 
-    assert "IBKR Portable Trading Bot v3.0.17" in gui
-    assert "# IBKR Portable Trading Bot v3.0.17" in readme
-    assert 'version = "3.0.17"' in pyproject
+    assert "IBKR Portable Trading Bot v3.0.18" in gui
+    assert "# IBKR Portable Trading Bot v3.0.18" in readme
+    assert 'version = "3.0.18"' in pyproject
     assert 'self.tabs.addTab(self.recovery_tab, "Reconciliation")' in gui
     assert "Reconciliation screen: SQLite vs IBKR/TWS" in gui
     assert "Export audit bundle" in gui

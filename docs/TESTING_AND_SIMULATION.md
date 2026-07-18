@@ -105,7 +105,10 @@ Validate:
 
 Use test adapters/headless signals to validate:
 
-- command queue and lifecycle;
+- command queue and lifecycle, including immediate wake-up and shutdown preemption;
+- independent broker, strategy, GUI, database-snapshot, and maintenance cadences;
+- zero-timeout scheduled price/order reads, bounded short-slice explicit waits, and fail-closed broker-before-strategy ordering;
+- cached GUI database facts versus live SQLite order preflight;
 - RTH/data/session/hard-risk blockers;
 - Trading blocker reporting;
 - account-routing behavior;
@@ -146,7 +149,7 @@ The callable gate proves entry, not exhaustive path coverage. Assertions, branch
 
 The non-GUI offline expansion adds broker callback permutations, generated controller invariants, numerical/payload properties, recovery decision matrices, differential simulation, multi-instance isolation, subprocess crash/restart tests, schema migration and restore fixtures, storage fault injection, Gateway outage sequences, bounded soak tests, and a six-mutant safety gate. The complete scope and exclusions are in [`OFFLINE_BEHAVIOR_TESTS.md`](OFFLINE_BEHAVIOR_TESTS.md).
 
-The current v3.0.17 inventory contains 806 non-soak tests (805 expected passes and one strict expected failure documenting the shared-prefix Master Client limitation), five bounded soak tests, and 58 validated CSV scenario contracts across 54 price-path files. The Windows full gate collects all 811 pytest cases in one run. The complete offline run measured 76.4% combined statement/branch coverage, entered 811/811 executable application callables, and killed all six safety mutants.
+The current v3.0.18 inventory contains 823 non-soak tests (822 expected passes and one strict expected failure documenting the shared-prefix Master Client limitation), five bounded soak tests, and 58 validated CSV scenario contracts across 54 price-path files. The complete collection contains 828 pytest cases. The current repository gate reports 76.3% combined statement/branch coverage, entry into all 822/822 effective executable application callables, 6/6 safety mutants killed, and all 58 simulation contracts passing.
 
 ### Build-script tests
 

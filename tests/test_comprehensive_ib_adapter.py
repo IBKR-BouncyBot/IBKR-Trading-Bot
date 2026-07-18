@@ -423,6 +423,75 @@ def test_market_data_variant_and_active_mode_pipeline(live_adapter: tuple[IbAsyn
     assert automatic.status.startswith("OK - auto selected")
 
 
+def test_existing_fresh_subscription_returns_without_an_initial_wait(
+    live_adapter: tuple[IbAsyncTwsAdapter, FakeIB],
+) -> None:
+    adapter, ib = live_adapter
+    contract = stock_contract()
+    ticker = adapter._request_ticker(contract, "")
+    adapter._on_pending_tickers([ticker])
+    ib.sleep_calls.clear()
+
+    snapshot = adapter._try_price_for_contract(contract, timeout=1.0, note="fresh")
+
+    assert snapshot.api_data_received is True
+    assert snapshot.price == pytest.approx(100.0)
+    assert ib.sleep_calls == []
+
+
+def test_market_data_mode_change_does_not_add_a_fixed_quarter_second_wait(
+    live_adapter: tuple[IbAsyncTwsAdapter, FakeIB],
+) -> None:
+    adapter, ib = live_adapter
+    adapter._active_market_data_type = None
+    ib.sleep_calls.clear()
+
+    adapter._apply_market_data_type_to_tws(3)
+
+    assert adapter._active_market_data_type == 3
+    assert ib.market_data_types[-1] == 3
+    assert ib.sleep_calls == []
+
+
+def test_nonblocking_price_read_returns_cached_fields_without_sleeping(
+    live_adapter: tuple[IbAsyncTwsAdapter, FakeIB],
+) -> None:
+    adapter, ib = live_adapter
+    contract = stock_contract()
+    ib.sleep_calls.clear()
+
+    snapshot = adapter._try_price_for_contract(contract, timeout=0.0, note="scheduled")
+
+    assert snapshot.price == pytest.approx(100.0)
+    assert snapshot.api_data_received is False
+    assert ib.sleep_calls == []
+
+
+def test_bounded_price_wait_uses_short_slices_instead_of_quarter_seconds(
+    live_adapter: tuple[IbAsyncTwsAdapter, FakeIB],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter, ib = live_adapter
+    contract = stock_contract()
+    clock = [100.0]
+
+    monkeypatch.setattr("app.ib_adapter.time.monotonic", lambda: clock[0])
+
+    def advance(seconds: float) -> None:
+        ib.sleep_calls.append(float(seconds))
+        clock[0] += float(seconds)
+
+    monkeypatch.setattr(ib, "sleep", advance)
+    ib.sleep_calls.clear()
+
+    snapshot = adapter._try_price_for_contract(contract, timeout=0.12, note="bounded")
+
+    assert snapshot.api_data_received is False
+    assert ib.sleep_calls
+    assert max(ib.sleep_calls) <= 0.0500001
+    assert sum(ib.sleep_calls) == pytest.approx(0.12)
+
+
 def test_market_data_auto_annotation_no_data_and_public_upstream_block(live_adapter: tuple[IbAsyncTwsAdapter, FakeIB], monkeypatch: pytest.MonkeyPatch) -> None:
     adapter, _ = live_adapter
     contract = stock_contract()
@@ -537,12 +606,27 @@ def test_cancel_poll_and_open_order_paths(live_adapter: tuple[IbAsyncTwsAdapter,
     ib.open_trades = [trade]
     ib.all_trades = [trade]
     adapter.refresh_open_trades_cache(force=True)
+    ib.sleep_calls.clear()
     assert adapter.poll_order(order_ref).remaining == 2
+    assert ib.sleep_calls == []
     assert adapter.open_app_orders()[0].order_ref == order_ref
     adapter.cancel_order(order_ref)
     assert ib.cancelled_orders == [order]
     with pytest.raises(BrokerAdapterError, match="Could not find"):
         adapter.cancel_order("missing")
+
+
+def test_periodic_order_poll_cache_miss_requests_refresh_without_waiting(
+    live_adapter: tuple[IbAsyncTwsAdapter, FakeIB],
+) -> None:
+    adapter, ib = live_adapter
+    adapter._last_open_trades_refresh_monotonic = 0.0
+    ib.sleep_calls.clear()
+
+    assert adapter.poll_order(f"{APP_ORDER_PREFIX}|AAPL|MISSING") is None
+
+    assert ib.open_order_requests == 1
+    assert ib.sleep_calls == []
 
 
 def test_optional_int_execution_conversion_and_recovery(live_adapter: tuple[IbAsyncTwsAdapter, FakeIB]) -> None:

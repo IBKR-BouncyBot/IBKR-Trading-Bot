@@ -8,9 +8,9 @@ PYPROJECT = Path("pyproject.toml").read_text(encoding="utf-8")
 
 
 def test_v217_version_metadata_and_docs_are_current():
-    assert "IBKR Portable Trading Bot v3.0.17" in GUI
-    assert "# IBKR Portable Trading Bot v3.0.17" in README
-    assert 'version = "3.0.17"' in PYPROJECT
+    assert "IBKR Portable Trading Bot v3.0.18" in GUI
+    assert "# IBKR Portable Trading Bot v3.0.18" in README
+    assert 'version = "3.0.18"' in PYPROJECT
     assert Path("docs/legacy/V2_20_RECOVERY_GRAPH_RECOVERY_UI.md").exists()
 
 

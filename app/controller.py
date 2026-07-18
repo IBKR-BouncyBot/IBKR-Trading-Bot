@@ -143,9 +143,21 @@ class TradingController:
     the worker thread and are the only places that touch the broker adapter.
     """
 
-    # Zero means do not rate-limit reads of the cached TWS subscription handle.
-    # The adapter stamps actual pending-ticker events; repeated cached reads may
-    # update diagnostics but cannot refresh data age or advance strategy logic.
+    # Worker responsibilities run on independent monotonic cadences. GUI commands
+    # remain event-driven because Queue.get() wakes as soon as a command arrives;
+    # the bounded idle wait exists only so broker callbacks are pumped regularly
+    # even when the GUI is idle.
+    BROKER_CADENCE_SECONDS = 0.05
+    STRATEGY_CADENCE_SECONDS = 0.10
+    GUI_CADENCE_SECONDS = 0.50
+    DATABASE_CADENCE_SECONDS = 1.00
+    MAINTENANCE_CADENCE_SECONDS = 1.00
+    MAX_IDLE_WAIT_SECONDS = 0.25
+
+    # Zero means do not add a second rate limit inside the strategy cadence when
+    # reading the cached TWS subscription handle. The adapter stamps actual
+    # pending-ticker events; repeated cached reads may update diagnostics but
+    # cannot refresh data age or advance strategy logic.
     PRICE_POLL_INTERVAL_SECONDS = 0.0
     STALE_ACTIVE_CYCLE_SECONDS = 12 * 60 * 60
     ATR_WARMUP_BLOCK_PREFIX = "ATR warmup guard blocked BUY:"
@@ -168,6 +180,15 @@ class TradingController:
         self.active_cycle: Optional[CycleState] = self.storage.get_latest_active_cycle()
         self.contract: Optional[QualifiedContract] = None
         self._last_snapshot_emit = 0.0
+        self._last_snapshot_payload: dict[str, Any] = {}
+        self._last_database_refresh_monotonic = 0.0
+        self._snapshot_database_cache: dict[str, Any] = {
+            "ticker": "",
+            "recent_events": [],
+            "history_summary": {},
+            "guard_facts": {},
+            "errors": {},
+        }
         self._executions_recorded: set[str] = set()
         self._last_price_warning_at: dict[str, float] = {}
         self.price_snapshot: Optional[dict[str, Any]] = None
@@ -197,6 +218,7 @@ class TradingController:
             "trading_ready": False,
         }
         self._broker_connectivity_initialized = False
+        self._last_broker_refresh_monotonic = 0.0
         self._upstream_recovery_pending = False
         self._last_upstream_recovery_attempt_monotonic = 0.0
         self._auto_reconnect_enabled = False
@@ -532,13 +554,28 @@ class TradingController:
             return "fully_reconciled"
         return "broker_partially_checked"
 
-    def _app_owned_position_blocker_for_buy(self, cycle: CycleState) -> Optional[dict[str, str]]:
+    def _app_owned_position_blocker_for_buy(
+        self,
+        cycle: CycleState,
+        database_facts: Optional[dict[str, Any]] = None,
+    ) -> Optional[dict[str, str]]:
         """Return a BUY blocker for unsold shares created by this app only."""
-        try:
-            summary = self.storage.get_app_owned_unsold_position(cycle.ticker)
-        except Exception as exc:
-            message = f"BUY pre-flight blocked order: app-owned position ledger could not be confirmed: {exc}"
-            return self._trading_blocker("BUY", "app_position_unverified", message, "App ledger unavailable")
+        if database_facts is None:
+            try:
+                summary = self.storage.get_app_owned_unsold_position(cycle.ticker)
+            except Exception as exc:
+                message = f"BUY pre-flight blocked order: app-owned position ledger could not be confirmed: {exc}"
+                return self._trading_blocker("BUY", "app_position_unverified", message, "App ledger unavailable")
+        else:
+            errors = database_facts.get("errors") or {}
+            error = errors.get("app_owned_position")
+            if error:
+                message = f"BUY pre-flight blocked order: app-owned position ledger could not be confirmed: {error}"
+                return self._trading_blocker("BUY", "app_position_unverified", message, "App ledger unavailable")
+            if str(database_facts.get("ticker") or "") != cycle.ticker or "app_owned_position" not in database_facts:
+                message = "BUY pre-flight blocked order: the cached app-owned position ledger has not been refreshed for this ticker yet."
+                return self._trading_blocker("BUY", "app_position_unverified", message, "App ledger refreshing")
+            summary = database_facts.get("app_owned_position") or {}
         try:
             quantity = int(summary.get("quantity") or 0)
         except Exception:
@@ -558,7 +595,7 @@ class TradingController:
         )
         return self._trading_blocker("BUY", "app_owned_position", message, f"App position {quantity}")
 
-    def _current_trading_blockers(self) -> list[dict[str, str]]:
+    def _current_trading_blockers(self, database_facts: Optional[dict[str, Any]] = None) -> list[dict[str, str]]:
         """Describe live conditions that currently prevent a new BUY or SELL."""
         cycle = self.active_cycle
         if cycle is None:
@@ -573,8 +610,11 @@ class TradingController:
             Stage.SELL_TRAIL_ACTIVE,
         }
         if stage in active_stages:
-            connectivity = self._adapter_connectivity_snapshot()
-            self._broker_connectivity = connectivity
+            if database_facts is not None and self._broker_connectivity_initialized:
+                connectivity = dict(self._broker_connectivity)
+            else:
+                connectivity = self._adapter_connectivity_snapshot()
+                self._broker_connectivity = connectivity
             if stage in {Stage.WAIT_INITIAL_DROP, Stage.BUY_TRAIL_ACTIVE}:
                 connectivity_side = "BUY"
             elif stage in {Stage.WAIT_RISE_TRIGGER, Stage.SELL_TRAIL_ACTIVE}:
@@ -613,11 +653,11 @@ class TradingController:
                 )
 
         if stage == Stage.WAIT_INITIAL_DROP:
-            app_position = self._app_owned_position_blocker_for_buy(cycle)
+            app_position = self._app_owned_position_blocker_for_buy(cycle, database_facts)
             if app_position is not None:
                 blockers.append(app_position)
             try:
-                blockers.extend(self._risk_guard_blockers_for_buy(cycle))
+                blockers.extend(self._risk_guard_blockers_for_buy(cycle, database_facts=database_facts))
             except Exception as exc:
                 blockers.append(
                     self._trading_blocker(
@@ -735,7 +775,7 @@ class TradingController:
                 deduplicated.append(blocker)
         return deduplicated
 
-    def _trading_status_snapshot(self) -> dict[str, Any]:
+    def _trading_status_snapshot(self, database_facts: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         """Build the compact top-bar Trading state and full blocker details."""
         cycle = self.active_cycle
         if self._startup_resume_required:
@@ -756,7 +796,7 @@ class TradingController:
                 "blockers": [self._trading_blocker("BUY/SELL", "recovery", message, "Recovery")],
             }
 
-        blockers = self._current_trading_blockers()
+        blockers = self._current_trading_blockers(database_facts)
         if blockers:
             sides = {str(item.get("side") or "").upper() for item in blockers}
             if sides == {"BUY"}:
@@ -798,13 +838,105 @@ class TradingController:
             "blockers": [],
         }
 
-    def emit_snapshot(self, force: bool = False) -> None:
+    def _snapshot_guard_database_facts(self) -> dict[str, Any]:
+        """Read GUI-only guard facts on the database cadence.
+
+        Broker order pre-flight paths continue to query SQLite synchronously so
+        an order is never authorized from a cadence cache. These facts are only
+        used to render the top-bar blocker summary without opening several SQLite
+        connections on every GUI refresh.
+        """
+        cycle = self.active_cycle
+        facts: dict[str, Any] = {
+            "ticker": cycle.ticker if cycle is not None else "",
+            "errors": {},
+        }
+        if cycle is None or cycle.stage != Stage.WAIT_INITIAL_DROP:
+            return facts
+
+        errors: dict[str, str] = facts["errors"]
+
+        def capture(name: str, loader: Any) -> None:
+            try:
+                facts[name] = loader()
+            except Exception as exc:
+                errors[name] = str(exc)
+
+        capture("app_owned_position", lambda: self.storage.get_app_owned_unsold_position(cycle.ticker))
+        if bool(getattr(cycle, "hard_risk_limits_enabled", False)):
+            if float(getattr(cycle, "max_daily_loss_ticker", 0.0) or 0.0) > 0:
+                capture("daily_net_pnl_ticker", lambda: self.storage.get_daily_net_pnl_for_ticker(cycle.ticker))
+            if float(getattr(cycle, "max_daily_loss_total", 0.0) or 0.0) > 0:
+                capture("daily_net_pnl_total", self.storage.get_daily_net_pnl_total)
+            if int(getattr(cycle, "max_cycles_per_ticker_day", 0) or 0) > 0:
+                capture("completed_cycle_count", lambda: self.storage.get_completed_cycle_count(cycle.ticker))
+            if int(getattr(cycle, "max_consecutive_losses", 0) or 0) > 0:
+                capture("consecutive_loss_count", lambda: self.storage.get_consecutive_loss_count(cycle.ticker))
+        return facts
+
+    def _refresh_snapshot_database_cache(self, *, force: bool = False) -> dict[str, Any]:
+        """Refresh read-heavy snapshot data independently from GUI rendering."""
         now = time.monotonic()
-        if not force and now - self._last_snapshot_emit < 0.5:
+        if (
+            not force
+            and self._last_database_refresh_monotonic > 0
+            and now - self._last_database_refresh_monotonic < self.DATABASE_CADENCE_SECONDS
+        ):
+            return self._snapshot_database_cache
+
+        previous = self._snapshot_database_cache
+        errors: dict[str, str] = {}
+        ticker = self.strategy.normalized_ticker() if self.strategy else ""
+        try:
+            recent_events = self.storage.get_recent_events(60)
+        except Exception as exc:
+            recent_events = list(previous.get("recent_events") or [])
+            errors["recent_events"] = str(exc)
+        try:
+            history_summary = self.storage.history_summary(ticker)
+        except Exception as exc:
+            history_summary = dict(previous.get("history_summary") or {})
+            errors["history_summary"] = str(exc)
+
+        guard_facts = self._snapshot_guard_database_facts()
+        self._snapshot_database_cache = {
+            "ticker": ticker,
+            "recent_events": list(recent_events or []),
+            "history_summary": dict(history_summary or {}),
+            "guard_facts": guard_facts,
+            "errors": errors,
+            "refreshed_at": utc_now_iso(),
+        }
+        self._last_database_refresh_monotonic = now
+        return self._snapshot_database_cache
+
+    def _run_database_cycle(self, *, force: bool = False) -> None:
+        self._refresh_snapshot_database_cache(force=force)
+
+    def emit_snapshot(self, force: bool = False, *, refresh_database: bool = True) -> None:
+        now = time.monotonic()
+        if not force and now - self._last_snapshot_emit < self.GUI_CADENCE_SECONDS:
             return
         self._last_snapshot_emit = now
-        recent_events = self.storage.get_recent_events(60)
-        broker_connectivity = self._adapter_connectivity_snapshot() if self.connected else dict(self._broker_connectivity)
+        # GUI rendering never advances the database cadence. The first direct
+        # snapshot call may initialize an empty cache for compatibility with
+        # headless callers, but every subsequent refresh is owned exclusively
+        # by _run_database_cycle().
+        if refresh_database and self._last_database_refresh_monotonic <= 0:
+            self._refresh_snapshot_database_cache(force=True)
+        database_cache = self._snapshot_database_cache
+        recent_events = list(database_cache.get("recent_events") or [])
+        history_summary = dict(database_cache.get("history_summary") or {})
+        database_facts = database_cache.get("guard_facts") or {}
+
+        if not self.connected:
+            broker_connectivity = dict(self._broker_connectivity)
+        elif self._broker_connectivity_initialized and self._last_broker_refresh_monotonic > 0:
+            broker_connectivity = dict(self._broker_connectivity)
+        else:
+            broker_connectivity = self._adapter_connectivity_snapshot()
+            self._broker_connectivity_initialized = True
+            self._last_broker_refresh_monotonic = time.monotonic()
         self._broker_connectivity = broker_connectivity
         price_snapshot = dict(self.price_snapshot or {})
         monotonic_now = time.monotonic()
@@ -830,9 +962,16 @@ class TradingController:
             "upstream_recovery_pending": bool(self._upstream_recovery_pending),
             "strategy": asdict(self.strategy),
             "active_cycle": self.active_cycle.snapshot() if self.active_cycle else None,
-            "trading_status": self._trading_status_snapshot(),
+            "trading_status": self._trading_status_snapshot(database_facts),
             "price_snapshot": price_snapshot,
             "price_poll_interval_seconds": self.PRICE_POLL_INTERVAL_SECONDS,
+            "worker_cadences": {
+                "broker_seconds": self.BROKER_CADENCE_SECONDS,
+                "strategy_seconds": self.STRATEGY_CADENCE_SECONDS,
+                "gui_seconds": self.GUI_CADENCE_SECONDS,
+                "database_seconds": self.DATABASE_CADENCE_SECONDS,
+                "maintenance_seconds": self.MAINTENANCE_CADENCE_SECONDS,
+            },
             "market_capture": {"enabled": True, "buffer_rows": self._market_capture.buffer_size, "pending": self._market_capture.pending_count, "completed_files": [str(p) for p in self._market_capture.completed_files[-5:]]},
             "broker_recovery": dict(self._last_recovery_probe or {}),
             "recovery_confidence": self._recovery_confidence(),
@@ -841,10 +980,14 @@ class TradingController:
             "stale_active_cycle": bool(getattr(self, "_stale_active_cycle_detected", False)),
             "stale_active_cycle_age_seconds": self._active_cycle_stale_age_seconds(self.active_cycle),
             "stale_active_cycle_threshold_seconds": self.STALE_ACTIVE_CYCLE_SECONDS,
-            "history_summary": self.storage.history_summary(self.strategy.normalized_ticker() if self.strategy else ""),
+            "history_summary": history_summary,
             "events": recent_events,
+            "database_snapshot": {
+                "refreshed_at": database_cache.get("refreshed_at", ""),
+                "errors": dict(database_cache.get("errors") or {}),
+            },
         }
-        self._write_human_debug_report(snapshot, force=force)
+        self._last_snapshot_payload = snapshot
         self.signals.snapshot_updated.emit(snapshot)
 
     def _refresh_price_snapshot_freshness_for_emit(
@@ -952,35 +1095,134 @@ class TradingController:
             # Diagnostics must never affect trading or GUI updates.
             pass
 
+    def _run_maintenance_cycle(self, *, force: bool = False) -> None:
+        """Run low-frequency housekeeping independently from GUI rendering."""
+        self._refresh_stale_active_cycle_flag()
+        if self._last_snapshot_payload:
+            self._write_human_debug_report(self._last_snapshot_payload, force=force)
+
+    @staticmethod
+    def _worker_interval(value: float) -> float:
+        """Clamp a configured cadence so a bad value cannot create a busy loop."""
+        return max(0.001, float(value))
+
     def _thread_main(self) -> None:
         try:
             self._log("INFO", "Application worker started.")
-            self.emit_snapshot(force=True)
+            self._run_database_cycle(force=True)
+            self.emit_snapshot(force=True, refresh_database=False)
+            self._run_maintenance_cycle(force=True)
+
+            now = time.monotonic()
+            next_broker = now
+            next_strategy = now
+            next_database = now + self._worker_interval(self.DATABASE_CADENCE_SECONDS)
+            next_gui = now + self._worker_interval(self.GUI_CADENCE_SECONDS)
+            next_maintenance = now + self._worker_interval(self.MAINTENANCE_CADENCE_SECONDS)
+            broker_ready_for_strategy = False
+
             while not self._stop_event.is_set():
-                # Dispatch connectivity/order callbacks before accepting a GUI
-                # command so an already-reported 1100 outage cannot race a new
-                # order or recovery action in the command queue.
-                if self.connected and self.adapter.is_connected():
-                    process_events = getattr(self.adapter, "process_events", None)
-                    if callable(process_events):
+                now = time.monotonic()
+                if now >= next_broker:
+                    try:
+                        broker_ready_for_strategy = self._run_broker_cycle(process_timeout=0.0)
+                    except BrokerAdapterError as exc:
+                        broker_ready_for_strategy = False
+                        self._handle_broker_connection_problem(exc)
+                    except Exception as exc:
+                        broker_ready_for_strategy = False
+                        self._log("ERROR", f"Broker cadence error: {exc}")
+                    next_broker = time.monotonic() + self._worker_interval(self.BROKER_CADENCE_SECONDS)
+
+                if self._stop_event.is_set():
+                    break
+
+                now = time.monotonic()
+                if now >= next_strategy:
+                    if broker_ready_for_strategy:
                         try:
-                            process_events(0.0)
-                        except Exception:
-                            pass
-                    self._drain_broker_events()
-                    self._refresh_broker_connectivity_snapshot()
-                self._drain_commands()
+                            self._run_strategy_cycle(price_timeout=0.0)
+                        except BrokerAdapterError as exc:
+                            broker_ready_for_strategy = False
+                            self._handle_broker_connection_problem(exc)
+                        except Exception as exc:
+                            self._log("ERROR", f"Strategy cadence error: {exc}")
+                            if self.active_cycle:
+                                self.active_cycle = StrategyEngine.mark_error(self.active_cycle, str(exc))
+                                self.storage.upsert_cycle(self.active_cycle)
+                    next_strategy = time.monotonic() + self._worker_interval(self.STRATEGY_CADENCE_SECONDS)
+
+                now = time.monotonic()
+                if now >= next_database:
+                    try:
+                        self._run_database_cycle(force=True)
+                    except Exception as exc:
+                        self._log("WARN", f"Database snapshot cadence error: {exc}")
+                    next_database = time.monotonic() + self._worker_interval(self.DATABASE_CADENCE_SECONDS)
+
+                now = time.monotonic()
+                if now >= next_gui:
+                    try:
+                        self.emit_snapshot(refresh_database=False)
+                    except Exception as exc:
+                        self._log("WARN", f"GUI snapshot cadence error: {exc}")
+                    next_gui = time.monotonic() + self._worker_interval(self.GUI_CADENCE_SECONDS)
+
+                now = time.monotonic()
+                if now >= next_maintenance:
+                    try:
+                        self._run_maintenance_cycle()
+                    except Exception as exc:
+                        self._log("WARN", f"Maintenance cadence error: {exc}")
+                    next_maintenance = time.monotonic() + self._worker_interval(self.MAINTENANCE_CADENCE_SECONDS)
+
+                if self._stop_event.is_set():
+                    break
+
+                now = time.monotonic()
+                next_deadline = min(
+                    next_broker,
+                    next_strategy,
+                    next_database,
+                    next_gui,
+                    next_maintenance,
+                )
+                wait_timeout = min(
+                    self._worker_interval(self.MAX_IDLE_WAIT_SECONDS),
+                    max(0.0, next_deadline - now),
+                )
                 try:
-                    self._tick()
-                except BrokerAdapterError as exc:
-                    self._handle_broker_connection_problem(exc)
-                except Exception as exc:
-                    self._log("ERROR", f"Worker tick error: {exc}")
-                    if self.active_cycle:
-                        self.active_cycle = StrategyEngine.mark_error(self.active_cycle, str(exc))
-                        self.storage.upsert_cycle(self.active_cycle)
-                self.emit_snapshot()
-                time.sleep(1.0)
+                    command = self._commands.get(timeout=wait_timeout)
+                except queue.Empty:
+                    continue
+                # shutdown() sets the stop event as well as waking this queue. If
+                # an older command was already queued, do not execute it after
+                # shutdown has begun (it could otherwise submit a broker action).
+                if self._stop_event.is_set():
+                    break
+
+                # Dispatch any already-reported connectivity callback before the
+                # command. This preserves the fail-closed order-submission race
+                # guarantee while Queue.get() provides immediate command wakeup.
+                if self.connected and self.adapter.is_connected():
+                    try:
+                        self._pump_broker_callbacks(process_timeout=0.0)
+                    except BrokerAdapterError as exc:
+                        self._handle_broker_connection_problem(exc)
+                    except Exception as exc:
+                        self._log("WARN", f"Pre-command broker callback error: {exc}")
+                self._process_queued_command(*command)
+                self._drain_commands(max_commands=63)
+                broker_ready_for_strategy = False
+
+                # Commands may connect, disconnect, stop, or alter strategy state.
+                # Re-evaluate broker/strategy/GUI work immediately on the next
+                # loop without coupling it to the database/maintenance clocks.
+                now = time.monotonic()
+                next_broker = min(next_broker, now)
+                next_strategy = min(next_strategy, now)
+                next_gui = min(next_gui, now)
+
             try:
                 if self.adapter.is_connected():
                     self.adapter.disconnect()
@@ -1000,29 +1242,39 @@ class TradingController:
                 pass
             self.connected = False
             self.status = "Stopped"
-            self.emit_snapshot(force=True)
+            try:
+                self._run_database_cycle(force=True)
+            except Exception:
+                pass
+            self.emit_snapshot(force=True, refresh_database=False)
+            self._run_maintenance_cycle(force=True)
         finally:
             self._shutdown_complete.set()
 
-    def _drain_commands(self) -> None:
-        while True:
+    def _process_queued_command(self, name: str, payload: dict[str, Any]) -> None:
+        ack = payload.pop("_ack_event", None) if isinstance(payload, dict) else None
+        try:
+            self._handle_command(name, payload)
+        except Exception as exc:
+            self._log("ERROR", f"Command {name} failed: {exc}")
+            self.status = f"Error: {exc}"
+            self.signals.connection_changed.emit(self.connected, self.status)
+        finally:
+            if ack is not None:
+                try:
+                    ack.set()
+                except Exception:
+                    pass
+
+    def _drain_commands(self, max_commands: Optional[int] = None) -> None:
+        processed = 0
+        while max_commands is None or processed < max(0, int(max_commands)):
             try:
                 name, payload = self._commands.get_nowait()
             except queue.Empty:
                 return
-            ack = payload.pop("_ack_event", None) if isinstance(payload, dict) else None
-            try:
-                self._handle_command(name, payload)
-            except Exception as exc:
-                self._log("ERROR", f"Command {name} failed: {exc}")
-                self.status = f"Error: {exc}"
-                self.signals.connection_changed.emit(self.connected, self.status)
-            finally:
-                if ack is not None:
-                    try:
-                        ack.set()
-                    except Exception:
-                        pass
+            self._process_queued_command(name, payload)
+            processed += 1
 
     def _handle_command(self, name: str, payload: dict[str, Any]) -> None:
         if name == "CONNECT":
@@ -1195,6 +1447,7 @@ class TradingController:
         previous = dict(self._broker_connectivity or {})
         current = self._adapter_connectivity_snapshot()
         self._broker_connectivity = current
+        self._last_broker_refresh_monotonic = time.monotonic()
         if not self._broker_connectivity_initialized:
             self._broker_connectivity_initialized = True
             return current
@@ -2528,7 +2781,12 @@ class TradingController:
         self._api_data_invalidated_reason = "Waiting for the first fresh market-data update after reconnect."
         self._api_data_invalidated_at = utc_now_iso()
 
-    def _refresh_confirmed_market_data_if_due(self, *, force: bool = False) -> None:
+    def _refresh_confirmed_market_data_if_due(
+        self,
+        *,
+        force: bool = False,
+        timeout: Optional[float] = None,
+    ) -> None:
         """Keep the confirmed-ticker market-data monitor alive outside active stages.
 
         Stop/cancel/manual position handling should not freeze the price monitor.
@@ -2539,10 +2797,11 @@ class TradingController:
         """
         if self.contract is None or ((not force) and self._seconds_until_next_price_poll() > 0):
             return
+        read_timeout = 0.75 if timeout is None else max(0.0, float(timeout))
         try:
             self._update_rth_status(self.contract)
             self.adapter.set_market_data_type(self.connection.market_data_type)
-            snapshot = self.adapter.price_snapshot(self.contract, timeout=0.75)
+            snapshot = self.adapter.price_snapshot(self.contract, timeout=read_timeout)
             self._record_price_snapshot(snapshot, self.contract)
         except BrokerAdapterError as exc:
             self._set_price_error_snapshot(exc)
@@ -2755,53 +3014,72 @@ class TradingController:
         except Exception:
             return None
 
-    def _tick(self) -> None:
-        """Run one fail-closed worker-loop iteration.
-
-        The local API socket, Gateway-to-IBKR server link, and actual streaming
-        quote events are separate facts.  Broker callbacks are pumped and drained
-        first.  No strategy advancement, order polling, or new submission occurs
-        while the upstream link is unavailable or post-reconnect reconciliation
-        is pending.
-        """
-        if not self._ensure_connection_alive():
-            return
+    def _pump_broker_callbacks(self, process_timeout: float = 0.0) -> dict[str, Any]:
+        """Pump broker callbacks and update connectivity without running strategy work."""
         process_events = getattr(self.adapter, "process_events", None)
         if callable(process_events):
             try:
-                process_events(0.05)
+                process_events(max(0.0, float(process_timeout)))
             except Exception as exc:
                 if not self.adapter.is_connected():
                     self._handle_broker_connection_problem(exc)
-                    return
+                    return self._adapter_connectivity_snapshot()
         self._drain_broker_events()
-        connectivity = self._refresh_broker_connectivity_snapshot()
+        return self._refresh_broker_connectivity_snapshot()
+
+    def _run_broker_cycle(self, process_timeout: float = 0.0) -> bool:
+        """Run the independent broker cadence and report strategy readiness.
+
+        The local API socket, Gateway-to-IBKR server link, and actual streaming
+        quote events are separate facts. Broker callbacks are always pumped
+        before strategy work. No strategy advancement, order polling, or new
+        submission occurs while the upstream link is unavailable or
+        post-reconnect reconciliation is pending.
+        """
+        if not self._ensure_connection_alive():
+            return False
+        connectivity = self._pump_broker_callbacks(process_timeout)
         if connectivity.get("upstream_connected") is not True:
             if str(connectivity.get("state") or "") not in {"upstream_disconnected", "api_port_reset"}:
                 self._handle_upstream_connectivity_lost(connectivity)
-            return
+            return False
         if self._upstream_recovery_pending:
             self._recover_upstream_session_if_needed()
+            return False
+        return True
+
+    def _run_strategy_cycle(self, *, price_timeout: float = 0.0) -> None:
+        """Evaluate one strategy cadence using the latest broker callback state.
+
+        Scheduled reads use a zero timeout and inspect the existing streaming
+        subscription without sleeping. Explicit confirmation, startup recovery,
+        and the compatibility ``_tick`` wrapper retain their bounded wait.
+        """
+        if not self.connected or not self.adapter.is_connected():
             return
+        connectivity = self._broker_connectivity
+        if connectivity.get("upstream_connected") is not True or self._upstream_recovery_pending:
+            return
+        read_timeout = max(0.0, float(price_timeout))
         if self._startup_resume_required:
-            self._refresh_confirmed_market_data_if_due()
+            self._refresh_confirmed_market_data_if_due(timeout=read_timeout)
             return
         if self.active_cycle is None:
             # A confirmed ticker remains observable without an active cycle.
             # Only a newly delivered event is counted as fresh; cached Ticker
             # fields can still be displayed but cannot drive strategy logic.
-            self._refresh_confirmed_market_data_if_due()
+            self._refresh_confirmed_market_data_if_due(timeout=read_timeout)
             return
         cycle = self.active_cycle
         if cycle.stage in {Stage.ERROR, Stage.MANUAL_REVIEW, Stage.STOPPED, Stage.IDLE}:
-            self._refresh_confirmed_market_data_if_due()
+            self._refresh_confirmed_market_data_if_due(timeout=read_timeout)
             return
         if cycle.stage == Stage.CYCLE_COMPLETE:
             if cycle.stop_after_current_cycle or not self.strategy.auto_repeat:
-                self._refresh_confirmed_market_data_if_due()
+                self._refresh_confirmed_market_data_if_due(timeout=read_timeout)
                 return
 
-        fetched_price, last_price = self._poll_price_if_due(cycle, timeout=0.75)
+        fetched_price, last_price = self._poll_price_if_due(cycle, timeout=read_timeout)
         cycle = self.active_cycle or cycle
 
         if cycle.stage in {Stage.WAIT_INITIAL_DROP, Stage.WAIT_RISE_TRIGGER}:
@@ -2865,6 +3143,11 @@ class TradingController:
                 self._handle_sell_order_poll(cycle, polled)
         elif cycle.stage == Stage.CYCLE_COMPLETE:
             self._maybe_start_next_cycle()
+
+    def _tick(self) -> None:
+        """Compatibility wrapper for tests and explicit single-cycle callers."""
+        if self._run_broker_cycle(process_timeout=0.05):
+            self._run_strategy_cycle(price_timeout=0.75)
 
     def _seconds_until_next_price_poll(self) -> float:
         if self.PRICE_POLL_INTERVAL_SECONDS <= 0:
@@ -4018,6 +4301,7 @@ class TradingController:
         payload: Optional[dict[str, Any]] = None,
         *,
         stop_after_first: bool = False,
+        database_facts: Optional[dict[str, Any]] = None,
     ) -> list[dict[str, str]]:
         """Return currently active configured BUY blockers.
 
@@ -4051,27 +4335,39 @@ class TradingController:
             blockers.append(self._trading_blocker("BUY", code, message, short))
             return stop_after_first
 
+        def database_fact(name: str, loader: Any) -> Any:
+            if database_facts is None:
+                return loader()
+            if str(database_facts.get("ticker") or "") != cycle.ticker:
+                raise RuntimeError("cached risk facts are for a different ticker")
+            errors = database_facts.get("errors") or {}
+            if name in errors:
+                raise RuntimeError(str(errors[name]))
+            if name not in database_facts:
+                raise RuntimeError(f"cached risk fact {name} has not been refreshed")
+            return database_facts[name]
+
         ticker = cycle.ticker
         if hard_limits_enabled and float(getattr(cycle, "max_daily_loss_ticker", 0.0) or 0.0) > 0:
-            pnl = self.storage.get_daily_net_pnl_for_ticker(ticker)
+            pnl = database_fact("daily_net_pnl_ticker", lambda: self.storage.get_daily_net_pnl_for_ticker(ticker))
             if pnl <= -float(cycle.max_daily_loss_ticker):
                 message = f"Hard risk limit blocked BUY: {ticker} daily app P/L {pnl:.2f} is at/below -{cycle.max_daily_loss_ticker:.2f}."
                 if add("daily_loss_ticker", message, "Ticker loss limit"):
                     return blockers
         if hard_limits_enabled and float(getattr(cycle, "max_daily_loss_total", 0.0) or 0.0) > 0:
-            pnl = self.storage.get_daily_net_pnl_total()
+            pnl = database_fact("daily_net_pnl_total", self.storage.get_daily_net_pnl_total)
             if pnl <= -float(cycle.max_daily_loss_total):
                 message = f"Hard risk limit blocked BUY: total daily app P/L {pnl:.2f} is at/below -{cycle.max_daily_loss_total:.2f}."
                 if add("daily_loss_total", message, "Total loss limit"):
                     return blockers
         if hard_limits_enabled and int(getattr(cycle, "max_cycles_per_ticker_day", 0) or 0) > 0:
-            count = self.storage.get_completed_cycle_count(ticker)
+            count = database_fact("completed_cycle_count", lambda: self.storage.get_completed_cycle_count(ticker))
             if count >= int(cycle.max_cycles_per_ticker_day):
                 message = f"Hard risk limit blocked BUY: {ticker} already has {count} completed cycles in total."
                 if add("max_cycles", message, "Max cycles"):
                     return blockers
         if hard_limits_enabled and int(getattr(cycle, "max_consecutive_losses", 0) or 0) > 0:
-            count = self.storage.get_consecutive_loss_count(ticker)
+            count = database_fact("consecutive_loss_count", lambda: self.storage.get_consecutive_loss_count(ticker))
             if count >= int(cycle.max_consecutive_losses):
                 message = f"Hard risk limit blocked BUY: {ticker} has {count} consecutive losing completed cycles."
                 if add("loss_streak", message, "Loss streak"):

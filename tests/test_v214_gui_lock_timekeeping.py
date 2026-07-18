@@ -9,9 +9,9 @@ PYPROJECT = Path("pyproject.toml").read_text(encoding="utf-8")
 
 
 def test_v215_version_metadata_and_package_docs_are_current():
-    assert "IBKR Portable Trading Bot v3.0.17" in GUI
-    assert "# IBKR Portable Trading Bot v3.0.17" in README
-    assert 'version = "3.0.17"' in PYPROJECT
+    assert "IBKR Portable Trading Bot v3.0.18" in GUI
+    assert "# IBKR Portable Trading Bot v3.0.18" in README
+    assert 'version = "3.0.18"' in PYPROJECT
     assert Path("docs/legacy/V2_20_RECOVERY_GRAPH_RECOVERY_UI.md").exists()
 
 
@@ -59,7 +59,7 @@ def test_v215_rth_text_and_utc_timekeeping_are_visible_and_consistent():
 
 
 def test_v215_default_history_example_uses_current_utc_audit_data():
-    assert 'This is built-in v3.0.17 example data only.' in GUI
+    assert 'This is built-in v3.0.18 example data only.' in GUI
     assert '"created_at": "2026-07-07T14:30:00+00:00"' in GUI
     assert '"buy_filled_at": "2026-07-07T14:41:18+00:00"' in GUI
     assert '"sell_filled_at": "2026-07-07T15:39:42+00:00"' in GUI

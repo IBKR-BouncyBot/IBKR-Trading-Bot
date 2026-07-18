@@ -35,8 +35,8 @@ def test_real_pyinstaller_failures_and_missing_executable_still_fail():
 
 
 def test_v307_version_and_documentation():
-    assert "IBKR Portable Trading Bot v3.0.17" in GUI
-    assert "# IBKR Portable Trading Bot v3.0.17" in README
-    assert 'version = "3.0.17"' in PYPROJECT
+    assert "IBKR Portable Trading Bot v3.0.18" in GUI
+    assert "# IBKR Portable Trading Bot v3.0.18" in README
+    assert 'version = "3.0.18"' in PYPROJECT
     assert "v3.0.7 Windows build result handling" in ARCHIVE
     assert "v3.0.7 Windows build result handling" in DOC

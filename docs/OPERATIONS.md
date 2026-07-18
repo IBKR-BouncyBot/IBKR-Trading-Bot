@@ -1,6 +1,6 @@
 # Operations guide
 
-This guide describes the normal operator workflow for v3.0.17. It does not replace the broker’s API documentation or account controls.
+This guide describes the normal operator workflow for v3.0.18. It does not replace the broker’s API documentation or account controls.
 
 ## Before starting
 

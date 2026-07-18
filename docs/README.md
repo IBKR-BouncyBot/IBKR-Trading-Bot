@@ -1,6 +1,6 @@
 # Documentation index
 
-The files in this directory describe the current v3.0.17 behavior unless explicitly marked otherwise. The root of `docs/` is intentionally limited to current operating, design, recovery, and verification material. Superseded release notes are stored under [`legacy/`](legacy/README.md).
+The files in this directory describe the current v3.0.18 behavior unless explicitly marked otherwise. The root of `docs/` is intentionally limited to current operating, design, recovery, and verification material. Superseded release notes are stored under [`legacy/`](legacy/README.md).
 
 When documents disagree, use this source-of-truth order:
 
@@ -48,8 +48,8 @@ When documents disagree, use this source-of-truth order:
 
 ## Current release note
 
-[`V3_0_17_FLOWCHART_HISTORY_SELECTOR.md`](V3_0_17_FLOWCHART_HISTORY_SELECTOR.md) records the v3.0.17 flowchart selector and full Windows-test-run changes, plus the documentation-only GitHub preparation completed within the same release.
+[`V3_0_18_EVENT_DRIVEN_CADENCES.md`](V3_0_18_EVENT_DRIVEN_CADENCES.md) records the v3.0.18 event-driven scheduling, nonblocking scheduled broker reads, independent responsibility cadences, and verification results.
 
 ## Archived documentation
 
-The [`legacy/`](legacy/README.md) directory contains v3.0.16 and earlier release-specific notes. Those files may accurately describe the release that introduced a feature, but labels, defaults, layouts, tests, and limitations in them can be obsolete. They are not the current operating specification.
+The [`legacy/`](legacy/README.md) directory contains v3.0.17 and earlier release-specific notes. Those files may accurately describe the release that introduced a feature, but labels, defaults, layouts, tests, and limitations in them can be obsolete. They are not the current operating specification.

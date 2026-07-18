@@ -8,10 +8,10 @@ RUN_ALL_TESTS_BAT = Path("run_all_tests.bat").read_text(encoding="utf-8")
 
 
 def test_v3017_version_metadata_and_release_note_are_current():
-    assert "IBKR Portable Trading Bot v3.0.17" in GUI
-    assert "# IBKR Portable Trading Bot v3.0.17" in README
-    assert 'version = "3.0.17"' in PYPROJECT
-    assert Path("docs/V3_0_17_FLOWCHART_HISTORY_SELECTOR.md").exists()
+    assert "IBKR Portable Trading Bot v3.0.18" in GUI
+    assert "# IBKR Portable Trading Bot v3.0.18" in README
+    assert 'version = "3.0.18"' in PYPROJECT
+    assert Path("docs/legacy/V3_0_17_FLOWCHART_HISTORY_SELECTOR.md").exists()
 
 
 def test_flowchart_history_selector_is_not_hidden_by_simple_mode():

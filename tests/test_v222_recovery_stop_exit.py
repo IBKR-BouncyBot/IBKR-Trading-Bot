@@ -31,9 +31,9 @@ def _settings() -> StrategySettings:
 
 
 def test_v222_version_metadata_is_current():
-    assert "IBKR Portable Trading Bot v3.0.17" in GUI
-    assert "# IBKR Portable Trading Bot v3.0.17" in README
-    assert 'version = "3.0.17"' in PYPROJECT
+    assert "IBKR Portable Trading Bot v3.0.18" in GUI
+    assert "# IBKR Portable Trading Bot v3.0.18" in README
+    assert 'version = "3.0.18"' in PYPROJECT
 
 
 def test_stop_and_exit_waits_until_local_stopped_state_is_persisted(tmp_path, monkeypatch):
