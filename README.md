@@ -35,6 +35,8 @@ The application watches a confirmed stock contract, waits for a configurable dec
 
 ## What the bot does
 
+<img width="1600" height="520" alt="BouncyBot_five_stage_GitHub_style" src="https://github.com/user-attachments/assets/48d869fc-402a-4613-8136-a31f1debcb6d" />
+
 The bot implements a five-stage strategy for one confirmed IBKR stock contract:
 
 1. Watch for an initial percentage drop from a rising anchor.
