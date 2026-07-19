@@ -149,7 +149,7 @@ The callable gate proves entry, not exhaustive path coverage. Assertions, branch
 
 The non-GUI offline expansion adds broker callback permutations, generated controller invariants, numerical/payload properties, recovery decision matrices, differential simulation, multi-instance isolation, subprocess crash/restart tests, schema migration and restore fixtures, storage fault injection, Gateway outage sequences, bounded soak tests, and a six-mutant safety gate. The complete scope and exclusions are in [`OFFLINE_BEHAVIOR_TESTS.md`](OFFLINE_BEHAVIOR_TESTS.md).
 
-The current v3.0.18 inventory contains 823 non-soak tests (822 expected passes and one strict expected failure documenting the shared-prefix Master Client limitation), five bounded soak tests, and 58 validated CSV scenario contracts across 54 price-path files. The complete collection contains 828 pytest cases. The current repository gate reports 76.3% combined statement/branch coverage, entry into all 822/822 effective executable application callables, 6/6 safety mutants killed, and all 58 simulation contracts passing.
+The current v3.0.19 inventory contains 832 non-soak tests (831 expected passes and one strict expected failure documenting the shared-prefix Master Client limitation), five bounded soak tests, and 58 validated CSV scenario contracts across 54 price-path files. The complete collection contains 837 pytest cases. The current repository gate reports 77.0% combined statement/branch coverage, entry into all 835/835 effective executable application callables, 6/6 safety mutants killed, and all 58 simulation contracts passing.
 
 ### Build-script tests
 

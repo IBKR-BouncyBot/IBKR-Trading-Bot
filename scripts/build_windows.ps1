@@ -20,7 +20,7 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
-$version = "3.0.17"
+$version = "3.0.19"
 $appName = "IBKRTradingBot"
 $releaseName = "${appName}_${version}_Windows"
 $releaseDirectory = Join-Path $root "release"
@@ -171,7 +171,7 @@ Copy-Item -Path (Join-Path $root "SECURITY.md") -Destination $releaseRoot -Force
 Copy-Item -Path (Join-Path $root "docs") -Destination $releaseRoot -Recurse -Force
 
 $quickStart = @"
-IBKR Portable Trading Bot $version
+BouncyBot - IBKR Portable Trading Bot $version
 
 Start the application:
   GUI\IBKRTradingBot.exe

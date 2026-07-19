@@ -2,6 +2,32 @@
 
 This file summarizes behavior-changing and maintenance releases represented by the repository. Historical implementation notes remain in `docs/legacy/` for traceability. Current behavior is documented in `README.md` and the current guides linked from `docs/README.md`.
 
+## v3.0.19
+
+### Fixed
+
+- Removed the multi-second Trade History click-through delay caused by an unindexed ordered `events` lookup, repeated recursive capture-archive scans, eager capture ZIP parsing, and eager construction of every audit tab.
+- Added ordered `cycle_id`/timestamp indexes for `events` and `decision_events`; existing databases receive the indexes through the additive schema initialization path.
+- Changed current-format capture discovery to read only direct ZIP files from the selected ticker/cycle folder. Legacy/import fallback scanning now runs once only when the exact folder has no captures.
+- Corrected cycle-folder matching so `cycle_1` no longer selects `cycle_10` through `cycle_19` as candidates.
+- Made Timeline, Market capture, Orders, Executions, Decision events, and Raw log lazy tabs. Capture ZIPs are parsed only when Timeline or Market capture is first opened and the loaded result is shared by both tabs.
+- Removed the application-defined 6× ceiling from both audit timeline graphs. Zoom now stops only at Qt's absolute widget-size boundary, with overflow-safe handling for extreme programmatic values.
+- Replaced the minimal built-in history placeholder with a clearly labelled synthetic AAPL paper-trading cycle containing realistic entry, partial-execution, protective-order, final-exit, commission, decision-event, and market-capture data.
+- Added a second **OK / Cancel** confirmation before the Stop strategy dialog can submit the app-owned unsold quantity as a market SELL. Cancel is the default, and the warning states that the fill may realize a loss and does not include unrelated account positions.
+- Changed the current product display name to **BouncyBot - IBKR Portable Trading Bot** while retaining the established `IBKRTradingBot.exe` technical identifier for upgrade compatibility.
+- Increased application, package, Windows release, documentation, and regression-test metadata from v3.0.18 to v3.0.19.
+
+### Safety boundaries
+
+- Strategy calculations, broker-side order construction/submission, fill handling, risk, reconciliation, persistence, recovery, and shutdown behavior are unchanged. The only stop-path change is the additional operator confirmation before the existing app-position market SELL request is accepted.
+- The new indexes change SQLite query access paths only. Audit records and their ordering are unchanged.
+- Trade-history inspection remains read-only and local; it does not call IBKR/TWS.
+
+### Documentation and tests
+
+- Added query-plan, exact-folder discovery, cycle-token isolation, deferred-loading, one-time capture-loading, unrestricted-zoom, realistic-example consistency, product-branding, and potential-loss market-SELL confirmation regressions.
+- Added [`docs/V3_0_19_TRADE_HISTORY_AUDIT_PERFORMANCE.md`](docs/V3_0_19_TRADE_HISTORY_AUDIT_PERFORMANCE.md) and archived the v3.0.18 release note and implementation report under `docs/legacy/`.
+
 ## v3.0.18
 
 ### Changed

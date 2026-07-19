@@ -1,6 +1,6 @@
 # Deterministic offline behavior tests
 
-This document describes the current non-GUI, non-Windows, non-network test layer in v3.0.18. It covers strategy behavior, controller state transitions, broker-event handling, persistence and recovery, shutdown checkpoints, GUI contracts, and bounded performance behavior.
+This document describes the current non-GUI, non-Windows, non-network test layer in v3.0.19. It covers strategy behavior, controller state transitions, broker-event handling, persistence and recovery, shutdown checkpoints, GUI contracts, and bounded performance behavior.
 
 The suite deliberately avoids:
 
@@ -129,12 +129,12 @@ The complete Windows launcher runs the deterministic layers in this order:
 
 The Unix `scripts/run_tests.sh` helper still separates non-soak coverage from the soak subset to keep that development-host command practical.
 
-The current v3.0.18 validation inventory is:
+The current v3.0.19 validation inventory is:
 
-- 823 non-soak tests: 822 expected passes and 1 strict expected failure documenting the Master Client/shared-prefix limitation;
+- 832 non-soak tests: 831 expected passes and 1 strict expected failure documenting the Master Client/shared-prefix limitation;
 - 5 bounded soak tests;
-- 822/822 effective executable application callables entered;
-- 76.3% measured combined statement/branch coverage against the 75% minimum;
+- 835/835 effective executable application callables entered;
+- 77.0% measured combined statement/branch coverage against the 75% minimum;
 - 6/6 safety mutants killed;
 - 58 validated CSV scenario contracts across 54 price-path files.
 

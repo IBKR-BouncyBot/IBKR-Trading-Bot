@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 import re
 import time
 import zipfile
@@ -21,7 +22,7 @@ from collections import deque
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from zoneinfo import ZoneInfo
 
 from PySide6.QtCore import QEvent, QObject, QPointF, QRectF, QSize, Qt, QTimer
@@ -105,6 +106,11 @@ STAGE_LABELS = [
     (Stage.SELL_TRAIL_ACTIVE.value, "4. SELL trailing-stop active"),
     (Stage.CYCLE_COMPLETE.value, "5. Cycle complete / repeat"),
 ]
+
+# Qt widgets cannot exceed this framework-defined dimension. Audit zooming no
+# longer has an application-defined multiplier ceiling; this constant merely
+# prevents values that Qt itself cannot represent from overflowing the binding.
+QT_WIDGET_SIZE_MAX = 16_777_215
 
 
 
@@ -1733,11 +1739,19 @@ class CycleTimelineWidget(QWidget):
     path instead of only tables.
     """
 
-    def __init__(self, row: dict[str, Any], details: dict[str, Any], compact: bool = False):
+    def __init__(
+        self,
+        row: dict[str, Any],
+        details: dict[str, Any],
+        compact: bool = False,
+        *,
+        show_market_graph: bool = True,
+    ):
         super().__init__()
         self.row = row or {}
         self.details = details or {}
         self.compact = bool(compact)
+        self.show_market_graph = bool(show_market_graph)
         # Default audit timelines should fit inside the dialog without scrollbars.
         # Scroll bars appear only after explicit zooming or on very small screens.
         self.setMinimumHeight(300 if self.compact else 320)
@@ -1749,7 +1763,7 @@ class CycleTimelineWidget(QWidget):
         self.setMouseTracking(True)
         self.setMinimumWidth(self._base_canvas_width)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed if self.compact else QSizePolicy.Preferred)
-        self.setToolTip("Hover for crosshairs. Ctrl+mouse wheel zooms the audit timeline. Drag while zoomed to pan; use the scroll bars for larger zoom levels.")
+        self.setToolTip("Hover for crosshairs. Ctrl+mouse wheel zooms the audit timeline as far as needed. Drag while zoomed to pan; use the scroll bars for larger zoom levels.")
         self._path_points_raw = self._build_price_path()
         self._markers = self._build_markers()
         self._transitions = self._build_stage_transitions()
@@ -1766,19 +1780,27 @@ class CycleTimelineWidget(QWidget):
             max_points=260 if self.compact else 360,
         )
         self._path_time_window = timeline_path_time_window(self._path_points)
-        self._axis_buckets = [self._path_points, self._markers, self._transitions, self._risk_blocks]
-        # When market-capture rows are plotted, their first/last timestamps own
-        # the shared X-axis. Older cycle metadata or unrelated diagnostic rows
-        # must not compress the blue path while the action graph uses a different
-        # apparent scale. Without a usable market path, retain the all-event
-        # fallback axis used by imported/legacy histories.
-        self._axis_time_window = self._path_time_window or self._compute_axis_time_window()
-        self._axis_positions = true_time_axis_positions(
-            self._axis_buckets,
-            reference_window=self._path_time_window,
-        )
+        if self.show_market_graph:
+            self._axis_buckets = [self._path_points, self._markers, self._transitions, self._risk_blocks]
+            # When market-capture rows are plotted, their first/last timestamps
+            # own the shared X-axis. Older cycle metadata or unrelated diagnostic
+            # rows must not compress the blue path while the action graph uses a
+            # different apparent scale. Without a usable market path, retain the
+            # all-event fallback axis used by imported/legacy histories.
+            self._axis_time_window = self._path_time_window or self._compute_axis_time_window()
+            self._axis_positions = true_time_axis_positions(
+                self._axis_buckets,
+                reference_window=self._path_time_window,
+            )
+        else:
+            # The Summary tab intentionally shows app actions only. Exclude the
+            # hidden market path from its timestamp axis so actions use the full
+            # graph width rather than being compressed by unseen capture rows.
+            self._axis_buckets = [[], self._markers, self._transitions, self._risk_blocks]
+            self._axis_time_window = self._compute_axis_time_window()
+            self._axis_positions = true_time_axis_positions(self._axis_buckets)
         self._untimed_item_count = self._count_untimed_items()
-        if self._path_time_window is None:
+        if not self.show_market_graph or self._path_time_window is None:
             self._off_axis_timed_item_count = 0
         else:
             axis_low, axis_high = self._path_time_window
@@ -1801,8 +1823,27 @@ class CycleTimelineWidget(QWidget):
         self.update()
 
     def _set_zoom_factor(self, value: float) -> None:
-        self._zoom_factor = max(1.0, min(6.0, float(value)))
-        self.setMinimumWidth(int(self._base_canvas_width * self._zoom_factor))
+        try:
+            requested = float(value)
+        except (TypeError, ValueError):
+            return
+        if not math.isfinite(requested):
+            return
+        requested = max(1.0, requested)
+        # Clamp only to Qt's absolute widget-width boundary before multiplying.
+        # This avoids float overflow for extremely large programmatic zoom values
+        # while leaving ordinary operator zooming unrestricted by the application.
+        maximum_factor = float(QT_WIDGET_SIZE_MAX) / float(self._base_canvas_width)
+        effective = min(requested, maximum_factor)
+        target_width = max(
+            self._base_canvas_width,
+            int(round(self._base_canvas_width * effective)),
+        )
+        # Store the effective factor represented by the Qt canvas. There is no
+        # product-level cap such as the previous 6x limit; only Qt's own maximum
+        # widget dimension remains as a non-negotiable implementation boundary.
+        self._zoom_factor = float(target_width) / float(self._base_canvas_width)
+        self.setMinimumWidth(target_width)
         self.updateGeometry()
         self.update()
 
@@ -2230,7 +2271,7 @@ class CycleTimelineWidget(QWidget):
         fallback for imported records that do not carry usable timestamps.
         """
         fallback = clamp_fraction(fallback_position)
-        if len(self._path_points) < 2:
+        if not self.show_market_graph or len(self._path_points) < 2:
             return fallback
         item_time = _float_or_none(item.get("time"))
         if item_time is not None:
@@ -2406,23 +2447,31 @@ class CycleTimelineWidget(QWidget):
         title_font.setPointSize(10)
         painter.setFont(title_font)
         painter.setPen(QColor("#111827"))
-        painter.drawText(rect.adjusted(12, 8, -12, -8), Qt.AlignTop | Qt.AlignLeft, "Visual buy/sell timeline per cycle")
+        title = "Visual buy/sell timeline per cycle" if self.show_market_graph else "App actions timeline per cycle"
+        painter.drawText(rect.adjusted(12, 8, -12, -8), Qt.AlignTop | Qt.AlignLeft, title)
 
-        capture_files = self.details.get("market_capture_files") or []
-        capture_rows = self.details.get("market_capture_rows") or []
-        source = f"Source: {len(capture_rows):,} market-capture rows from {len(capture_files)} ZIP file(s)." if capture_rows else "Source: persisted cycle, order, execution and decision-event rows; no completed market-capture ZIP found."
-        if self._hidden_path_points:
-            source += f" Hidden from plotted market path: {self._hidden_path_points:,} off-scale/imported row(s)."
-        if self._axis_time_window:
-            if self._path_time_window:
-                source += " Separate graphs: the plotted market-data window defines one shared horizontal timestamp scale for both graphs."
+        if self.show_market_graph:
+            capture_files = self.details.get("market_capture_files") or []
+            capture_rows = self.details.get("market_capture_rows") or []
+            source = f"Source: {len(capture_rows):,} market-capture rows from {len(capture_files)} ZIP file(s)." if capture_rows else "Source: persisted cycle, order, execution and decision-event rows; no completed market-capture ZIP found."
+            if self._hidden_path_points:
+                source += f" Hidden from plotted market path: {self._hidden_path_points:,} off-scale/imported row(s)."
+            if self._axis_time_window:
+                if self._path_time_window:
+                    source += " Separate graphs: the plotted market-data window defines one shared horizontal timestamp scale for both graphs."
+                else:
+                    source += " Separate graphs: market data path and app actions share the same horizontal timestamp scale."
             else:
-                source += " Separate graphs: market data path and app actions share the same horizontal timestamp scale."
+                source += " Separate graphs: market data path and app actions use labelled fallback positions where timestamps are unavailable."
         else:
-            source += " Separate graphs: market data path and app actions use labelled fallback positions where timestamps are unavailable."
+            source = "Source: persisted cycle, order, execution and decision-event rows. The Summary tab shows app actions only."
+            if self._axis_time_window:
+                source += " App actions share one horizontal timestamp scale."
+            else:
+                source += " App actions use labelled fallback positions where timestamps are unavailable."
         if self._untimed_item_count:
             source += f" Untimed priced action item(s): {self._untimed_item_count}."
-        if self._off_axis_timed_item_count:
+        if self.show_market_graph and self._off_axis_timed_item_count:
             source += f" Timed app item(s) outside the plotted market-data window are pinned to the nearest edge: {self._off_axis_timed_item_count}."
         painter.setFont(QFont())
         painter.setPen(QColor("#5b6270"))
@@ -2433,7 +2482,7 @@ class CycleTimelineWidget(QWidget):
         for bucket in (self._markers, self._transitions, self._risk_blocks):
             for item in bucket:
                 action_price_items.append(item.get("price"))
-        path_bounds = display_price_bounds(path_prices, ()) if path_prices else None
+        path_bounds = display_price_bounds(path_prices, ()) if self.show_market_graph and path_prices else None
         action_bounds = display_price_bounds(action_price_items, self._important_prices()) if action_price_items else None
         if path_bounds is None and action_bounds is None:
             painter.setPen(QColor("#6b7280"))
@@ -2452,22 +2501,29 @@ class CycleTimelineWidget(QWidget):
                 labels = ["Price"]
             return max(78, min(148, max(metrics.horizontalAdvance(label) for label in labels) + 22))
 
-        axis_width = axis_width_for([path_bounds, action_bounds])
+        bounds_for_axis = [path_bounds, action_bounds] if self.show_market_graph else [action_bounds]
+        axis_width = axis_width_for(bounds_for_axis)
         plot_left = rect.left() + axis_width + 14
         plot_right = rect.right() - 30
         plot_width = max(180.0, plot_right - plot_left)
         top = rect.top() + (82 if not self.compact else 78)
         bottom_reserved = 52 if not self.compact else 44
-        gap = 24 if not self.compact else 20
         available = max(176.0, rect.bottom() - top - bottom_reserved)
-        price_height = max(80.0, available * 0.47)
-        action_height = max(86.0, available - price_height - gap)
-        if top + price_height + gap + action_height > rect.bottom() - 34:
-            total = max(158.0, rect.bottom() - top - 34 - gap)
-            price_height = max(72.0, total * 0.46)
-            action_height = max(76.0, total - price_height)
-        market_plot = QRectF(plot_left, top, plot_width, price_height)
-        action_plot = QRectF(plot_left, market_plot.bottom() + gap, plot_width, action_height)
+        market_plot: Optional[QRectF] = None
+        if self.show_market_graph:
+            gap = 24 if not self.compact else 20
+            price_height = max(80.0, available * 0.47)
+            action_height = max(86.0, available - price_height - gap)
+            if top + price_height + gap + action_height > rect.bottom() - 34:
+                total = max(158.0, rect.bottom() - top - 34 - gap)
+                price_height = max(72.0, total * 0.46)
+                action_height = max(76.0, total - price_height)
+            market_plot = QRectF(plot_left, top, plot_width, price_height)
+            action_plot = QRectF(plot_left, market_plot.bottom() + gap, plot_width, action_height)
+        else:
+            # Give the Summary tab's sole graph the complete chart area that was
+            # previously divided between market data and app actions.
+            action_plot = QRectF(plot_left, top, plot_width, available)
 
         def draw_plot_frame(plot: QRectF, bounds: Optional[tuple[float, float]], title: str, empty: str) -> None:
             painter.save()
@@ -2532,23 +2588,25 @@ class CycleTimelineWidget(QWidget):
                 position = float(idx) / max(1.0, float(max(1, count - 1)))
             return self._x_for_position(plot.left(), plot.right(), position)
 
-        draw_plot_frame(market_plot, path_bounds, "Market data graph - captured selected prices", "No captured market-data path is available for this cycle.")
+        if market_plot is not None:
+            draw_plot_frame(market_plot, path_bounds, "Market data graph - captured selected prices", "No captured market-data path is available for this cycle.")
         draw_plot_frame(action_plot, action_bounds, "App actions graph - orders, fills, stages and guards", "No priced app action markers are available; stage/guard events still appear on the time axis when present.")
 
         if self._axis_time_window is not None:
             painter.save()
             painter.setPen(QPen(QColor("#e2e8f0"), 1, Qt.DashLine))
             for position in (0.08, 0.52, 0.96):
-                market_x = self._x_for_position(market_plot.left(), market_plot.right(), position)
+                if market_plot is not None:
+                    market_x = self._x_for_position(market_plot.left(), market_plot.right(), position)
+                    painter.drawLine(QPointF(market_x, market_plot.top()), QPointF(market_x, market_plot.bottom()))
                 action_x = self._x_for_position(action_plot.left(), action_plot.right(), position)
-                painter.drawLine(QPointF(market_x, market_plot.top()), QPointF(market_x, market_plot.bottom()))
                 painter.drawLine(QPointF(action_x, action_plot.top()), QPointF(action_x, action_plot.bottom()))
             painter.restore()
 
         market_hover_targets: list[tuple[float, float, str]] = []
         action_hover_targets: list[tuple[float, float, str]] = []
 
-        if path_bounds is not None and len(self._path_points) >= 2:
+        if market_plot is not None and path_bounds is not None and len(self._path_points) >= 2:
             painter.setPen(QPen(QColor("#2563eb"), 2))
             previous: Optional[QPointF] = None
             for idx, point in enumerate(self._path_points):
@@ -2559,7 +2617,7 @@ class CycleTimelineWidget(QWidget):
                 if previous is not None:
                     painter.drawLine(previous, current)
                 previous = current
-        elif path_bounds is not None and len(self._path_points) == 1:
+        elif market_plot is not None and path_bounds is not None and len(self._path_points) == 1:
             point = self._path_points[0]
             x = x_for(market_plot, 0, 0, 1, point)
             y = y_for(market_plot, path_bounds, point.get("price"))
@@ -2573,9 +2631,6 @@ class CycleTimelineWidget(QWidget):
             painter.drawLine(QPointF(x, action_plot.top()), QPointF(x, action_plot.bottom()))
             y = y_for(action_plot, action_bounds, transition.get("price"))
             action_hover_targets.append((x, y, f"Stage transition\n{self._format_axis_time(transition.get('time'))}\n{_compact_text(transition.get('label') or transition.get('event_type'), 56)}"))
-            if not self.compact:
-                label = _compact_text(transition.get("event_type") or transition.get("label"), 28)
-                self._draw_small_label(painter, x, action_plot.bottom() + 8 + (idx % 2) * 31, label, QColor("#2563eb"))
 
         for idx, block in enumerate(self._risk_blocks[:12]):
             x = x_for(action_plot, 3, idx, max(1, len(self._risk_blocks)), block)
@@ -2604,19 +2659,21 @@ class CycleTimelineWidget(QWidget):
 
         draw_time_ticks(action_plot)
 
-        if path_bounds is not None:
+        if market_plot is not None and path_bounds is not None:
             self._draw_hover_overlay(painter, market_plot, market_hover_targets, path_bounds[0], path_bounds[1])
         if action_bounds is not None:
             self._draw_hover_overlay(painter, action_plot, action_hover_targets, action_bounds[0], action_bounds[1])
 
         if not self.compact:
-            legend = [
-                f"Market rows drawn: {len(self._path_points)}",
+            legend = []
+            if self.show_market_graph:
+                legend.append(f"Market rows drawn: {len(self._path_points)}")
+            legend.extend([
                 f"Action markers: {len(self._markers)}",
                 f"Stage transitions: {len(self._transitions)}",
                 f"Risk/guard blocks: {len(self._risk_blocks)}",
-            ]
-            if self._hidden_path_points:
+            ])
+            if self.show_market_graph and self._hidden_path_points:
                 legend.append(f"Hidden off-scale rows: {self._hidden_path_points}")
             painter.setPen(QColor("#374151"))
             painter.drawText(rect.adjusted(12, rect.height() - 24, -12, -6), Qt.AlignLeft | Qt.AlignBottom, " | ".join(legend))
@@ -4349,8 +4406,9 @@ class StopDialog(QDialog):
         self.close_btn = QPushButton("Cancel" if self.safe_to_exit else "Do not stop")
 
         self.sell_market_btn.setToolTip(
-            "Cancels any app-owned working orders first. If this app has bought shares in the active cycle that have not yet been sold, "
-            "the bot submits a SELL market order for that remaining app-owned quantity after existing app SELL orders are no longer working."
+            "Opens a second OK/Cancel warning because a market fill may realize a loss. After OK, the bot cancels any app-owned working orders first. "
+            "If this app has bought shares in the active cycle that have not yet been sold, it submits a SELL market order for that remaining app-owned quantity "
+            "after existing app SELL orders are no longer working."
         )
         self.stop_now_btn.setToolTip(
             "Stops the local strategy cycle immediately without cancelling or submitting broker orders. Use this when no app-owned open TWS orders are visible."
@@ -4436,7 +4494,7 @@ class StopDialog(QDialog):
         layout.addWidget(self.close_btn)
 
         self.cancel_btn.clicked.connect(lambda: self._choose(StopAction.CANCEL_OPEN_BOT_ORDERS))
-        self.sell_market_btn.clicked.connect(lambda: self._choose(StopAction.SELL_APP_POSITION_MARKET))
+        self.sell_market_btn.clicked.connect(self._confirm_sell_market)
         self.leave_btn.clicked.connect(lambda: self._choose(StopAction.LEAVE_ORDERS_WORKING))
         self.after_btn.clicked.connect(lambda: self._choose(StopAction.STOP_AFTER_CURRENT_CYCLE))
         self.stop_now_btn.clicked.connect(lambda: self._choose(StopAction.STOP_NOW_NO_BROKER_ACTION))
@@ -4444,6 +4502,25 @@ class StopDialog(QDialog):
         self.exit_resume_later_btn.clicked.connect(self._choose_exit_only)
         self.exit_only_btn.clicked.connect(self._choose_exit_only)
         self.close_btn.clicked.connect(self.reject)
+
+    def _confirm_sell_market(self) -> None:
+        quantity_label = (
+            f"all {self.unsold_quantity:g} app-bought unsold share(s)"
+            if self.unsold_quantity > 0
+            else "the entire app-bought unsold position"
+        )
+        answer = QMessageBox.question(
+            self,
+            "Confirm potential-loss market SELL",
+            f"Are you sure you want to sell {quantity_label} with a market order?\n\n"
+            "The order may fill immediately at an unfavorable price and may realize a loss. "
+            "Only the app-owned unsold quantity for the active cycle will be submitted; unrelated account positions are not included.",
+            QMessageBox.Ok | QMessageBox.Cancel,
+            QMessageBox.Cancel,
+        )
+        if answer != QMessageBox.Ok:
+            return
+        self._choose(StopAction.SELL_APP_POSITION_MARKET)
 
     def _choose(self, action: StopAction, *, exit_app: bool = False) -> None:
         self.selected_action = action
@@ -4464,21 +4541,117 @@ class CycleAuditDialog(QDialog):
         self.setWindowFlags(self.windowFlags() | Qt.WindowMaximizeButtonHint | Qt.WindowMinimizeButtonHint)
         self.setSizeGripEnabled(True)
         self.setMinimumSize(920, 640)
-        details = self._enriched_details(row, details)
-        ticker = row.get("ticker") or "-"
-        cycle_number = row.get("cycle_number") or "-"
-        self.setWindowTitle(f"Cycle audit log - {ticker} cycle {cycle_number}")
+        self.row = dict(row or {})
+        self.details = dict(details or {})
+        self.details.setdefault("cycle", self.row)
+        if self.row.get("__example"):
+            self.details.setdefault("market_capture_rows", [])
+            self.details.setdefault("market_capture_files", [])
+        self._market_capture_loaded = "market_capture_rows" in self.details and "market_capture_files" in self.details
+        self._lazy_tabs: dict[int, tuple[QVBoxLayout, Callable[[], QWidget], QLabel]] = {}
+
+        ticker = self.row.get("ticker") or "-"
+        cycle_number = self.row.get("cycle_number") or "-"
+        display_ticker = f"{ticker} (built-in sample)" if self.row.get("__example") else str(ticker)
+        self.setWindowTitle(f"Cycle audit log - {display_ticker} cycle {cycle_number}")
         self.resize(1220, 820)
         layout = QVBoxLayout(self)
-        title = QLabel(f"{ticker} cycle {cycle_number} - orders, executions, verbose log and audit events")
+        title = QLabel(f"{display_ticker} cycle {cycle_number} - orders, executions, verbose log and audit events")
         title.setObjectName("StatusLabel")
         layout.addWidget(title)
 
-        tabs = QTabWidget()
-        tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        tabs.addTab(self._summary_tab(row, details), "Summary")
-        tabs.addTab(self._timeline_tab(row, details), "Timeline")
-        tabs.addTab(self._records_table(details.get("orders") or [], [
+        self.tabs = QTabWidget()
+        self.tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.tabs.addTab(
+            self._summary_tab(
+                self.row,
+                self.details,
+                capture_deferred=not self._market_capture_loaded,
+            ),
+            "Summary",
+        )
+        self._timeline_tab_index = self._add_lazy_tab(
+            "Timeline",
+            self._build_timeline_tab,
+            "Select this tab to load the completed market-capture ZIPs and build the detailed timeline.",
+        )
+        self._orders_tab_index = self._add_lazy_tab(
+            "Orders",
+            self._build_orders_tab,
+            "Select this tab to build the order-record table.",
+        )
+        self._executions_tab_index = self._add_lazy_tab(
+            "Executions",
+            self._build_executions_tab,
+            "Select this tab to build the execution-record table.",
+        )
+        self._market_capture_tab_index = self._add_lazy_tab(
+            "Market capture",
+            self._build_market_capture_tab,
+            "Select this tab to load and inspect completed market-capture ZIPs.",
+        )
+        self._decision_events_tab_index = self._add_lazy_tab(
+            "Decision events",
+            self._build_decision_events_tab,
+            "Select this tab to build the structured decision-event table.",
+        )
+        self._raw_log_tab_index = self._add_lazy_tab(
+            "Raw log",
+            self._build_raw_log_tab,
+            "Select this tab to format the complete verbose audit log.",
+        )
+        self.tabs.currentChanged.connect(self._queue_materialize_tab)
+        layout.addWidget(self.tabs, 1)
+        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _add_lazy_tab(self, label: str, builder: Callable[[], QWidget], message: str) -> int:
+        container = QWidget()
+        tab_layout = QVBoxLayout(container)
+        status = QLabel(message)
+        status.setObjectName("Muted")
+        status.setWordWrap(True)
+        tab_layout.addWidget(status)
+        index = self.tabs.addTab(container, label)
+        self._lazy_tabs[index] = (tab_layout, builder, status)
+        return index
+
+    def _queue_materialize_tab(self, index: int) -> None:
+        if index not in self._lazy_tabs:
+            return
+        # Let Qt paint the lightweight placeholder before any requested file
+        # parsing or large table construction starts on the GUI thread.
+        QTimer.singleShot(0, lambda selected=index: self._materialize_tab(selected))
+
+    def _materialize_tab(self, index: int) -> None:
+        pending = self._lazy_tabs.pop(index, None)
+        if pending is None:
+            return
+        tab_layout, builder, status = pending
+        status.setText("Loading audit data...")
+        try:
+            widget = builder()
+        except Exception as exc:
+            status.setText(f"Could not load this audit tab: {exc}")
+            return
+        status.setVisible(False)
+        tab_layout.addWidget(widget, 1)
+
+    def _ensure_market_capture_loaded(self) -> None:
+        if self._market_capture_loaded:
+            return
+        rows, files = self._load_market_capture_rows(self.row, self.details)
+        self.details["market_capture_rows"] = rows
+        self.details["market_capture_files"] = files
+        self._market_capture_loaded = True
+
+    def _build_timeline_tab(self) -> QWidget:
+        self._ensure_market_capture_loaded()
+        return self._timeline_tab(self.row, self.details)
+
+    def _build_orders_tab(self) -> QWidget:
+        return self._records_table(self.details.get("orders") or [], [
             ("created_at", "Created"),
             ("action", "Action"),
             ("order_type", "Type"),
@@ -4489,8 +4662,10 @@ class CycleAuditDialog(QDialog):
             ("order_id", "Order ID"),
             ("perm_id", "permId"),
             ("order_ref", "OrderRef"),
-        ], "No order rows found for this cycle."), "Orders")
-        tabs.addTab(self._records_table(details.get("executions") or [], [
+        ], "No order rows found for this cycle.")
+
+    def _build_executions_tab(self) -> QWidget:
+        return self._records_table(self.details.get("executions") or [], [
             ("executed_at", "Executed"),
             ("side", "Side"),
             ("shares", "Shares"),
@@ -4499,9 +4674,14 @@ class CycleAuditDialog(QDialog):
             ("commission", "Commission"),
             ("execution_id", "Execution ID"),
             ("order_ref", "OrderRef"),
-        ], "No execution rows found for this cycle."), "Executions")
-        tabs.addTab(self._market_capture_tab(row, details), "Market capture")
-        tabs.addTab(self._records_table(details.get("decision_events") or [], [
+        ], "No execution rows found for this cycle.")
+
+    def _build_market_capture_tab(self) -> QWidget:
+        self._ensure_market_capture_loaded()
+        return self._market_capture_tab(self.row, self.details)
+
+    def _build_decision_events_tab(self) -> QWidget:
+        return self._records_table(self.details.get("decision_events") or [], [
             ("created_at", "Created"),
             ("event_type", "Event"),
             ("stage_before", "Before"),
@@ -4510,7 +4690,9 @@ class CycleAuditDialog(QDialog):
             ("broker_order_id", "Order ID"),
             ("perm_id", "permId"),
             ("message", "Message"),
-        ], "No structured decision events found for this cycle."), "Decision events")
+        ], "No structured decision events found for this cycle.")
+
+    def _build_raw_log_tab(self) -> QWidget:
         self.text = QTextEdit()
         self.text.setReadOnly(True)
         self.text.setLineWrapMode(QTextEdit.NoWrap)
@@ -4518,12 +4700,8 @@ class CycleAuditDialog(QDialog):
         self.text.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.text.setMinimumHeight(520)
-        self.text.setPlainText(self._format(row, details))
-        tabs.addTab(self.text, "Raw log")
-        layout.addWidget(tabs, 1)
-        buttons = QDialogButtonBox(QDialogButtonBox.Close)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        self.text.setPlainText(self._format(self.row, self.details))
+        return self.text
 
     @classmethod
     def _enriched_details(cls, row: dict[str, Any], details: dict[str, Any]) -> dict[str, Any]:
@@ -4546,19 +4724,36 @@ class CycleAuditDialog(QDialog):
         return capture_ids
 
     @staticmethod
-    def _capture_path_matches_expected(path: Path, *, ticker: str, cycle_number: str, cycle_id: str, capture_ids: set[str]) -> bool:
-        haystack = " ".join(str(part) for part in path.parts[-6:]).upper()
-        if capture_ids and any(capture_id.upper() in haystack for capture_id in capture_ids):
-            return True
-        if ticker and len(ticker) > 1 and re.search(rf"(?<![A-Z0-9]){re.escape(ticker)}(?![A-Z0-9])", haystack):
+    def _capture_cycle_tokens(cycle_number: Any) -> set[str]:
+        raw = str(cycle_number or "").strip()
+        if not raw:
+            return set()
+        values = {raw}
+        try:
+            values.add(str(int(float(raw))))
+        except Exception:
+            pass
+        return {
+            token.upper()
+            for value in values
+            for token in (f"cycle_{value}", f"cycle-{value}", f"cycle{value}")
+        }
+
+    @classmethod
+    def _capture_path_matches_expected(cls, path: Path, *, ticker: str, cycle_number: str, cycle_id: str, capture_ids: set[str]) -> bool:
+        parts = [str(part).upper() for part in path.parts[-8:]]
+        haystack = " ".join(parts)
+        filename = path.name.upper()
+        if capture_ids and any(capture_id.upper() in filename or capture_id.upper() in haystack for capture_id in capture_ids):
             return True
         if cycle_id and cycle_id.upper() in haystack:
             return True
-        if cycle_number:
-            tokens = {f"CYCLE_{cycle_number}", f"CYCLE-{cycle_number}", f"CYCLE{cycle_number}"}
-            if any(token.upper() in haystack for token in tokens):
-                return True
-        return False
+        ticker_match = not ticker or ticker.upper() in parts or bool(
+            re.search(rf"(?<![A-Z0-9]){re.escape(ticker.upper())}(?![A-Z0-9])", filename)
+        )
+        cycle_tokens = cls._capture_cycle_tokens(cycle_number)
+        cycle_match = not cycle_tokens or any(part in cycle_tokens for part in parts)
+        return bool(ticker_match and cycle_match)
 
     @staticmethod
     def _capture_row_has_identity(row: dict[str, Any]) -> bool:
@@ -4590,45 +4785,65 @@ class CycleAuditDialog(QDialog):
         cycle = details.get("cycle") or row or {}
         ticker = str(row.get("ticker") or cycle.get("ticker") or "").strip().upper()
         cycle_number = row.get("cycle_number") or cycle.get("cycle_number")
+        cycle_id = str(cycle.get("id") or row.get("id") or "").strip()
         capture_ids = cls._capture_ids_from_decisions(details)
-        candidates: list[Path] = []
         try:
             base = debug_captures_dir()
         except Exception:
             return []
-        search_dirs: list[Path] = []
+
+        # Current captures are written directly under
+        # debug_captures/<TICKER>/cycle_<N>/. Checking that exact directory is
+        # both authoritative and constant-time relative to the rest of the
+        # capture archive. The old implementation recursively traversed the
+        # exact folder, ticker folder, and entire archive for every click.
+        exact_directories: list[Path] = []
         if ticker and cycle_number not in (None, ""):
-            search_dirs.append(base / ticker / f"cycle_{cycle_number}")
-        if ticker:
-            search_dirs.append(base / ticker)
-        search_dirs.append(base)
-        seen: set[Path] = set()
-        for directory in search_dirs:
+            raw_cycle = str(cycle_number).strip()
+            exact_directories.append(base / ticker / f"cycle_{raw_cycle}")
             try:
-                paths = list(directory.glob("**/*.zip")) if directory.exists() else []
+                normalized_cycle = str(int(float(raw_cycle)))
             except Exception:
-                paths = []
-            for path in paths:
-                resolved = path.resolve()
-                if resolved in seen:
-                    continue
-                seen.add(resolved)
-                # The exact ticker/cycle folder is trusted. Broader scans are
-                # restricted by capture id, ticker, cycle id, or cycle-number
-                # tokens so copied historical debug_captures for other cycles do not
-                # distort the audit timeline scale.
-                exact_cycle_folder = bool(ticker and cycle_number not in (None, "") and path.parent.name == f"cycle_{cycle_number}" and path.parent.parent.name.upper() == ticker)
-                path_matches = cls._capture_path_matches_expected(
-                    path,
-                    ticker=ticker,
-                    cycle_number=str(cycle_number or "").strip(),
-                    cycle_id=str(cycle.get("id") or row.get("id") or "").strip(),
-                    capture_ids=capture_ids,
-                )
-                if not exact_cycle_folder and not path_matches:
-                    continue
-                candidates.append(path)
-        return candidates
+                normalized_cycle = raw_cycle
+            normalized_dir = base / ticker / f"cycle_{normalized_cycle}"
+            if normalized_dir not in exact_directories:
+                exact_directories.append(normalized_dir)
+        exact_candidates: list[Path] = []
+        for directory in exact_directories:
+            try:
+                exact_candidates.extend(path for path in directory.glob("*.zip") if path.is_file())
+            except Exception:
+                continue
+        if exact_candidates:
+            return sorted(set(exact_candidates), key=lambda path: str(path).casefold())
+
+        # Legacy/imported captures may not use the current exact folder. Scan
+        # only once, preferring the ticker subtree, and first retain paths with
+        # an exact cycle token, cycle id, or decision-event capture id. A broad
+        # ticker fallback is used only when no targeted legacy path exists; the
+        # ZIP manifest is then the final identity check in the loader.
+        ticker_root = base / ticker if ticker else None
+        scan_root = ticker_root if ticker_root is not None and ticker_root.exists() else base
+        try:
+            paths = [path for path in scan_root.rglob("*.zip") if path.is_file()] if scan_root.exists() else []
+        except Exception:
+            return []
+        targeted = [
+            path
+            for path in paths
+            if cls._capture_path_matches_expected(
+                path,
+                ticker=ticker,
+                cycle_number=str(cycle_number or "").strip(),
+                cycle_id=cycle_id,
+                capture_ids=capture_ids,
+            )
+        ]
+        if targeted:
+            return sorted(set(targeted), key=lambda path: str(path).casefold())
+        if ticker_root is not None and scan_root == ticker_root:
+            return sorted(set(paths), key=lambda path: str(path).casefold())
+        return []
 
     @staticmethod
     def _identifier_equal(expected: Any, actual: Any) -> bool:
@@ -4875,11 +5090,11 @@ class CycleAuditDialog(QDialog):
     def _timeline_tab(cls, row: dict[str, Any], details: dict[str, Any]) -> QWidget:
         tab = QWidget()
         layout = QVBoxLayout(tab)
-        timeline = CycleTimelineWidget(row, details, compact=False)
+        timeline = CycleTimelineWidget(row, details, compact=False, show_market_graph=True)
         timeline.setMinimumHeight(500)
         timeline.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         controls = QHBoxLayout()
-        hint = QLabel("Timeline graph: all timed rows share one horizontal timescale. Hover for crosshairs; Ctrl+mouse wheel zooms; drag while zoomed or use the scroll bars to pan.")
+        hint = QLabel("Timeline graph: all timed rows share one horizontal timescale. Hover markers or dashed transition lines for details; Ctrl+mouse wheel zooms without an application ceiling; drag while zoomed or use the scroll bars to pan.")
         hint.setObjectName("Muted")
         hint.setWordWrap(True)
         zoom_out_btn = QPushButton("Zoom out")
@@ -4963,14 +5178,36 @@ class CycleAuditDialog(QDialog):
 
 
     @classmethod
-    def _summary_tab(cls, row: dict[str, Any], details: dict[str, Any]) -> QWidget:
+    def _summary_tab(
+        cls,
+        row: dict[str, Any],
+        details: dict[str, Any],
+        *,
+        capture_deferred: bool = False,
+    ) -> QWidget:
         cycle = details.get("cycle") or row
         tab = QWidget()
         layout = QVBoxLayout(tab)
-        compact_timeline = CycleTimelineWidget(row, details, compact=True)
+        if capture_deferred:
+            note = QLabel(
+                "This summary opens immediately from SQLite. Select Timeline or Market capture "
+                "to load the completed capture ZIPs for the detailed price path."
+            )
+            note.setObjectName("Muted")
+            note.setWordWrap(True)
+            layout.addWidget(note)
+        compact_timeline = CycleTimelineWidget(row, details, compact=True, show_market_graph=False)
         compact_timeline.setMinimumHeight(500)
         compact_timeline.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        layout.addWidget(compact_timeline, 1)
+        compact_timeline_scroll = QScrollArea()
+        compact_timeline_scroll.setWidgetResizable(True)
+        compact_timeline_scroll.setFrameShape(QFrame.NoFrame)
+        compact_timeline_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        compact_timeline_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        compact_timeline_scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        compact_timeline_scroll.setWidget(compact_timeline)
+        compact_timeline_scroll.setMinimumHeight(500)
+        layout.addWidget(compact_timeline_scroll, 1)
         summary_items = [
             ("Outcome", cls._outcome_badge(row, details)),
             ("Entry condition", f"Initial drop {row.get('configured_initial_drop_pct') or cycle.get('initial_drop_pct') or '-'}%; BUY rebound {row.get('configured_buy_rebound_pct') or cycle.get('buy_rebound_trail_pct') or '-'}%"),
@@ -5141,10 +5378,16 @@ class CycleAuditDialog(QDialog):
 
     @classmethod
     def _format(cls, row: dict[str, Any], details: dict[str, Any]) -> str:
-        if row.get("__example"):
-            return cls._example_text(row)
         cycle = details.get("cycle") or row
         lines: list[str] = []
+        if row.get("__example"):
+            lines.extend([
+                "BUILT-IN EXAMPLE CYCLE",
+                "=" * 80,
+                "This is synthetic v3.0.19 paper-trading example data. It is not an actual market record, is not stored in SQLite, and cannot affect trading or risk totals.",
+                "The scenario models a liquid U.S. stock pullback, a multi-execution trailing BUY fill, a temporary protective SELL, and a modest trailing-stop profit exit.",
+                "",
+            ])
         lines.append("CYCLE SUMMARY")
         lines.append("=" * 80)
         for key in [
@@ -5220,32 +5463,11 @@ class CycleAuditDialog(QDialog):
         return "\n".join(lines)
 
     @classmethod
-    def _example_text(cls, row: dict[str, Any]) -> str:
-        lines = [
-            "EXAMPLE CYCLE LOG",
-            "=" * 80,
-            "This is built-in v3.0.18 example data only. It verifies the history, timeline, market-capture, and raw-log UI; it is not stored as a completed cycle.",
-            f"Ticker: {row.get('ticker')}",
-            f"Cycle: {row.get('cycle_number')}",
-            f"BUY: {row.get('buy_filled_qty')} shares @ {cls._money(row.get('avg_buy_price'))}",
-            f"SELL: @ {cls._money(row.get('avg_sell_price'))}",
-            f"Net P/L: {cls._money(row.get('net_pnl'))}",
-            "",
-            "ORDERS",
-            "=" * 80,
-            "2026-07-07T14:36:00+00:00 | BUY TRAIL qty=96 trail=0.75 stop=$104.2150 status=Filled ref=IBKRBOT|EXAMPLE|BUY_TRAIL",
-            "2026-07-07T15:28:00+00:00 | SELL TRAIL qty=96 trail=0.80 stop=$109.4860 status=Filled ref=IBKRBOT|EXAMPLE|SELL_TRAIL",
-            "",
-            "EXECUTIONS / TRADES",
-            "=" * 80,
-            "2026-07-07T14:41:18+00:00 | BOT BUY 96 @ $104.4200 commission=$1.00",
-            "2026-07-07T15:39:42+00:00 | BOT SELL 96 @ $110.1800 commission=$1.00",
-            "",
-            "DECISION AUDIT EVENTS",
-            "=" * 80,
-            "PRICE_CONFIRMED -> DROP_TRIGGER_HIT -> BUY_TRAIL_SUBMITTED -> BUY_FILL -> MIN_PROFIT_REACHED -> SELL_TRAIL_SUBMITTED -> SELL_FILL -> CAPTURE_FINALIZED",
-        ]
-        return "\n".join(lines)
+    def _example_text(cls, row: dict[str, Any], details: Optional[dict[str, Any]] = None) -> str:
+        example_row = MainWindow._example_history_row()
+        example_row.update(row or {})
+        example_row["__example"] = True
+        return cls._format(example_row, details or MainWindow._example_audit_details(example_row))
 
 
 class MainWindow(QMainWindow):
@@ -5270,7 +5492,7 @@ class MainWindow(QMainWindow):
         self._stop_dialog_exit_requested = False
         self._system_shutdown_in_progress = False
         self._last_system_shutdown_session_key = ""
-        self.setWindowTitle("IBKR Portable Trading Bot v3.0.18")
+        self.setWindowTitle("BouncyBot - IBKR Portable Trading Bot v3.0.19")
         self.resize(1440, 950)
 
         self._autosave_timer = QTimer(self)
@@ -9168,6 +9390,8 @@ class MainWindow(QMainWindow):
 
     def _history_tooltip(self, row: dict[str, Any]) -> str:
         ticker = row.get("ticker") or ""
+        if row.get("__example"):
+            ticker = f"{ticker} (built-in sample)"
         cycle = row.get("cycle_number") or ""
         graph = self._history_hover_graph(row)
         return (
@@ -9190,63 +9414,323 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _example_history_row() -> dict[str, Any]:
-        """One UI-only row that verifies history/flowchart/detail behavior.
+        """Return one deterministic, realistic UI-only completed trade.
 
         It is never stored in SQLite and therefore cannot affect Completed trade
         summary metrics or risk-limit calculations.
         """
         return {
             "__example": True,
-            "id": "EXAMPLE-HISTORY-ROW",
-            "ticker": "EXAMPLE",
-            "cycle_number": "sample",
+            "id": "EXAMPLE-AAPL-20260716-CYCLE-1",
+            "ticker": "AAPL",
+            "cycle_number": 1,
             "stage": Stage.CYCLE_COMPLETE.value,
-            "created_at": "2026-07-07T14:30:00+00:00",
-            "buy_filled_at": "2026-07-07T14:41:18+00:00",
-            "sell_filled_at": "2026-07-07T15:39:42+00:00",
-            "buy_filled_qty": 96,
-            "sell_filled_qty": 96,
-            "avg_buy_price": 104.42,
-            "avg_sell_price": 110.18,
-            "gross_pnl": 552.96,
-            "net_pnl": 550.96,
+            "created_at": "2026-07-16T13:35:00+00:00",
+            "buy_filled_at": "2026-07-16T14:08:27+00:00",
+            "sell_filled_at": "2026-07-16T15:55:14+00:00",
+            "buy_filled_qty": 47,
+            "sell_filled_qty": 47,
+            "avg_buy_price": 210.57,
+            "avg_sell_price": 212.52,
+            "buy_commission": 0.35,
+            "sell_commission": 0.35,
+            "gross_pnl": 91.65,
+            "net_pnl": 90.95,
             "budget": 10000.0,
+            "investment_amount": 10000.0,
             "reinvested_profit": 0.0,
-            "anchor_price": 106.20,
-            "drop_trigger_price": 104.076,
-            "buy_initial_trail_stop_price": 104.215,
-            "sell_initial_trail_stop_price": 109.486,
-            "rise_trigger_pct": 4.85,
-            "initial_drop_pct": 2.00,
-            "buy_rebound_trail_pct": 0.75,
-            "sell_trailing_stop_pct": 0.80,
-            "protective_sell_enabled": False,
-            "protective_sell_enabled_display": "no",
-            "protective_sell_trailing_stop_pct": 3.00,
-            "slippage_buffer_enabled": False,
-            "slippage_buffer_enabled_display": "no",
-            "slippage_buffer_pct": 0.25,
+            "anchor_price": 211.84,
+            "drop_trigger_price": 210.1453,
+            "buy_initial_trail_stop_price": 210.5544,
+            "rise_trigger_price": 212.5764,
+            "sell_initial_trail_stop_price": 211.9821,
+            "protective_sell_initial_stop_price": 206.8850,
+            "protective_sell_status": "Cancelled before final profit exit",
+            "rise_trigger_pct": 0.65,
+            "initial_drop_pct": 0.80,
+            "buy_rebound_trail_pct": 0.35,
+            "sell_trailing_stop_pct": 0.30,
+            "protective_sell_enabled": True,
+            "protective_sell_enabled_display": "yes",
+            "protective_sell_trailing_stop_pct": 1.75,
+            "slippage_buffer_enabled": True,
+            "slippage_buffer_enabled_display": "yes",
+            "slippage_buffer_pct": 0.10,
+            "hard_risk_limits_enabled": True,
             "trading_mode": "paper",
-            "market_data_mode": "Live / account permissions",
-            "rth_status_display": "RTH open - checked 2026-07-07 14:36:00 UTC",
+            "market_data_mode": "Live market data (synthetic sample)",
+            "rth_status_display": "RTH open - sample check 2026-07-16 13:59:58 UTC",
             "atr_adaptive_enabled": True,
             "atr_adaptive_display": "yes",
             "buy_order_type": "BUY TRAIL",
             "sell_order_type": "SELL TRAIL",
-            "buy_order_ref": "IBKRBOT|EXAMPLE|BUY_TRAIL",
-            "sell_order_ref": "IBKRBOT|EXAMPLE|SELL_TRAIL",
-            "updated_at": "2026-07-07T15:39:42+00:00",
-            "sell_vs_buy_pct": ((110.18 / 104.42) - 1.0) * 100.0,
-            "gross_pnl_pct": 552.96 / (104.42 * 96) * 100.0,
-            "net_pnl_pct": 550.96 / (104.42 * 96) * 100.0,
-            "buy_vs_anchor_pct": ((104.42 / 106.20) - 1.0) * 100.0,
-            "initial_sell_stop_vs_buy_pct": ((109.486 / 104.42) - 1.0) * 100.0,
-            "configured_min_profit_pct": 4.85,
-            "configured_initial_drop_pct": 2.00,
-            "configured_buy_rebound_pct": 0.75,
-            "configured_sell_trail_pct": 0.80,
-            "configured_protective_sell_trail_pct": 3.00,
-            "configured_slippage_buffer_pct": 0.25,
+            "buy_order_ref": "IBKRBOT|AAPL|CYCLE-000001|EXAMPLE|BUY_TRAIL",
+            "sell_order_ref": "IBKRBOT|AAPL|CYCLE-000001|EXAMPLE|SELL_TRAIL",
+            "updated_at": "2026-07-16T15:55:16+00:00",
+            "holding_minutes_display": "1h 46m 47s",
+            "sell_vs_buy_pct": ((212.52 / 210.57) - 1.0) * 100.0,
+            "gross_pnl_pct": 91.65 / (210.57 * 47) * 100.0,
+            "net_pnl_pct": 90.95 / (210.57 * 47) * 100.0,
+            "buy_vs_anchor_pct": ((210.57 / 211.84) - 1.0) * 100.0,
+            "initial_sell_stop_vs_buy_pct": ((211.9821 / 210.57) - 1.0) * 100.0,
+            "configured_min_profit_pct": 0.65,
+            "configured_initial_drop_pct": 0.80,
+            "configured_buy_rebound_pct": 0.35,
+            "configured_sell_trail_pct": 0.30,
+            "configured_protective_sell_trail_pct": 1.75,
+            "configured_slippage_buffer_pct": 0.10,
+        }
+
+    @classmethod
+    def _example_audit_details(cls, row: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """Build a rich, deterministic paper-trade audit bundle for an empty history."""
+        cycle = dict(row or cls._example_history_row())
+        cycle_id = str(cycle["id"])
+        buy_ref = str(cycle["buy_order_ref"])
+        protective_ref = "IBKRBOT|AAPL|CYCLE-000001|EXAMPLE|PROTECTIVE_SELL_TRAIL"
+        sell_ref = str(cycle["sell_order_ref"])
+
+        orders = [
+            {
+                "created_at": "2026-07-16T14:02:12+00:00",
+                "updated_at": "2026-07-16T14:08:27+00:00",
+                "action": "BUY",
+                "order_type": "TRAIL",
+                "quantity": 47,
+                "trailing_percent": 0.35,
+                "initial_stop_price": 210.5544,
+                "status": "Filled",
+                "order_id": 4101,
+                "perm_id": 710001,
+                "order_ref": buy_ref,
+                "raw_json": {"auxPrice": 0.35, "tif": "DAY", "outsideRth": False},
+            },
+            {
+                "created_at": "2026-07-16T14:08:29+00:00",
+                "updated_at": "2026-07-16T15:21:10+00:00",
+                "action": "SELL",
+                "order_type": "TRAIL",
+                "quantity": 47,
+                "trailing_percent": 1.75,
+                "initial_stop_price": 206.8850,
+                "status": "Cancelled",
+                "order_id": 4102,
+                "perm_id": 710002,
+                "order_ref": protective_ref,
+                "raw_json": {"auxPrice": 1.75, "cancel_reason": "Replaced by final profit exit"},
+            },
+            {
+                "created_at": "2026-07-16T15:21:12+00:00",
+                "updated_at": "2026-07-16T15:55:14+00:00",
+                "action": "SELL",
+                "order_type": "TRAIL",
+                "quantity": 47,
+                "trailing_percent": 0.30,
+                "initial_stop_price": 211.9821,
+                "status": "Filled",
+                "order_id": 4103,
+                "perm_id": 710003,
+                "order_ref": sell_ref,
+                "raw_json": {"auxPrice": 0.30, "tif": "DAY", "outsideRth": False},
+            },
+        ]
+        executions = [
+            {
+                "executed_at": "2026-07-16T14:08:24+00:00",
+                "side": "BOT BUY",
+                "shares": 20,
+                "price": 210.56,
+                "avg_price": 210.56,
+                "commission": 0.15,
+                "execution_id": "EXAMPLE-BUY-1",
+                "order_ref": buy_ref,
+                "raw_json": {"liquidity": "removed", "exchange": "NASDAQ"},
+            },
+            {
+                "executed_at": "2026-07-16T14:08:27+00:00",
+                "side": "BOT BUY",
+                "shares": 27,
+                "price": 210.5774,
+                "avg_price": 210.57,
+                "commission": 0.20,
+                "execution_id": "EXAMPLE-BUY-2",
+                "order_ref": buy_ref,
+                "raw_json": {"liquidity": "removed", "exchange": "NASDAQ"},
+            },
+            {
+                "executed_at": "2026-07-16T15:55:14+00:00",
+                "side": "SLD SELL",
+                "shares": 47,
+                "price": 212.52,
+                "avg_price": 212.52,
+                "commission": 0.35,
+                "execution_id": "EXAMPLE-SELL-1",
+                "order_ref": sell_ref,
+                "raw_json": {"liquidity": "removed", "exchange": "NASDAQ"},
+            },
+        ]
+        decision_events = [
+            {
+                "created_at": "2026-07-16T13:35:00+00:00",
+                "event_type": "ANCHOR_SET",
+                "stage_before": Stage.WAIT_INITIAL_DROP.value,
+                "stage_after": Stage.WAIT_INITIAL_DROP.value,
+                "decision_result": "ACCEPTED",
+                "message": "Initial live strategy price established the cycle anchor at $211.84.",
+                "raw_json": {"price": 211.84, "source": "last"},
+            },
+            {
+                "created_at": "2026-07-16T14:02:10+00:00",
+                "event_type": "DROP_TRIGGER_HIT",
+                "stage_before": Stage.WAIT_INITIAL_DROP.value,
+                "stage_after": Stage.BUY_TRAIL_ACTIVE.value,
+                "decision_result": "SUBMIT_BUY_TRAIL",
+                "message": "Price moved below the 0.80% drop trigger; prepared a 47-share BUY trail.",
+                "raw_json": {"price": 209.82, "drop_trigger_price": 210.1453},
+            },
+            {
+                "created_at": "2026-07-16T14:02:12+00:00",
+                "event_type": "BUY_ORDER_SUBMITTED",
+                "stage_before": Stage.BUY_TRAIL_ACTIVE.value,
+                "stage_after": Stage.BUY_TRAIL_ACTIVE.value,
+                "decision_result": "SUBMITTED",
+                "broker_order_id": 4101,
+                "perm_id": 710001,
+                "message": "Native 0.35% trailing BUY submitted after spread, freshness, RTH, and what-if checks passed.",
+                "raw_json": {"price": 209.82, "initial_stop_price": 210.5544, "quantity": 47},
+            },
+            {
+                "created_at": "2026-07-16T14:08:27+00:00",
+                "event_type": "BUY_FILL",
+                "stage_before": Stage.BUY_TRAIL_ACTIVE.value,
+                "stage_after": Stage.WAIT_RISE_TRIGGER.value,
+                "decision_result": "FILLED",
+                "broker_order_id": 4101,
+                "perm_id": 710001,
+                "message": "Two executions completed the 47-share BUY at a $210.57 average.",
+                "raw_json": {"price": 210.57, "filled": 47, "commission": 0.35},
+            },
+            {
+                "created_at": "2026-07-16T14:08:29+00:00",
+                "event_type": "PROTECTIVE_SELL_SUBMITTED",
+                "stage_before": Stage.WAIT_RISE_TRIGGER.value,
+                "stage_after": Stage.WAIT_RISE_TRIGGER.value,
+                "decision_result": "SUBMITTED",
+                "broker_order_id": 4102,
+                "perm_id": 710002,
+                "message": "Temporary 1.75% protective SELL trail covered the application-owned shares.",
+                "raw_json": {"price": 210.57, "initial_stop_price": 206.8850},
+            },
+            {
+                "created_at": "2026-07-16T15:21:05+00:00",
+                "event_type": "MINIMUM_PROFIT_REACHED",
+                "stage_before": Stage.WAIT_RISE_TRIGGER.value,
+                "stage_after": Stage.WAIT_RISE_TRIGGER.value,
+                "decision_result": "CANCEL_PROTECTIVE_FIRST",
+                "message": "Selected price reached $212.62, above the $212.5764 minimum-profit trigger.",
+                "raw_json": {"price": 212.62, "rise_trigger_price": 212.5764},
+            },
+            {
+                "created_at": "2026-07-16T15:21:10+00:00",
+                "event_type": "PROTECTIVE_CANCEL_CONFIRMED",
+                "stage_before": Stage.WAIT_RISE_TRIGGER.value,
+                "stage_after": Stage.SELL_TRAIL_ACTIVE.value,
+                "decision_result": "REPLACE_WITH_FINAL_SELL",
+                "broker_order_id": 4102,
+                "perm_id": 710002,
+                "message": "Protective order cancellation was confirmed before the final SELL was sent.",
+                "raw_json": {"price": 212.62},
+            },
+            {
+                "created_at": "2026-07-16T15:21:12+00:00",
+                "event_type": "SELL_ORDER_SUBMITTED",
+                "stage_before": Stage.SELL_TRAIL_ACTIVE.value,
+                "stage_after": Stage.SELL_TRAIL_ACTIVE.value,
+                "decision_result": "SUBMITTED",
+                "broker_order_id": 4103,
+                "perm_id": 710003,
+                "message": "Native 0.30% final SELL trail submitted for all 47 application-owned shares.",
+                "raw_json": {"price": 212.62, "initial_stop_price": 211.9821},
+            },
+            {
+                "created_at": "2026-07-16T15:55:14+00:00",
+                "event_type": "SELL_FILL",
+                "stage_before": Stage.SELL_TRAIL_ACTIVE.value,
+                "stage_after": Stage.CYCLE_COMPLETE.value,
+                "decision_result": "FILLED",
+                "broker_order_id": 4103,
+                "perm_id": 710003,
+                "message": "The trailing SELL filled at $212.52 after a reversal from the $213.18 session high.",
+                "raw_json": {"price": 212.52, "filled": 47, "gross_pnl": 91.65, "net_pnl": 90.95},
+            },
+        ]
+        events = [
+            {"created_at": "2026-07-16T13:34:58+00:00", "level": "INFO", "message": "AAPL SMART/NASDAQ contract qualified; live paper-account market data selected.", "raw_json": {}},
+            {"created_at": "2026-07-16T14:02:12+00:00", "level": "INFO", "message": "BUY trail accepted by TWS: orderId 4101, permId 710001.", "raw_json": {"order_ref": buy_ref}},
+            {"created_at": "2026-07-16T14:08:27+00:00", "level": "INFO", "message": "BUY complete: 47 shares at $210.57 average; total commission $0.35.", "raw_json": {}},
+            {"created_at": "2026-07-16T14:08:29+00:00", "level": "INFO", "message": "Protective SELL trail active while the minimum-profit condition is pending.", "raw_json": {"order_ref": protective_ref}},
+            {"created_at": "2026-07-16T15:21:10+00:00", "level": "INFO", "message": "Protective SELL cancellation confirmed; final profit trail may now be submitted.", "raw_json": {}},
+            {"created_at": "2026-07-16T15:55:14+00:00", "level": "INFO", "message": "SELL complete: 47 shares at $212.52; gross $91.65, net $90.95.", "raw_json": {}},
+            {"created_at": "2026-07-16T15:55:16+00:00", "level": "INFO", "message": "Cycle 1 persisted as complete; no application-owned shares remain.", "raw_json": {}},
+        ]
+
+        capture_specs = [
+            ("2026-07-16T13:53:00+00:00", 210.78, Stage.WAIT_INITIAL_DROP.value, "example-buy-fill.zip"),
+            ("2026-07-16T13:56:00+00:00", 210.45, Stage.WAIT_INITIAL_DROP.value, "example-buy-fill.zip"),
+            ("2026-07-16T13:59:00+00:00", 210.12, Stage.WAIT_INITIAL_DROP.value, "example-buy-fill.zip"),
+            ("2026-07-16T14:01:00+00:00", 209.94, Stage.WAIT_INITIAL_DROP.value, "example-buy-fill.zip"),
+            ("2026-07-16T14:02:10+00:00", 209.82, Stage.BUY_TRAIL_ACTIVE.value, "example-buy-fill.zip"),
+            ("2026-07-16T14:03:00+00:00", 209.91, Stage.BUY_TRAIL_ACTIVE.value, "example-buy-fill.zip"),
+            ("2026-07-16T14:04:00+00:00", 210.08, Stage.BUY_TRAIL_ACTIVE.value, "example-buy-fill.zip"),
+            ("2026-07-16T14:05:00+00:00", 210.22, Stage.BUY_TRAIL_ACTIVE.value, "example-buy-fill.zip"),
+            ("2026-07-16T14:06:00+00:00", 210.38, Stage.BUY_TRAIL_ACTIVE.value, "example-buy-fill.zip"),
+            ("2026-07-16T14:07:00+00:00", 210.51, Stage.BUY_TRAIL_ACTIVE.value, "example-buy-fill.zip"),
+            ("2026-07-16T14:08:27+00:00", 210.57, Stage.WAIT_RISE_TRIGGER.value, "example-buy-fill.zip"),
+            ("2026-07-16T14:10:00+00:00", 210.63, Stage.WAIT_RISE_TRIGGER.value, "example-buy-fill.zip"),
+            ("2026-07-16T14:13:00+00:00", 210.49, Stage.WAIT_RISE_TRIGGER.value, "example-buy-fill.zip"),
+            ("2026-07-16T14:17:00+00:00", 210.72, Stage.WAIT_RISE_TRIGGER.value, "example-buy-fill.zip"),
+            ("2026-07-16T14:22:00+00:00", 210.88, Stage.WAIT_RISE_TRIGGER.value, "example-buy-fill.zip"),
+            ("2026-07-16T15:40:00+00:00", 212.84, Stage.SELL_TRAIL_ACTIVE.value, "example-sell-fill.zip"),
+            ("2026-07-16T15:43:00+00:00", 213.02, Stage.SELL_TRAIL_ACTIVE.value, "example-sell-fill.zip"),
+            ("2026-07-16T15:47:00+00:00", 213.18, Stage.SELL_TRAIL_ACTIVE.value, "example-sell-fill.zip"),
+            ("2026-07-16T15:49:00+00:00", 213.07, Stage.SELL_TRAIL_ACTIVE.value, "example-sell-fill.zip"),
+            ("2026-07-16T15:51:00+00:00", 212.88, Stage.SELL_TRAIL_ACTIVE.value, "example-sell-fill.zip"),
+            ("2026-07-16T15:53:00+00:00", 212.69, Stage.SELL_TRAIL_ACTIVE.value, "example-sell-fill.zip"),
+            ("2026-07-16T15:54:00+00:00", 212.57, Stage.SELL_TRAIL_ACTIVE.value, "example-sell-fill.zip"),
+            ("2026-07-16T15:55:14+00:00", 212.52, Stage.CYCLE_COMPLETE.value, "example-sell-fill.zip"),
+            ("2026-07-16T15:57:00+00:00", 212.43, Stage.CYCLE_COMPLETE.value, "example-sell-fill.zip"),
+            ("2026-07-16T16:00:00+00:00", 212.61, Stage.CYCLE_COMPLETE.value, "example-sell-fill.zip"),
+            ("2026-07-16T16:05:00+00:00", 212.72, Stage.CYCLE_COMPLETE.value, "example-sell-fill.zip"),
+            ("2026-07-16T16:10:00+00:00", 212.68, Stage.CYCLE_COMPLETE.value, "example-sell-fill.zip"),
+        ]
+        market_capture_rows = []
+        for index, (captured_at, price, stage, capture_file) in enumerate(capture_specs):
+            market_capture_rows.append({
+                "captured_at_utc": captured_at,
+                "monotonic_ts": float(index),
+                "ticker": "AAPL",
+                "cycle_id": cycle_id,
+                "cycle_number": 1,
+                "stage": stage,
+                "price": price,
+                "source": "last",
+                "selected_market_data_type": "live",
+                "rth_open": True,
+                "fields": {"last": price, "bid": round(price - 0.01, 2), "ask": round(price + 0.01, 2)},
+                "capture_file": f"built-in-example/{capture_file}",
+            })
+
+        return {
+            "cycle": cycle,
+            "orders": orders,
+            "executions": executions,
+            "events": events,
+            "decision_events": decision_events,
+            "market_capture_rows": market_capture_rows,
+            "market_capture_files": [
+                "Built-in example capture: example-buy-fill.zip (in memory only)",
+                "Built-in example capture: example-sell-fill.zip (in memory only)",
+            ],
         }
 
     def _history_row_clicked(self, row_index: int, column_index: int) -> None:
@@ -9262,7 +9746,7 @@ class MainWindow(QMainWindow):
         row = rows[actual_index]
         cycle_id = str(row.get("id") or "")
         if row.get("__example"):
-            details = {"cycle": row, "orders": [], "executions": [], "events": [], "decision_events": []}
+            details = self._example_audit_details(row)
         else:
             details = self.controller.get_cycle_audit_details(cycle_id)
         dialog = CycleAuditDialog(row, details, self)
@@ -9425,7 +9909,12 @@ class MainWindow(QMainWindow):
                     tooltip = self._history_tooltip(row)
                     for c, key in enumerate(columns):
                         raw_value = row.get(key)
-                        value = self._history_outcome_badge(row) if key == "__outcome" else self._format_history_value(key, raw_value)
+                        if key == "__outcome":
+                            value = self._history_outcome_badge(row)
+                        elif key == "ticker" and row.get("__example"):
+                            value = f"{raw_value} (SAMPLE)"
+                        else:
+                            value = self._format_history_value(key, raw_value)
                         if key == "cycle_number":
                             # Keep the DisplayRole numeric so Qt sorts cycle 2 before cycle 10.
                             try:

@@ -12,9 +12,9 @@ def _recovery_block() -> str:
 
 
 def test_v3016_version_metadata_and_release_note_are_current():
-    assert "IBKR Portable Trading Bot v3.0.18" in GUI
-    assert "# IBKR Portable Trading Bot v3.0.18" in README
-    assert 'version = "3.0.18"' in PYPROJECT
+    assert "BouncyBot - IBKR Portable Trading Bot v3.0.19" in GUI
+    assert "# BouncyBot - IBKR Portable Trading Bot v3.0.19" in README
+    assert 'version = "3.0.19"' in PYPROJECT
     assert Path("docs/legacy/V3_0_16_RECONCILIATION_REFRESH_WORKFLOW.md").exists()
 
 

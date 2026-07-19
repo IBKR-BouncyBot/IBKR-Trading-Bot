@@ -226,6 +226,7 @@ class BotStorage:
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at);
+                CREATE INDEX IF NOT EXISTS idx_events_cycle_created ON events(cycle_id, created_at, id);
 
                 CREATE TABLE IF NOT EXISTS decision_events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -245,6 +246,7 @@ class BotStorage:
 
                 CREATE INDEX IF NOT EXISTS idx_decision_events_cycle ON decision_events(cycle_id);
                 CREATE INDEX IF NOT EXISTS idx_decision_events_created_at ON decision_events(created_at);
+                CREATE INDEX IF NOT EXISTS idx_decision_events_cycle_created ON decision_events(cycle_id, created_at, id);
 
                 CREATE TABLE IF NOT EXISTS broker_events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
