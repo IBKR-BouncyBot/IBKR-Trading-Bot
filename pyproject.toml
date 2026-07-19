@@ -1,7 +1,7 @@
 [project]
-name = "ibkr-portable-trading-bot"
-version = "3.0.18"
-description = "Portable Windows GUI trading bot for IBKR TWS/IB Gateway API"
+name = "bouncybot-ibkr-portable-trading-bot"
+version = "3.0.19"
+description = "BouncyBot portable Windows GUI trading bot for the IBKR TWS/IB Gateway API"
 requires-python = ">=3.11"
 dependencies = [
     "PySide6>=6.7,<7",

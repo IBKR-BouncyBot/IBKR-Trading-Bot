@@ -1,6 +1,4 @@
-# BouncyBot - an IBKR Portable Trading Bot 
-
-![Simple-view](Images/Trading-Simple-view.png)
+# BouncyBot - IBKR Portable Trading Bot v3.0.19
 
 A Windows desktop application that automates one long-only Interactive Brokers stock-trading cycle at a time through Trader Workstation (TWS) or IB Gateway.
 
@@ -17,7 +15,6 @@ The application watches a confirmed stock contract, waits for a configurable dec
 - [What the bot does](#what-the-bot-does)
 - [Trading cycle](#trading-cycle)
 - [Core features](#core-features)
-- [Screenshots](#screenshots)
 - [Advanced features](#advanced-features)
 - [What the bot does not do](#what-the-bot-does-not-do)
 - [Requirements and dependencies](#requirements-and-dependencies)
@@ -30,12 +27,9 @@ The application watches a confirmed stock contract, waits for a configurable dec
 - [Project structure](#project-structure)
 - [Documentation](#documentation)
 - [Release history](#release-history)
-- [Thank me](#thank-me)
 - [License](#license)
 
 ## What the bot does
-
-<img width="1920" height="510" alt="BouncyBot_five_stage_GitHub_style_with_graphs_compact" src="https://github.com/user-attachments/assets/2561c22d-dd2a-4598-9f0a-d0539203ace8" />
 
 The bot implements a five-stage strategy for one confirmed IBKR stock contract:
 
@@ -109,25 +103,6 @@ The application records fills, commissions received from IBKR, gross and net P/L
 - Single-instance lock to reduce the risk of two copies using the same database and API client configuration.
 - UTC audit timestamps throughout the application.
 - CSV trade-history export and diagnostic audit bundles.
-
-<img width="1800" height="1880" alt="BouncyBot_extended_GitHub_style_layout_fixed" src="https://github.com/user-attachments/assets/8f964ac5-f5be-4cdf-b425-7955ce2ce1c3" />
-
-## Screenshots
-
-<p float="left">
-  <img src="Images/Trading-Simple-view.png" width="30%" />
-  <img src="Images/Trading-Advanced-view-1.png" width="30%" />
-  <img src="Images/Trading-Advanced-view-2.png" width="30%" />
-</p>
-<p float="left">
-  <img src="Images/Trading-Advanced-view-3.png" width="30%" />
-  <img src="Images/Strategy-flowchart-History-1.png" width="30%" />
-  <img src="Images/Strategy-flowchart-History-2.png" width="30%" />
-</p>
-<p float="center">
-  <img src="Images/Trade-history.png" width="45%" />
-  <img src="Images/Trade-history-Audit-log.png" width="45%" />
-</p>
 
 ## Advanced features
 
@@ -347,6 +322,8 @@ The **Trading** status is the concise source for current BUY/SELL eligibility. H
 
 Simple, Advanced, and Debug modes use the full dashboard width for **Recovery / audit log**. Workflow actions remain in the fixed five-button command bar; the former duplicate dashboard Controls panel is not shown.
 
+Selecting a completed row in **Trade history** opens the SQLite-backed summary first. The heavier Timeline, Market capture, Orders, Executions, Decision events, and Raw log tabs are built only when first selected. Completed market-capture ZIPs are parsed only for Timeline or Market capture and are reused by both tabs.
+
 ### 5. Stop or close
 
 Use **5. Stop strategy** and select the intended broker action. Closing the main window invokes the same stop decision path rather than silently abandoning the active state. Stop/exit quantity decisions come from the persisted application-owned fill ledger, not the account-wide broker position, so unrelated external shares do not create a SELL option.
@@ -432,7 +409,7 @@ dist\IBKRTradingBot\IBKRTradingBot.exe
 and creates the versioned release folder and final ZIP using the same naming pattern as IBKR Market Replay Lab:
 
 ```text
-release\IBKRTradingBot_3.0.17_Windows\
+release\IBKRTradingBot_3.0.19_Windows\
   GUI\IBKRTradingBot.exe
   docs\
   README.md
@@ -441,7 +418,7 @@ release\IBKRTradingBot_3.0.17_Windows\
   SECURITY.md
   QUICK_START.txt
 
-release\IBKRTradingBot_3.0.17_Windows.zip
+release\IBKRTradingBot_3.0.19_Windows.zip
 release\SHA256SUMS.txt
 ```
 
@@ -507,20 +484,13 @@ Start with the [documentation index](docs/README.md). Current authoritative guid
 
 Superseded release-specific documents are indexed under [docs/legacy](docs/legacy/README.md) and are retained only for traceability.
 
-
 ## Release history
 
-- [v3.0.18 release note](docs/V3_0_18_EVENT_DRIVEN_CADENCES.md) — v3.0.18 removes two fixed waits from scheduled runtime work and separates controller responsibilities onto independent monotonic cadences
+- [v3.0.19 release note](docs/V3_0_19_TRADE_HISTORY_AUDIT_PERFORMANCE.md) — faster Trade History audits, unrestricted audit zoom, realistic sample data, the BouncyBot product name, and an explicit potential-loss market-SELL confirmation.
 - [CHANGELOG.md](CHANGELOG.md) — consolidated release history.
-- [Archived release notes](docs/legacy/README.md) — implementation history for v3.0.17 and earlier.
+- [Archived release notes](docs/legacy/README.md) — implementation history for v3.0.18 and earlier.
 
-## Thank me
-
-- IBKR Referal (get up to $1000 in IBKR stock) : https://ibkr.com/referral/gerrit585
-- Cardano / ADA : addr1q85w2v474ywzx868s69pghygek3vrhxm69e7c6ysuf28qhv8kmj5wd059grxl82f8h5mtyzl87cvqj8ldv2e0las7tnsdej9ax
-- Midnight / NIGHT: addr1qyre4dsc3xdgcr8w3lmfdy038f9w0statt7q7d8urfvgyh58kmj5wd059grxl82f8h5mtyzl87cvqj8ldv2e0las7tnsu66x8a 
-- Etherium / ETH : 0xe1283022e1166df70092ff3094a1d2bd79102c3a
-- Solana / SOL : 78EG5myV7Xjx4iNWt7mnn3BHULMNhLchFAcggnyeiiyb
+v3.0.19 changes completed-trade audit retrieval and presentation, removes the application zoom ceiling, refreshes the UI-only example cycle, adopts the BouncyBot display name, and adds a Cancel-defaulted confirmation before the Stop strategy market-close action. Trading decisions, broker-side order mechanics, persistence boundaries, and recovery behavior are unchanged.
 
 ## License
 

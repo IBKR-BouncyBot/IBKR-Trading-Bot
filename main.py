@@ -71,7 +71,7 @@ def main() -> int:
     try:
         lock.acquire()
     except SingleInstanceError as exc:
-        QMessageBox.critical(None, "IBKR Portable Trading Bot already running", str(exc))
+        QMessageBox.critical(None, "BouncyBot - IBKR Portable Trading Bot already running", str(exc))
         return 2
     controller = None
     try:
