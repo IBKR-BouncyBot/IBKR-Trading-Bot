@@ -35,7 +35,7 @@ The application watches a confirmed stock contract, waits for a configurable dec
 
 ## What the bot does
 
-<img width="1600" height="520" alt="BouncyBot_five_stage_GitHub_style" src="https://github.com/user-attachments/assets/48d869fc-402a-4613-8136-a31f1debcb6d" />
+<img width="1920" height="510" alt="BouncyBot_five_stage_GitHub_style_with_graphs_compact" src="https://github.com/user-attachments/assets/2561c22d-dd2a-4598-9f0a-d0539203ace8" />
 
 The bot implements a five-stage strategy for one confirmed IBKR stock contract:
 
@@ -95,11 +95,6 @@ An optional protective SELL trail can be submitted immediately after a BUY fill.
 
 The application records fills, commissions received from IBKR, gross and net P/L, timing, order references, and audit events. With auto-repeat enabled, another cycle starts unless **Stop after current cycle** is active or the enabled hard-risk maximum completed-cycle cap has been reached.
 
-</p>
-<p float="center">
-  <img src="Images/IBKR_Trading_Bot_v3.0.13_Source_Derived_Algorithm.png" width="50%" />
-</p>
-
 ## Core features
 
 - PySide6 desktop GUI with connection, strategy, flowchart, history, and reconciliation views.
@@ -114,6 +109,8 @@ The application records fills, commissions received from IBKR, gross and net P/L
 - Single-instance lock to reduce the risk of two copies using the same database and API client configuration.
 - UTC audit timestamps throughout the application.
 - CSV trade-history export and diagnostic audit bundles.
+
+<img width="1800" height="1880" alt="BouncyBot_extended_GitHub_style" src="https://github.com/user-attachments/assets/a0f81a7d-1f88-470b-90e1-83c59affeeeb" />
 
 ## Screenshots
 
