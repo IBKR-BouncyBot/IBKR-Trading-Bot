@@ -110,7 +110,7 @@ The application records fills, commissions received from IBKR, gross and net P/L
 - UTC audit timestamps throughout the application.
 - CSV trade-history export and diagnostic audit bundles.
 
-<img width="1800" height="1880" alt="BouncyBot_extended_GitHub_style" src="https://github.com/user-attachments/assets/a0f81a7d-1f88-470b-90e1-83c59affeeeb" />
+<img width="1800" height="1880" alt="BouncyBot_extended_GitHub_style_layout_fixed" src="https://github.com/user-attachments/assets/8f964ac5-f5be-4cdf-b425-7955ce2ce1c3" />
 
 ## Screenshots
 
