@@ -1,6 +1,6 @@
 # Operations guide
 
-This guide describes the normal operator workflow for v3.0.18. It does not replace the broker’s API documentation or account controls.
+This guide describes the normal operator workflow for v3.0.19. It does not replace the broker’s API documentation or account controls.
 
 ## Before starting
 
@@ -89,7 +89,9 @@ Requests cancellation of app-owned open orders and stops the local cycle state a
 
 ### Sell application position at market
 
-For an app-owned unsold quantity, the controller first requests cancellation of any working app-created protective/final SELL and waits until it is no longer working. It then submits one market SELL for the quantity reconstructed from the persisted app fill ledger. External account holdings are not included.
+Clicking this action opens a second potential-loss confirmation. **Cancel** is the default. Pressing **OK** confirms that the entire app-bought unsold quantity for the active cycle may be sold immediately at an unfavorable price and may realize a loss. Unrelated account positions are not included.
+
+After confirmation, the controller first requests cancellation of any working app-created protective/final SELL and waits until it is no longer working. It then submits one market SELL for the quantity reconstructed from the persisted app fill ledger. External account holdings are not included.
 
 ### Leave orders working
 

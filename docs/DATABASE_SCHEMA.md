@@ -126,6 +126,8 @@ Human/operator-oriented audit log.
 
 The GUI shows recent events. Storage also appends a readable line to `debug_reports/audit_events_readable.log` on a best-effort basis.
 
+Trade-history audit lookup uses the ordered index `(cycle_id, created_at, id)`, so selecting one completed cycle does not scan unrelated global event rows.
+
 ## `decision_events`
 
 Structured append-only records of controller/strategy decisions.
@@ -137,6 +139,8 @@ Structured append-only records of controller/strategy decisions.
 - `raw_json`.
 
 These records explain why a transition or submission did or did not occur. They are not broker callbacks.
+
+Trade-history audit lookup uses the ordered index `(cycle_id, created_at, id)`.
 
 ## `broker_events`
 

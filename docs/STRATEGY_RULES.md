@@ -1,6 +1,6 @@
 # Strategy rules
 
-This document is the current functional description of the five-stage strategy in v3.0.18. It describes application decisions; IBKR remains authoritative for accepted order state and execution.
+This document is the current functional description of the five-stage strategy in v3.0.19. It describes application decisions; IBKR remains authoritative for accepted order state and execution.
 
 ## Scope and invariants
 

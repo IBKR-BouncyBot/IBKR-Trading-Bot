@@ -2,10 +2,12 @@
 
 These files document superseded releases and implementation history. They are retained for traceability, but they may describe old labels, defaults, layouts, tests, or limitations.
 
-For current behavior, use the [project README](../../README.md), the [current documentation index](../README.md), the [changelog](../../CHANGELOG.md), and the current [`v3.0.18 release note`](../V3_0_18_EVENT_DRIVEN_CADENCES.md).
+For current behavior, use the [project README](../../README.md), the [current documentation index](../README.md), the [changelog](../../CHANGELOG.md), and the current [`v3.0.19 release note`](../V3_0_19_TRADE_HISTORY_AUDIT_PERFORMANCE.md).
 
 ## Version 3 release notes
 
+- [`V3_0_18_EVENT_DRIVEN_CADENCES.md`](V3_0_18_EVENT_DRIVEN_CADENCES.md) — v3.0.18 event-driven controller cadences and nonblocking scheduled reads
+- [`V3_0_18_IMPLEMENTATION_TEST_REPORT.txt`](V3_0_18_IMPLEMENTATION_TEST_REPORT.txt) — retained v3.0.18 implementation and verification report
 - [`V3_0_17_FLOWCHART_HISTORY_SELECTOR.md`](V3_0_17_FLOWCHART_HISTORY_SELECTOR.md) — v3.0.17 flowchart history selector, complete Windows test run, and public-repository preparation
 - [`V3_0_16_RECONCILIATION_REFRESH_WORKFLOW.md`](V3_0_16_RECONCILIATION_REFRESH_WORKFLOW.md) — v3.0.16 Reconciliation refresh-first workflow
 - [`V3_0_15_RTH_AND_HISTORY_ALIGNMENT.md`](V3_0_15_RTH_AND_HISTORY_ALIGNMENT.md) — v3.0.15 contract-session RTH guards and Trade-history graph alignment
