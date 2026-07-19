@@ -432,7 +432,7 @@ dist\IBKRTradingBot\IBKRTradingBot.exe
 and creates the versioned release folder and final ZIP using the same naming pattern as IBKR Market Replay Lab:
 
 ```text
-release\IBKRTradingBot_3.0.17_Windows\
+release\IBKRTradingBot_3.0.19_Windows\
   GUI\IBKRTradingBot.exe
   docs\
   README.md
@@ -441,7 +441,7 @@ release\IBKRTradingBot_3.0.17_Windows\
   SECURITY.md
   QUICK_START.txt
 
-release\IBKRTradingBot_3.0.17_Windows.zip
+release\IBKRTradingBot_3.0.19_Windows.zip
 release\SHA256SUMS.txt
 ```
 
@@ -510,7 +510,7 @@ Superseded release-specific documents are indexed under [docs/legacy](docs/legac
 
 ## Release history
 
-- [v3.0.18 release note](docs/V3_0_18_EVENT_DRIVEN_CADENCES.md) — v3.0.18 removes two fixed waits from scheduled runtime work and separates controller responsibilities onto independent monotonic cadences
+- [v3.0.19 release note](docs/V3_0_19_TRADE_HISTORY_AUDIT_PERFORMANCE.md) — faster Trade History audits, unrestricted audit zoom, realistic sample data, the BouncyBot product name, and an explicit potential-loss market-SELL confirmation.
 - [CHANGELOG.md](CHANGELOG.md) — consolidated release history.
 - [Archived release notes](docs/legacy/README.md) — implementation history for v3.0.17 and earlier.
 
