@@ -199,7 +199,7 @@ def test_main_reports_lock_collision_without_constructing_controller(main_module
     )
 
     assert main_module.main() == 2
-    assert messages == [(None, "IBKR Portable Trading Bot already running", "already running")]
+    assert messages == [(None, "BouncyBot - IBKR Portable Trading Bot already running", "already running")]
 
 
 def test_main_releases_lock_when_controller_construction_fails(main_module, monkeypatch: pytest.MonkeyPatch) -> None:

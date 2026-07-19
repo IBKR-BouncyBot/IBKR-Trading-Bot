@@ -794,7 +794,7 @@ def test_main_window_constructs_and_exercises_command_recovery_and_history_paths
     assert window._format_history_value("net_pnl", 10.0).startswith("$")
     assert isinstance(window._history_hover_graph(history[0]), str)
     assert isinstance(window._history_tooltip(history[0]), str)
-    assert window._example_history_row()["ticker"] == "EXAMPLE"
+    assert window._example_history_row()["ticker"] == "AAPL"
     window._visible_history_rows = history
     window._history_row_clicked(0, 0)
     assert window._history_outcome_badge(history[0])
