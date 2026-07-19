@@ -1,4 +1,4 @@
-# IBKR Portable Trading Bot v3.0.18
+# BouncyBot - IBKR Portable Trading Bot v3.0.18
 
 ![Simple-view](Images/Trading-Simple-view.png)
 
