@@ -1,0 +1,177 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="510" viewBox="0 0 1920 510" role="img" aria-labelledby="title desc">
+  <title id="title">BouncyBot five-stage strategy</title>
+  <desc id="desc">Five GitHub-inspired cards with compact charts for anchor pullback, trailing buy, minimum-profit protection, trailing sell, and record or repeat.</desc>
+
+  <defs>
+    <linearGradient id="page" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0d1117"/>
+      <stop offset="1" stop-color="#0b0f14"/>
+    </linearGradient>
+    <linearGradient id="card" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#161b22"/>
+      <stop offset="1" stop-color="#131820"/>
+    </linearGradient>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M32 0H0V32" fill="none" stroke="#30363d" stroke-width="1" opacity="0.56"/>
+    </pattern>
+    <style>
+      .ui { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+      .title { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; font-size: 25px; font-weight: 650; fill: #f0f6fc; letter-spacing: -0.3px; }
+      .body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; font-size: 17px; font-weight: 400; fill: #b1bac4; }
+      .label { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; font-size: 13px; font-weight: 600; fill: #8c959f; }
+      .number { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; font-size: 16px; font-weight: 700; fill: #f0f6fc; }
+    </style>
+  </defs>
+
+  <rect width="1920" height="640" fill="url(#page)"/>
+
+  <!-- 1. Anchor and pullback -->
+  <g transform="translate(40,40)">
+    <rect width="352" height="430" rx="14" fill="url(#card)" stroke="#30363d" stroke-width="1.5"/>
+    <circle cx="32" cy="34" r="15" fill="#1f6feb"/>
+    <text x="32" y="40" text-anchor="middle" class="number">1</text>
+    <text x="176" y="42" text-anchor="middle" class="title">Anchor &amp; pullback</text>
+
+    <g transform="translate(22,82)">
+      <rect width="308" height="235" rx="10" fill="#0d1117" stroke="#30363d"/>
+      <rect x="1" y="1" width="306" height="233" rx="9" fill="url(#grid)"/>
+      <line x1="20" y1="176" x2="287" y2="176" stroke="#30363d" stroke-width="1"/>
+      <line x1="20" y1="28" x2="20" y2="176" stroke="#30363d" stroke-width="1"/>
+
+      <path d="M24 156 L58 137 L88 143 L121 111 L153 119 L186 80 L219 91 L250 54" fill="none" stroke="#58a6ff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M250 54 L286 121" fill="none" stroke="#f85149" stroke-width="4" stroke-linecap="round"/>
+      <line x1="42" y1="54" x2="286" y2="54" stroke="#58a6ff" stroke-width="2" stroke-dasharray="6 5" opacity="0.8"/>
+      <line x1="42" y1="121" x2="286" y2="121" stroke="#f85149" stroke-width="2" stroke-dasharray="6 5" opacity="0.75"/>
+      <circle cx="250" cy="54" r="6" fill="#0d1117" stroke="#58a6ff" stroke-width="3"/>
+      <circle cx="286" cy="121" r="6" fill="#0d1117" stroke="#f85149" stroke-width="3"/>
+      <text x="44" y="45" class="label" fill="#79c0ff">anchor</text>
+      <text x="238" y="143" class="label" fill="#ff7b72">drop trigger</text>
+    </g>
+
+    <text x="176" y="350" text-anchor="middle" class="body">
+      <tspan x="176" dy="0">Wait for the configured drop</tspan>
+      <tspan x="176" dy="26">from the current anchor.</tspan>
+      <tspan x="176" dy="26">Higher prices move it up.</tspan>
+    </text>
+  </g>
+
+  <!-- 2. Entry -->
+  <g transform="translate(412,40)">
+    <rect width="352" height="430" rx="14" fill="url(#card)" stroke="#30363d" stroke-width="1.5"/>
+    <circle cx="32" cy="34" r="15" fill="#1f6feb"/>
+    <text x="32" y="40" text-anchor="middle" class="number">2</text>
+    <text x="176" y="42" text-anchor="middle" class="title">Enter</text>
+
+    <g transform="translate(22,82)">
+      <rect width="308" height="235" rx="10" fill="#0d1117" stroke="#30363d"/>
+      <rect x="1" y="1" width="306" height="233" rx="9" fill="url(#grid)"/>
+      <line x1="20" y1="176" x2="287" y2="176" stroke="#30363d" stroke-width="1"/>
+      <line x1="20" y1="28" x2="20" y2="176" stroke="#30363d" stroke-width="1"/>
+
+      <path d="M25 55 L61 81 L98 104 L134 128 L169 149 L207 135 L245 102 L283 72" fill="none" stroke="#c9d1d9" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M25 34 L61 60 L98 83 L134 107 L169 128 L207 128 L245 128 L283 128" fill="none" stroke="#58a6ff" stroke-width="3" stroke-dasharray="7 6" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="245" cy="102" r="7" fill="#0d1117" stroke="#3fb950" stroke-width="3"/>
+      <path d="M245 91V69" stroke="#3fb950" stroke-width="3" stroke-linecap="round"/>
+      <path d="M237 77L245 69 253 77" fill="none" stroke="#3fb950" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="31" y="26" class="label" fill="#79c0ff">BUY trail</text>
+      <text x="232" y="59" class="label" fill="#56d364">BUY</text>
+    </g>
+
+    <text x="176" y="364" text-anchor="middle" class="body">
+      <tspan x="176" dy="0">Trailing BUY.</tspan>
+      <tspan x="176" dy="26">Market BUY when trail = 0.</tspan>
+    </text>
+  </g>
+
+  <!-- 3. Minimum profit -->
+  <g transform="translate(784,40)">
+    <rect width="352" height="430" rx="14" fill="url(#card)" stroke="#30363d" stroke-width="1.5"/>
+    <circle cx="32" cy="34" r="15" fill="#9e6a03"/>
+    <text x="32" y="40" text-anchor="middle" class="number">3</text>
+    <text x="176" y="42" text-anchor="middle" class="title">Protect profit</text>
+
+    <g transform="translate(22,82)">
+      <rect width="308" height="235" rx="10" fill="#0d1117" stroke="#30363d"/>
+      <rect x="1" y="1" width="306" height="233" rx="9" fill="url(#grid)"/>
+      <line x1="20" y1="176" x2="287" y2="176" stroke="#30363d" stroke-width="1"/>
+      <line x1="20" y1="28" x2="20" y2="176" stroke="#30363d" stroke-width="1"/>
+
+      <line x1="28" y1="145" x2="284" y2="145" stroke="#8c959f" stroke-width="2" stroke-dasharray="6 5"/>
+      <line x1="28" y1="73" x2="284" y2="73" stroke="#d29922" stroke-width="2" stroke-dasharray="6 5"/>
+      <path d="M31 151 L66 143 L100 132 L135 113 L169 99 L205 79 L240 62 L281 49" fill="none" stroke="#d29922" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="205" cy="79" r="7" fill="#0d1117" stroke="#d29922" stroke-width="3"/>
+      <g transform="translate(220,84)">
+        <rect x="0" y="9" width="25" height="21" rx="4" fill="#d29922"/>
+        <path d="M5 10V6a7.5 7.5 0 0115 0v4" fill="none" stroke="#d29922" stroke-width="3"/>
+        <circle cx="12.5" cy="19" r="2.5" fill="#0d1117"/>
+      </g>
+      <text x="30" y="164" class="label">actual BUY fill</text>
+      <text x="30" y="63" class="label" fill="#e3b341">minimum profit</text>
+    </g>
+
+    <text x="176" y="350" text-anchor="middle" class="body">
+      <tspan x="176" dy="0">Wait until the exit can protect</tspan>
+      <tspan x="176" dy="26">minimum gross profit.</tspan>
+      <tspan x="176" dy="26">Reference: actual BUY fill.</tspan>
+    </text>
+  </g>
+
+  <!-- 4. Exit -->
+  <g transform="translate(1156,40)">
+    <rect width="352" height="430" rx="14" fill="url(#card)" stroke="#30363d" stroke-width="1.5"/>
+    <circle cx="32" cy="34" r="15" fill="#8250df"/>
+    <text x="32" y="40" text-anchor="middle" class="number">4</text>
+    <text x="176" y="42" text-anchor="middle" class="title">Exit</text>
+
+    <g transform="translate(22,82)">
+      <rect width="308" height="235" rx="10" fill="#0d1117" stroke="#30363d"/>
+      <rect x="1" y="1" width="306" height="233" rx="9" fill="url(#grid)"/>
+      <line x1="20" y1="176" x2="287" y2="176" stroke="#30363d" stroke-width="1"/>
+      <line x1="20" y1="28" x2="20" y2="176" stroke="#30363d" stroke-width="1"/>
+
+      <path d="M25 153 L60 138 L96 113 L132 93 L167 58 L204 43 L240 66 L283 123" fill="none" stroke="#c9d1d9" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M25 174 L60 159 L96 134 L132 114 L167 79 L204 64 L240 64 L283 64" fill="none" stroke="#a371f7" stroke-width="3" stroke-dasharray="7 6" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="255" cy="86" r="7" fill="#0d1117" stroke="#f85149" stroke-width="3"/>
+      <path d="M255 97V119" stroke="#f85149" stroke-width="3" stroke-linecap="round"/>
+      <path d="M247 111L255 119 263 111" fill="none" stroke="#f85149" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="30" y="193" class="label" fill="#d2a8ff">SELL trail</text>
+      <text x="239" y="139" class="label" fill="#ff7b72">SELL</text>
+    </g>
+
+    <text x="176" y="364" text-anchor="middle" class="body">
+      <tspan x="176" dy="0">Trailing SELL.</tspan>
+      <tspan x="176" dy="26">Market SELL when trail = 0.</tspan>
+    </text>
+  </g>
+
+  <!-- 5. Record and repeat -->
+  <g transform="translate(1528,40)">
+    <rect width="352" height="430" rx="14" fill="url(#card)" stroke="#30363d" stroke-width="1.5"/>
+    <circle cx="32" cy="34" r="15" fill="#238636"/>
+    <text x="32" y="40" text-anchor="middle" class="number">5</text>
+    <text x="176" y="42" text-anchor="middle" class="title">Record &amp; repeat</text>
+
+    <g transform="translate(22,82)">
+      <rect width="308" height="235" rx="10" fill="#0d1117" stroke="#30363d"/>
+      <rect x="1" y="1" width="306" height="233" rx="9" fill="url(#grid)"/>
+      <line x1="20" y1="176" x2="287" y2="176" stroke="#30363d" stroke-width="1"/>
+      <line x1="20" y1="28" x2="20" y2="176" stroke="#30363d" stroke-width="1"/>
+
+      <path d="M27 151 L61 141 L95 118 L130 133 L165 91 L201 70" fill="none" stroke="#3fb950" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="61" cy="141" r="6" fill="#0d1117" stroke="#58a6ff" stroke-width="3"/>
+      <circle cx="201" cy="70" r="6" fill="#0d1117" stroke="#3fb950" stroke-width="3"/>
+      <line x1="220" y1="34" x2="220" y2="176" stroke="#30363d" stroke-width="2"/>
+      <path d="M239 106 A31 31 0 0 1 286 84" fill="none" stroke="#3fb950" stroke-width="4" stroke-linecap="round"/>
+      <polygon points="283,77 292,83 284,92" fill="#3fb950"/>
+      <path d="M289 112 A31 31 0 0 1 242 134" fill="none" stroke="#3fb950" stroke-width="4" stroke-linecap="round"/>
+      <polygon points="245,141 236,135 244,126" fill="#3fb950"/>
+      <text x="120" y="193" text-anchor="middle" class="label">cycle logged</text>
+      <text x="264" y="193" text-anchor="middle" class="label" fill="#56d364">next cycle</text>
+    </g>
+
+    <text x="176" y="364" text-anchor="middle" class="body">
+      <tspan x="176" dy="0">Log the completed cycle.</tspan>
+      <tspan x="176" dy="26">Optionally start the next one.</tspan>
+    </text>
+  </g>
+</svg>
