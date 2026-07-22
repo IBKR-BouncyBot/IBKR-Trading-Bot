@@ -2,6 +2,28 @@
 
 This file summarizes behavior-changing and maintenance releases represented by the repository. Historical implementation notes remain in `docs/legacy/` for traceability. Current behavior is documented in `README.md` and the current guides linked from `docs/README.md`.
 
+## v3.1.0
+
+### Added
+
+- Added an optional **Cancel SELL trail and liquidate before close** policy in **Risk and timing**. It is disabled by default and uses a configurable **Liquidate before close** interval of 1–240 minutes, defaulting to 5 minutes.
+- The policy applies only to the normal Stage-4 final SELL trailing-stop. When its cutoff is reached during the contract's confirmed RTH session, BouncyBot requests cancellation once, waits for a terminal broker status, and then submits one `DAY`, RTH-only market SELL for only the remaining app-owned quantity.
+- Added persistent workflow state and audit decision events so cancellation races, partial fills, application restarts, and broker reconciliation can be handled without intentionally creating a second SELL while the original order may still work.
+
+### Safety behavior
+
+- A fill of the original trailing SELL during the cancellation race is accepted normally. If it closes the position, no replacement is submitted. If it partially fills, the replacement quantity is reduced to the unsold app-owned remainder.
+- If cancellation is not confirmed before RTH closes, the original trailing SELL remains the only app exit order and no replacement is submitted.
+- If cancellation is confirmed but an open RTH session can no longer be verified, or the replacement market order is rejected, cancelled, left incomplete at the close, or otherwise cannot be completed safely, the cycle enters `ERROR` for manual review. BouncyBot does not submit an outside-RTH fallback or silently recreate the trailing order.
+- Market liquidation is unconditional once enabled and triggered; its execution price is not guaranteed and it may realize a loss. Normal Stage-5 completion and Auto-repeat behavior are preserved after a complete fill.
+- Stage 1, Stage 2, Stage 3, protective SELL behavior, trailing-stop calculations, entry logic, and all existing risk controls are unchanged.
+
+### Documentation and tests
+
+- Updated the configuration, strategy, order-flow, risk, operations, recovery, limitation, database, troubleshooting, and verification guides for the new optional policy.
+- Added focused regression coverage for defaults and validation, additive SQLite migration, GUI wiring, exact RTH/early-close timing, one-shot cancellation, cancellation/fill races, partial-fill aggregation, replacement-order attributes, failure handling, restart recovery, duplicate-SELL prevention, Stage-4 scope, and Auto-repeat behavior.
+- Added [`docs/V3_1_0_CLOSE_BEFORE_RTH_LIQUIDATION.md`](docs/V3_1_0_CLOSE_BEFORE_RTH_LIQUIDATION.md).
+
 ## v3.0.19
 
 ### Fixed

@@ -696,6 +696,14 @@ class StrategySettings:
     no_new_buy_last_minutes: int = 15
     cancel_buy_before_close_minutes: int = 5
 
+    # Optional Stage-4 close policy. When enabled, the controller requests
+    # cancellation of the active final SELL trail before the contract's RTH
+    # close, waits for broker confirmation, then submits a DAY market SELL for
+    # only the remaining app-owned quantity. It is independent of the BUY
+    # session-timing guard and is disabled by default.
+    cancel_sell_and_liquidate_before_close_enabled: bool = False
+    liquidate_before_close_minutes: int = 5
+
     reinvest_profits: bool = True
     auto_repeat: bool = True
     rth_only: bool = True  # Safety guard: submit/activate strategy orders only during regular trading hours.
@@ -833,6 +841,12 @@ class StrategySettings:
             cancel_minutes = _validation_int(self.cancel_buy_before_close_minutes)
             if first_minutes is None or last_minutes is None or cancel_minutes is None or first_minutes < 0 or last_minutes < 0 or cancel_minutes < 0:
                 errors.append("Session timing guard minutes must be zero or greater.")
+        if self.cancel_sell_and_liquidate_before_close_enabled not in {True, False}:
+            errors.append("Cancel-and-liquidate before close setting must be true or false.")
+        if self.cancel_sell_and_liquidate_before_close_enabled:
+            liquidate_minutes = _validation_int(self.liquidate_before_close_minutes)
+            if liquidate_minutes is None or not 1 <= liquidate_minutes <= 240:
+                errors.append("Liquidate-before-close minutes must be between 1 and 240.")
 
         if str(self.exchange or "").upper() != "SMART":
             errors.append("V1 supports SMART routing only.")
@@ -968,8 +982,12 @@ class CycleState:
     no_new_buy_first_minutes: int = 5
     no_new_buy_last_minutes: int = 15
     cancel_buy_before_close_minutes: int = 5
+    cancel_sell_and_liquidate_before_close_enabled: bool = False
+    liquidate_before_close_minutes: int = 5
     recovery_required: bool = False
     close_position_market_requested: bool = False
+    close_before_rth_liquidation_requested: bool = False
+    close_before_rth_cancel_requested: bool = False
 
     anchor_price: Optional[float] = None
     last_price: Optional[float] = None
@@ -1081,6 +1099,10 @@ class CycleState:
             no_new_buy_first_minutes=int(settings.no_new_buy_first_minutes),
             no_new_buy_last_minutes=int(settings.no_new_buy_last_minutes),
             cancel_buy_before_close_minutes=int(settings.cancel_buy_before_close_minutes),
+            cancel_sell_and_liquidate_before_close_enabled=bool(
+                settings.cancel_sell_and_liquidate_before_close_enabled
+            ),
+            liquidate_before_close_minutes=int(settings.liquidate_before_close_minutes),
         )
 
     def touch(self) -> None:
