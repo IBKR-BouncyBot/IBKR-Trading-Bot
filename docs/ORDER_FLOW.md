@@ -116,6 +116,22 @@ When final SELL trail is zero, Stage 3 submits a market SELL after the minimum-p
 
 The configured minimum profit is not a limit price. Both native-stop-triggered and explicit market SELLs can fill below the projected threshold.
 
+### Optional pre-close cancel-and-liquidate path
+
+When enabled for a cycle before Stage 4, the controller supervises a narrow cancel/replace workflow for the normal final `SELL_TRAIL`:
+
+- the date-specific cutoff comes from the current contract's RTH boundary;
+- cancellation is requested before any replacement is created;
+- broker polling continues during the cancellation race;
+- original-trail partial fills are persisted and deducted from the replacement quantity;
+- the replacement is one SELL `MKT`, `TIF=DAY`, `outsideRth=False` order with an `RTH_CLOSE_SELL_MARKET` app reference;
+- cumulative original and replacement executions determine completion and P/L;
+- a full original fill suppresses the replacement;
+- an unconfirmed cancellation suppresses the replacement;
+- a failed or incomplete replacement moves the cycle to `ERROR` instead of starting a second order or using extended hours.
+
+The operator-requested Stop-screen market close remains a separate workflow. While automatic close-before-RTH liquidation is active, a second manual market-close request is refused to avoid duplicate SELL exposure.
+
 ## Market-close stop action
 
 The operator-requested market-close path sells the local unsold application quantity from persisted app fills, not the account-wide broker position. The Stop dialog, main-window close path, and Reconciliation tab use the same quantity source.

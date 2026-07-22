@@ -1,6 +1,6 @@
 # Documentation index
 
-The files in this directory describe the current v3.0.19 behavior unless explicitly marked otherwise. The root of `docs/` is intentionally limited to current operating, design, recovery, and verification material. Superseded release notes are stored under [`legacy/`](legacy/README.md).
+The files in this directory describe the current v3.1.0 behavior unless explicitly marked otherwise. The root of `docs/` is intentionally limited to current operating, design, recovery, and verification material. Superseded release notes are stored under [`legacy/`](legacy/README.md).
 
 When documents disagree, use this source-of-truth order:
 
@@ -48,8 +48,8 @@ When documents disagree, use this source-of-truth order:
 
 ## Current release note
 
-[`V3_0_19_TRADE_HISTORY_AUDIT_PERFORMANCE.md`](V3_0_19_TRADE_HISTORY_AUDIT_PERFORMANCE.md) records the v3.0.19 indexed audit queries, exact capture-file discovery, lazy audit-tab construction, unrestricted audit zoom, realistic built-in example cycle, BouncyBot display name, potential-loss Stop strategy confirmation, safety boundaries, and verification results.
+[`V3_1_0_CLOSE_BEFORE_RTH_LIQUIDATION.md`](V3_1_0_CLOSE_BEFORE_RTH_LIQUIDATION.md) records the optional Stage-4 cancel-confirm-market liquidation policy, its RTH timing, cancellation and partial-fill handling, failure behavior, recovery boundaries, and verification scope.
 
 ## Archived documentation
 
-The [`legacy/`](legacy/README.md) directory contains v3.0.18 and earlier release-specific notes. Those files may accurately describe the release that introduced a feature, but labels, defaults, layouts, tests, and limitations in them can be obsolete. They are not the current operating specification.
+The [`legacy/`](legacy/README.md) directory contains older release-specific notes and retained historical reports. The v3.0.19 and v3.0.18 release notes remain available at their existing repository paths for traceability. Those files may accurately describe the release that introduced a feature, but labels, defaults, layouts, tests, and limitations in them can be obsolete. They are not the current operating specification.

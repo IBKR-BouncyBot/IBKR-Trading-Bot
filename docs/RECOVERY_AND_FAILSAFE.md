@@ -117,6 +117,18 @@ It does not:
 
 Confirm broker state before using it. When the app probe is not current, the confirmation is an explicit manual override and requires independent TWS verification.
 
+## Close-before-RTH recovery
+
+The workflow state and both order identities are persisted. After an explicit startup/reconnect reconciliation:
+
+- a still-open original trail remains the only exit order and is polled normally;
+- a terminal original cancellation can lead to the one remaining-quantity market SELL only while an open RTH session with time remaining is confirmed;
+- an open replacement order is recovered and monitored without creating another replacement;
+- persisted executions from the original and replacement are aggregated before completion;
+- an ambiguous missing order/status is not guessed and falls back to the normal recovery/manual-review controls.
+
+A restart does not waive the RTH requirement. If cancellation is confirmed only after the close, the cycle moves to `ERROR` and no outside-RTH order is submitted.
+
 ## Stop and shutdown fail-safes
 
 ### Cancel visible app-owned orders

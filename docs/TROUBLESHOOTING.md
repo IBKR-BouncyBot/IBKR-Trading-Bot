@@ -174,3 +174,9 @@ For a reproducible report, include:
 - test or PyInstaller log for build problems.
 
 Audit bundles and databases may contain sensitive account/trading information. Share them only through an appropriate secure channel.
+
+## Close-before-RTH liquidation requires manual review
+
+This message means the optional Stage-4 workflow could not prove a safe cancel-confirm-replace sequence before the regular-session boundary. Common causes are an unconfirmed trailing-order cancellation, unavailable contract-hours metadata, a replacement rejection, or a replacement that remained incomplete at the close.
+
+Check TWS/Gateway first. Confirm whether the original trailing SELL or replacement market SELL is still open, cancelled, partially filled, or filled. Do not submit another SELL until the app-owned unsold quantity and every app-created SELL order are reconciled. BouncyBot deliberately does not send an outside-RTH fallback or silently recreate the cancelled trail. Use the Reconciliation tab and export an audit bundle before marking the situation manually handled.

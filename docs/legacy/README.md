@@ -2,7 +2,7 @@
 
 These files document superseded releases and implementation history. They are retained for traceability, but they may describe old labels, defaults, layouts, tests, or limitations.
 
-For current behavior, use the [project README](../../README.md), the [current documentation index](../README.md), the [changelog](../../CHANGELOG.md), and the current [`v3.0.19 release note`](../V3_0_19_TRADE_HISTORY_AUDIT_PERFORMANCE.md).
+For current behavior, use the [project README](../../README.md), the [current documentation index](../README.md), the [changelog](../../CHANGELOG.md), and the current [`v3.1.0 release note`](../V3_1_0_CLOSE_BEFORE_RTH_LIQUIDATION.md).
 
 ## Version 3 release notes
 

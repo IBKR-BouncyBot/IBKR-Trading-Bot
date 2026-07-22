@@ -1,6 +1,6 @@
 # Limitations and non-goals
 
-This document states the boundaries of v3.0.19. Treat each limitation as an operational constraint, not as a future guarantee.
+This document states the boundaries of v3.1.0. Treat each limitation as an operational constraint, not as a future guarantee.
 
 ## Strategy scope
 
@@ -17,6 +17,8 @@ This document states the boundaries of v3.0.19. Treat each limitation as an oper
 - The optional slippage buffer changes planning math only. It is not a limit order and does not cap slippage.
 - The protective SELL cannot guarantee protection during gaps, market closures, halts, disconnections, rejection, or insufficient liquidity.
 - The application cannot override IBKR risk checks, exchange rules, account restrictions, or order simulations.
+- The optional Stage-4 close-before-RTH policy is not guaranteed to finish before the close. Cancellation acknowledgement, partial fills, order rejection, halts, connectivity, and limited remaining time can leave shares unsold and require manual review. Its market replacement can realize a loss.
+- The close-before-RTH policy applies only to the normal final Stage-4 native SELL trail. It does not liquidate Stage-3 positions and does not create an extended-hours or overnight protective order.
 
 ## Position ownership limits
 
