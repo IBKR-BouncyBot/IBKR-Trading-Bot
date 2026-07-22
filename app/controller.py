@@ -1960,6 +1960,8 @@ class TradingController:
         cycle.stage = Stage.STOPPED
         cycle.recovery_required = False
         cycle.close_position_market_requested = False
+        cycle.close_before_rth_liquidation_requested = False
+        cycle.close_before_rth_cancel_requested = False
         cycle.stop_after_current_cycle = True
         cycle.error_message = message
         cycle.touch()
@@ -2019,10 +2021,18 @@ class TradingController:
                     self._mark_recovery_required(cycle, "SQLite expected active BUY order, but no matching TWS open order or recent app execution was found.")
         elif cycle.stage == Stage.SELL_TRAIL_ACTIVE:
             if cycle.sell_order_ref in open_refs:
-                self._log("INFO", f"Recovered active SELL trailing order for {cycle.ticker}.", cycle)
+                self._log("INFO", f"Recovered active SELL order for {cycle.ticker}.", cycle)
             else:
                 polled = self.adapter.poll_order(cycle.sell_order_ref or "") if cycle.sell_order_ref else None
-                if polled and polled.filled > 0 and polled.remaining == 0:
+                close_workflow = bool(getattr(cycle, "close_before_rth_liquidation_requested", False)) or self._is_close_before_rth_market_order_ref(
+                    cycle.sell_order_ref
+                )
+                if polled is not None and close_workflow:
+                    self._handle_sell_order_poll(cycle, polled)
+                    recovered_cycle = self.active_cycle
+                    if recovered_cycle is not None and recovered_cycle.stage == Stage.CYCLE_COMPLETE:
+                        self._log("INFO", f"Recovered completed SELL order for {cycle.ticker}.", recovered_cycle)
+                elif polled and polled.filled > 0 and polled.remaining == 0:
                     cycle = StrategyEngine.on_sell_fill(cycle, polled.filled, polled.avg_fill_price, polled.status, polled.commission)
                     self.active_cycle = cycle
                     self.storage.upsert_cycle(cycle)
@@ -2409,6 +2419,27 @@ class TradingController:
         if qty <= 0 or avg_price <= 0:
             return None
         self._record_recovered_executions(cycle, rows, "SELL")
+        close_workflow = bool(getattr(cycle, "close_before_rth_liquidation_requested", False)) or self._is_close_before_rth_market_order_ref(
+            cycle.sell_order_ref
+        )
+        if close_workflow:
+            total_qty, total_avg, total_commission = self._close_before_rth_sell_totals(cycle)
+            target_qty = max(0, int(getattr(cycle, "buy_filled_qty", 0) or 0))
+            if total_qty > target_qty > 0:
+                self._move_close_before_rth_to_error(
+                    cycle,
+                    f"recovered executions report {total_qty} SELL shares for an app-owned quantity of {target_qty}",
+                )
+                return self.active_cycle
+            if target_qty <= 0 or total_qty < target_qty:
+                cycle.sell_filled_qty = total_qty
+                cycle.avg_sell_price = total_avg if total_avg > 0 else cycle.avg_sell_price
+                cycle.sell_commission = total_commission
+                cycle.touch()
+                self.active_cycle = cycle
+                self.storage.upsert_cycle(cycle)
+                return None
+            qty, avg_price, commission = total_qty, total_avg, total_commission
         recovered = StrategyEngine.on_sell_fill(cycle, qty, avg_price, "Filled", commission)
         self.active_cycle = recovered
         self.storage.upsert_cycle(recovered)
@@ -2457,6 +2488,8 @@ class TradingController:
             cycle.stage = Stage.STOPPED
             cycle.stop_after_current_cycle = True
             cycle.close_position_market_requested = False
+            cycle.close_before_rth_liquidation_requested = False
+            cycle.close_before_rth_cancel_requested = False
             cycle.error_message = "Stop selected: strategy stopped locally; no broker order was cancelled or submitted."
             cycle.touch()
             self.active_cycle = cycle
@@ -2546,6 +2579,14 @@ class TradingController:
         sending the market SELL. That avoids two app-created SELL orders working
         for the same shares at the same time.
         """
+        if bool(getattr(cycle, "close_before_rth_liquidation_requested", False)):
+            self._set_close_before_rth_wait_message(
+                cycle,
+                "Close-before-RTH liquidation is already in progress. No second market SELL was submitted; "
+                "the existing cancel-confirm-liquidate workflow remains responsible for the app-owned position.",
+            )
+            return
+
         connectivity_message = self._broker_operation_connectivity_message(
             "Close app position by market order",
             require_reconciliation_complete=True,
@@ -2560,6 +2601,8 @@ class TradingController:
             return
         unsold = self._app_unsold_quantity(cycle)
         cycle.close_position_market_requested = True
+        cycle.close_before_rth_liquidation_requested = False
+        cycle.close_before_rth_cancel_requested = False
         cycle.stop_after_current_cycle = True
         if cycle.protective_sell_order_ref and self._is_order_working_for_close(cycle.protective_sell_order_ref, cycle.protective_sell_status, cycle.protective_sell_filled_qty):
             cycle.protective_sell_cancel_requested = True
@@ -2587,6 +2630,8 @@ class TradingController:
 
         if unsold <= 0:
             cycle.close_position_market_requested = False
+            cycle.close_before_rth_liquidation_requested = False
+            cycle.close_before_rth_cancel_requested = False
             cycle.stage = Stage.STOPPED
             cycle.error_message = "Close-by-market selected, but this app has no unsold bought quantity for the active cycle."
             cycle.touch()
@@ -2623,6 +2668,8 @@ class TradingController:
         remaining = self._app_unsold_quantity(cycle)
         if remaining <= 0:
             cycle.close_position_market_requested = False
+            cycle.close_before_rth_liquidation_requested = False
+            cycle.close_before_rth_cancel_requested = False
             cycle.stage = Stage.STOPPED
             cycle.error_message = "Close-by-market request completed without sending a SELL because no app-owned quantity remains."
             cycle.touch()
@@ -3129,6 +3176,10 @@ class TradingController:
             if polled:
                 self._handle_buy_order_poll(cycle, polled)
         elif cycle.stage == Stage.SELL_TRAIL_ACTIVE and cycle.sell_order_ref:
+            self._cancel_sell_and_liquidate_before_close_if_needed(cycle)
+            cycle = self.active_cycle or cycle
+            if cycle.stage != Stage.SELL_TRAIL_ACTIVE or not cycle.sell_order_ref:
+                return
             if fetched_price and last_price is not None:
                 cycle.last_price = last_price
                 cycle.touch()
@@ -3960,6 +4011,204 @@ class TradingController:
             self._handle_broker_connection_problem(exc)
             self._log("WARN", f"Session timing guard wanted to cancel BUY before close but TWS was unavailable: {exc}", cycle)
 
+    @staticmethod
+    def _is_close_before_rth_market_order_ref(order_ref: Optional[str]) -> bool:
+        return str(order_ref or "").endswith("|RTH_CLOSE_SELL_MARKET")
+
+    @staticmethod
+    def _is_stage4_trailing_sell_ref(order_ref: Optional[str]) -> bool:
+        return str(order_ref or "").endswith("|SELL_TRAIL")
+
+    @staticmethod
+    def _close_before_rth_order_is_working(order_ref: Optional[str], status: Optional[str]) -> bool:
+        if not order_ref:
+            return False
+        terminal = {"Filled", "Cancelled", "ApiCancelled", "Inactive", "Rejected"}
+        return str(status or "").strip() not in terminal
+
+    def _set_close_before_rth_wait_message(self, cycle: CycleState, message: str) -> None:
+        changed = cycle.error_message != message
+        if changed:
+            cycle.error_message = message
+            cycle.touch()
+            self.active_cycle = cycle
+            self.storage.upsert_cycle(cycle)
+            self._log("WARN", message, cycle)
+            return
+        self._log_price_warning_throttled(cycle, message, interval_seconds=60.0)
+
+    def _cancel_sell_and_liquidate_before_close_if_needed(self, cycle: CycleState) -> None:
+        """Supervise the optional Stage-4 cancel-confirm-market-close workflow."""
+        if cycle.stage != Stage.SELL_TRAIL_ACTIVE or not cycle.sell_order_ref:
+            return
+        requested = bool(getattr(cycle, "close_before_rth_liquidation_requested", False))
+        enabled = bool(getattr(cycle, "cancel_sell_and_liquidate_before_close_enabled", False))
+        if not enabled and not requested:
+            return
+
+        cutoff = int(getattr(cycle, "liquidate_before_close_minutes", 0) or 0)
+        if cutoff <= 0:
+            return
+        timing = self._session_minutes_from_rth_status()
+        if not timing.get("available"):
+            detail = str(timing.get("message") or "regular-session boundaries are unavailable")
+            if requested:
+                self._set_close_before_rth_wait_message(
+                    cycle,
+                    "Close-before-RTH liquidation is pending, but the contract's regular-session boundary "
+                    f"cannot be verified ({detail}). No replacement SELL will be submitted without a confirmed open RTH session.",
+                )
+            else:
+                self._log_price_warning_throttled(
+                    cycle,
+                    "Close-before-RTH liquidation is enabled, but the contract's regular-session boundary "
+                    f"cannot be verified ({detail}). Automatic liquidation will not start without a confirmed boundary.",
+                    interval_seconds=60.0,
+                )
+            return
+        minutes_raw = timing.get("minutes_to_close")
+        if minutes_raw is None:
+            return
+        minutes_to_close = float(minutes_raw)
+        rth_open = bool((self._latest_rth_status or {}).get("is_open"))
+        close_text = str(timing.get("session_close_display") or "the regular-session close")
+        replacement = self._is_close_before_rth_market_order_ref(cycle.sell_order_ref)
+
+        if replacement:
+            if not requested or (rth_open and minutes_to_close > 0):
+                return
+            if self._close_before_rth_order_is_working(cycle.sell_order_ref, cycle.sell_status):
+                if not bool(getattr(cycle, "close_before_rth_cancel_requested", False)):
+                    try:
+                        self.adapter.cancel_order(cycle.sell_order_ref, cycle.sell_order_id)
+                        cycle.sell_status = "CancelRequested"
+                        cycle.close_before_rth_cancel_requested = True
+                        cycle.touch()
+                        self.active_cycle = cycle
+                        self.storage.upsert_cycle(cycle)
+                        self.storage.update_order_status(
+                            cycle.sell_order_ref,
+                            "CancelRequested",
+                            cycle.sell_order_id,
+                            cycle.sell_perm_id,
+                        )
+                        self.storage.add_decision_event(
+                            event_type="RTH_CLOSE_MARKET_CANCEL_REQUESTED",
+                            message=(
+                                "The close-before-RTH market SELL was still working at the regular-session boundary; "
+                                "cancellation was requested."
+                            ),
+                            cycle=cycle,
+                            decision_result="cancel_requested",
+                            broker_order_id=cycle.sell_order_id,
+                            perm_id=cycle.sell_perm_id,
+                            raw={"minutes_to_close": minutes_to_close, "session_close": close_text},
+                        )
+                    except BrokerAdapterError as exc:
+                        self._handle_broker_connection_problem(exc)
+                        self._log("WARN", f"Could not cancel the close-before-RTH market SELL at the session boundary: {exc}", cycle)
+                    except Exception as exc:
+                        self._log("WARN", f"Could not cancel the close-before-RTH market SELL at the session boundary: {exc}", cycle)
+            self._set_close_before_rth_wait_message(
+                cycle,
+                "Close-before-RTH market SELL was not confirmed filled before the regular-session close. "
+                "No outside-RTH replacement will be submitted; waiting for the broker's terminal order status before manual review.",
+            )
+            return
+
+        # If a cancellation request failed or was rejected and the original
+        # trail is still working in a later RTH session, resume ordinary Stage-4
+        # monitoring and allow a fresh attempt at that session's cutoff.
+        if (
+            requested
+            and rth_open
+            and minutes_to_close > cutoff
+            and str(cycle.sell_status or "") != "CancelRequested"
+            and self._close_before_rth_order_is_working(cycle.sell_order_ref, cycle.sell_status)
+        ):
+            cycle.close_before_rth_liquidation_requested = False
+            cycle.close_before_rth_cancel_requested = False
+            cycle.error_message = None
+            cycle.touch()
+            self.active_cycle = cycle
+            self.storage.upsert_cycle(cycle)
+            self._log(
+                "WARN",
+                "The prior close-before-RTH cancellation was not confirmed before the close. "
+                "The original SELL trail is still working and normal Stage-4 monitoring has resumed for the new session.",
+                cycle,
+            )
+            return
+
+        if requested and (not rth_open or minutes_to_close <= 0):
+            self._set_close_before_rth_wait_message(
+                cycle,
+                "Close-before-RTH cancellation was not confirmed before the regular-session close. "
+                "No second SELL was submitted; the original trailing SELL remains the only app exit order while its broker status is monitored.",
+            )
+            return
+
+        if not self._is_stage4_trailing_sell_ref(cycle.sell_order_ref):
+            return
+        if not self._close_before_rth_order_is_working(cycle.sell_order_ref, cycle.sell_status):
+            return
+        if not rth_open or not (0 < minutes_to_close <= cutoff):
+            return
+
+        if not requested:
+            cycle.close_before_rth_liquidation_requested = True
+            cycle.close_before_rth_cancel_requested = False
+            cycle.error_message = (
+                f"Close-before-RTH liquidation started {minutes_to_close:.1f} minutes before {close_text}. "
+                "Waiting for final SELL-trail cancellation before submitting a DAY market SELL for the remaining app-owned quantity."
+            )
+            cycle.touch()
+            self.active_cycle = cycle
+            self.storage.upsert_cycle(cycle)
+            self.storage.add_decision_event(
+                event_type="RTH_CLOSE_LIQUIDATION_REQUESTED",
+                message=cycle.error_message,
+                cycle=cycle,
+                stage_before=cycle.stage.value,
+                stage_after=cycle.stage.value,
+                decision_result="cancel_then_liquidate",
+                broker_order_id=cycle.sell_order_id,
+                perm_id=cycle.sell_perm_id,
+                raw={
+                    "minutes_to_close": minutes_to_close,
+                    "configured_minutes": cutoff,
+                    "session_close": close_text,
+                    "order_ref": cycle.sell_order_ref,
+                },
+            )
+            self._log("WARN", cycle.error_message, cycle)
+
+        if bool(getattr(cycle, "close_before_rth_cancel_requested", False)):
+            return
+        try:
+            self.adapter.cancel_order(cycle.sell_order_ref, cycle.sell_order_id)
+            cycle.sell_status = "CancelRequested"
+            cycle.close_before_rth_cancel_requested = True
+            cycle.touch()
+            self.active_cycle = cycle
+            self.storage.upsert_cycle(cycle)
+            self.storage.update_order_status(
+                cycle.sell_order_ref,
+                "CancelRequested",
+                cycle.sell_order_id,
+                cycle.sell_perm_id,
+            )
+            self._log(
+                "WARN",
+                f"Close-before-RTH liquidation: cancellation requested for final SELL trail {cycle.sell_order_ref}.",
+                cycle,
+            )
+        except BrokerAdapterError as exc:
+            self._handle_broker_connection_problem(exc)
+            self._log("WARN", f"Close-before-RTH liquidation could not confirm the SELL-trail cancellation request: {exc}", cycle)
+        except Exception as exc:
+            self._log("WARN", f"Close-before-RTH liquidation could not request SELL-trail cancellation: {exc}", cycle)
+
     def _what_if_guard_message_for_buy(self, cycle: CycleState, payload: dict[str, Any]) -> Optional[str]:
         if not bool(getattr(cycle, "what_if_check_enabled", False)):
             return None
@@ -4740,6 +4989,8 @@ class TradingController:
             cycle.sell_status = polled.status
         cycle.recovery_required = False
         cycle.close_position_market_requested = False
+        cycle.close_before_rth_liquidation_requested = False
+        cycle.close_before_rth_cancel_requested = False
         cycle.touch()
         self.active_cycle = cycle
         self.storage.upsert_cycle(cycle)
@@ -4879,7 +5130,387 @@ class TradingController:
         self._maybe_start_next_cycle()
         return True
 
+    def _move_close_before_rth_to_error(self, cycle: CycleState, message: str) -> None:
+        """Pause an incomplete automatic close without sending another order."""
+        cycle.stage = Stage.ERROR
+        cycle.close_position_market_requested = False
+        cycle.close_before_rth_liquidation_requested = False
+        cycle.close_before_rth_cancel_requested = False
+        cycle.recovery_required = False
+        cycle.error_message = (
+            f"Close-before-RTH liquidation requires manual review: {message} "
+            "No outside-RTH replacement order was submitted."
+        )
+        cycle.touch()
+        self.active_cycle = cycle
+        self.storage.upsert_cycle(cycle)
+        self.storage.add_decision_event(
+            event_type="RTH_CLOSE_LIQUIDATION_ERROR",
+            message=cycle.error_message,
+            cycle=cycle,
+            stage_after=cycle.stage.value,
+            decision_result="stopped_error",
+            broker_order_id=cycle.sell_order_id,
+            perm_id=cycle.sell_perm_id,
+            raw={"order_ref": cycle.sell_order_ref, "sell_status": cycle.sell_status},
+        )
+        self._log("ERROR", cycle.error_message, cycle)
+
+    def _record_close_before_rth_polled_executions(self, cycle: CycleState, polled: PolledOrderState) -> None:
+        """Persist only the newly observed part of a close-workflow SELL fill."""
+        cumulative = max(0.0, float(polled.filled or 0.0))
+        if cumulative <= 0:
+            return
+        existing = self.storage.get_execution_totals(cycle.id, "SELL", order_ref=polled.order_ref)
+        persisted = max(0.0, float(existing.get("shares", 0.0) or 0.0))
+        missing = cumulative - persisted
+        if missing <= 1e-9:
+            return
+
+        candidates: list[tuple[int, dict[str, Any], str, float, float]] = []
+        for index, execution in enumerate(polled.executions or []):
+            exec_id = str(
+                execution.get("execId")
+                or execution.get("execution_id")
+                or (
+                    f"{polled.order_ref}|SELL|{index}|{execution.get('shares')}|"
+                    f"{execution.get('price')}|{execution.get('time')}"
+                )
+            )
+            if self.storage.execution_exists(exec_id):
+                continue
+            try:
+                shares = abs(float(execution.get("shares") or 0.0))
+                price = float(execution.get("price") or polled.avg_fill_price or 0.0)
+            except Exception:
+                continue
+            if shares <= 0 or price <= 0:
+                continue
+            candidates.append((index, execution, exec_id, shares, price))
+
+        selected: list[tuple[int, dict[str, Any], str, float, float]] = []
+        selected_shares = 0.0
+        for candidate in reversed(candidates):
+            selected.append(candidate)
+            selected_shares += candidate[3]
+            if selected_shares + 1e-9 >= missing:
+                break
+
+        if selected and abs(selected_shares - missing) <= 1e-9:
+            for _, execution, exec_id, shares, price in reversed(selected):
+                self.storage.add_execution(
+                    cycle=cycle,
+                    ticker=cycle.ticker,
+                    side="SELL",
+                    shares=shares,
+                    price=price,
+                    avg_price=float(execution.get("avgPrice") or execution.get("avg_price") or price),
+                    commission=float(execution.get("commission") or 0.0),
+                    currency=str(execution.get("currency") or cycle.currency),
+                    order_ref=polled.order_ref,
+                    order_id=polled.order_id,
+                    perm_id=polled.perm_id,
+                    execution_id=exec_id,
+                    executed_at=str(execution.get("time") or execution.get("executed_at") or utc_now_iso()),
+                    raw=execution,
+                )
+            return
+
+        cumulative_avg = float(polled.avg_fill_price or 0.0)
+        if cumulative_avg <= 0:
+            return
+        existing_notional = persisted * float(existing.get("avg_price", 0.0) or 0.0)
+        cumulative_notional = cumulative * cumulative_avg
+        delta_price = (cumulative_notional - existing_notional) / missing
+        if delta_price <= 0 or not isfinite(delta_price):
+            delta_price = cumulative_avg
+        delta_commission = float(polled.commission or 0.0) - float(existing.get("commission", 0.0) or 0.0)
+        synthetic_id = f"{polled.order_ref}|SELL|CUMULATIVE|{cumulative:.8f}|{cumulative_avg:.8f}"
+        if self.storage.execution_exists(synthetic_id):
+            return
+        self.storage.add_execution(
+            cycle=cycle,
+            ticker=cycle.ticker,
+            side="SELL",
+            shares=missing,
+            price=delta_price,
+            avg_price=cumulative_avg,
+            commission=delta_commission,
+            currency=cycle.currency,
+            order_ref=polled.order_ref,
+            order_id=polled.order_id,
+            perm_id=polled.perm_id,
+            execution_id=synthetic_id,
+            raw={**dict(polled.raw or {}), "source": "cumulative_order_state_delta"},
+        )
+
+    def _close_before_rth_sell_totals(self, cycle: CycleState) -> tuple[int, float, float]:
+        totals = self.storage.get_execution_totals(cycle.id, "SELL")
+        return (
+            int(round(float(totals.get("shares", 0.0) or 0.0))),
+            float(totals.get("avg_price", 0.0) or 0.0),
+            float(totals.get("commission", 0.0) or 0.0),
+        )
+
+    def _complete_close_before_rth_sell(
+        self,
+        cycle: CycleState,
+        polled: PolledOrderState,
+        quantity: int,
+        avg_price: float,
+        commission: float,
+    ) -> None:
+        completed = StrategyEngine.on_sell_fill(cycle, quantity, avg_price, "Filled", commission)
+        completed.sell_order_id = polled.order_id or completed.sell_order_id
+        completed.sell_perm_id = polled.perm_id or completed.sell_perm_id
+        self.active_cycle = completed
+        self.storage.upsert_cycle(completed)
+        self.storage.add_decision_event(
+            event_type="SELL_FILL",
+            message="Close-before-RTH SELL fills fully closed the app-owned position.",
+            cycle=completed,
+            stage_before=cycle.stage.value,
+            stage_after=completed.stage.value,
+            decision_result="cycle_complete",
+            broker_order_id=polled.order_id,
+            perm_id=polled.perm_id,
+            raw={**dict(polled.raw or {}), "cumulative_cycle_sell_quantity": quantity},
+        )
+        self._start_trade_market_data_capture("SELL_FILL", completed, polled)
+        try:
+            self.storage.backup_database("after_sell_fill")
+        except Exception:
+            pass
+        self._log(
+            "INFO",
+            f"Close-before-RTH liquidation completed: {quantity} cumulative shares sold @ {avg_price:.4f}. "
+            f"Net P/L {completed.net_pnl:.2f}.",
+            completed,
+        )
+        self._maybe_start_next_cycle()
+
+    def _submit_close_before_rth_market_sell(self, cycle: CycleState) -> bool:
+        """Submit an RTH-only DAY market SELL after trail cancellation is terminal."""
+        if self.contract is None or self.contract.ticker != cycle.ticker:
+            try:
+                self.contract = self._adapter_qualify_stock(
+                    cycle.ticker,
+                    cycle.exchange,
+                    cycle.currency,
+                    cycle.primary_exchange,
+                    cycle.con_id,
+                )
+            except Exception as exc:
+                self._move_close_before_rth_to_error(
+                    cycle,
+                    f"the original SELL trail was terminal, but the contract could not be qualified for the replacement market SELL ({exc})",
+                )
+                return False
+
+        self._update_rth_status(self.contract)
+        timing = self._session_minutes_from_rth_status()
+        minutes_to_close = timing.get("minutes_to_close") if timing.get("available") else None
+        rth_open = bool((self._latest_rth_status or {}).get("is_open"))
+        if minutes_to_close is None or not rth_open or float(minutes_to_close) <= 0:
+            self._move_close_before_rth_to_error(
+                cycle,
+                "the original SELL trail was terminal, but an open regular session with time remaining before the close could not be confirmed",
+            )
+            return False
+
+        connectivity_message = self._order_submission_connectivity_message("SELL")
+        if connectivity_message:
+            self._move_close_before_rth_to_error(
+                cycle,
+                f"the original SELL trail was terminal, but the replacement market SELL could not be submitted ({connectivity_message})",
+            )
+            return False
+
+        sold_qty, _, _ = self._close_before_rth_sell_totals(cycle)
+        target_qty = max(0, int(getattr(cycle, "buy_filled_qty", 0) or 0))
+        remaining = target_qty - sold_qty
+        if target_qty <= 0 or remaining <= 0:
+            self._move_close_before_rth_to_error(
+                cycle,
+                "the remaining app-owned quantity could not be established safely before replacement submission",
+            )
+            return False
+
+        order_ref = make_order_ref(cycle.ticker, cycle.cycle_number, cycle.id, "RTH_CLOSE_SELL_MARKET")
+        stage_before = cycle.stage.value
+        cycle.sell_order_ref = order_ref
+        cycle.sell_order_id = None
+        cycle.sell_perm_id = None
+        cycle.sell_status = None
+        cycle.sell_initial_trail_stop_price = None
+        cycle.close_before_rth_cancel_requested = False
+        cycle.error_message = f"Submitting DAY market SELL for {remaining} remaining app-owned shares before the regular-session close."
+        cycle.touch()
+        self.active_cycle = cycle
+        self.storage.upsert_cycle(cycle)
+
+        payload = {
+            "ticker": cycle.ticker,
+            "quantity": int(remaining),
+            "order_type": "MKT",
+            "trailing_percent": 0.0,
+            "initial_stop_price": None,
+            "reference_price": float((self.price_snapshot or {}).get("price") or cycle.last_price or 0.0),
+            "order_ref": order_ref,
+            "tif": "DAY",
+            "outside_rth": False,
+            "automatic_close_before_rth": True,
+        }
+        try:
+            self.storage.backup_database("before_order_submit")
+        except Exception:
+            pass
+        self._record_order_intent(cycle, payload, "SELL", "MKT")
+        try:
+            handle = self.adapter.place_market_order(
+                contract=self.contract,
+                action="SELL",
+                quantity=int(remaining),
+                order_ref=order_ref,
+                tif="DAY",
+                account=(self.connection.account or cycle.account),
+                outside_rth=False,
+            )
+        except BrokerAdapterError as exc:
+            self.storage.mark_order_intent_failed(order_ref, str(exc), raw={"payload": payload, "side": "SELL"})
+            self._move_close_before_rth_to_error(
+                cycle,
+                f"IBKR did not confirm the DAY market SELL submission ({exc})",
+            )
+            try:
+                if not self.adapter.is_connected():
+                    self._handle_broker_connection_problem(exc)
+            except Exception:
+                pass
+            return False
+        except Exception as exc:
+            self.storage.mark_order_intent_failed(order_ref, str(exc), raw={"payload": payload, "side": "SELL"})
+            self._move_close_before_rth_to_error(cycle, f"the DAY market SELL submission failed ({exc})")
+            return False
+
+        updated = StrategyEngine.on_order_submitted(
+            cycle,
+            handle.order_ref,
+            handle.order_id,
+            handle.perm_id,
+            handle.status,
+        )
+        self.active_cycle = updated
+        self.storage.record_order_submission(
+            cycle=updated,
+            order_ref=handle.order_ref,
+            order_id=handle.order_id,
+            perm_id=handle.perm_id,
+            status=handle.status,
+            raw=handle.raw,
+        )
+        self.storage.add_decision_event(
+            event_type="RTH_CLOSE_MARKET_SUBMITTED",
+            message="Submitted the close-before-RTH DAY market SELL after final SELL-trail cancellation confirmation.",
+            cycle=updated,
+            stage_before=stage_before,
+            stage_after=updated.stage.value,
+            decision_result="submitted",
+            broker_order_id=handle.order_id,
+            perm_id=handle.perm_id,
+            raw={**dict(handle.raw or {}), "configured_minutes": int(cycle.liquidate_before_close_minutes)},
+        )
+        self._log(
+            "WARN",
+            f"Close-before-RTH liquidation submitted SELL MKT DAY for {remaining} remaining app-owned shares; outsideRth=False.",
+            updated,
+        )
+        return True
+
+    def _handle_close_before_rth_sell_order_poll(self, cycle: CycleState, polled: PolledOrderState) -> None:
+        """Handle original-trail and replacement fills without allowing a double SELL."""
+        self.storage.update_order_status(polled.order_ref, polled.status, polled.order_id, polled.perm_id)
+        self._update_recovery_probe_from_order_poll(polled)
+        previous_qty = int(getattr(cycle, "sell_filled_qty", 0) or 0)
+        cycle.sell_status = polled.status
+        cycle.sell_order_id = polled.order_id or cycle.sell_order_id
+        cycle.sell_perm_id = polled.perm_id or cycle.sell_perm_id
+        if polled.filled > 0:
+            self._record_close_before_rth_polled_executions(cycle, polled)
+
+        total_qty, avg_price, commission = self._close_before_rth_sell_totals(cycle)
+        target_qty = max(0, int(getattr(cycle, "buy_filled_qty", 0) or 0))
+        if total_qty > 0:
+            cycle.sell_filled_qty = total_qty
+            cycle.avg_sell_price = avg_price
+            cycle.sell_commission = commission
+            cycle.sell_filled_at = cycle.sell_filled_at or utc_now_iso()
+
+        if target_qty <= 0:
+            self._move_close_before_rth_to_error(cycle, "the original bought quantity is missing or invalid")
+            return
+        if total_qty > target_qty:
+            self._move_close_before_rth_to_error(
+                cycle,
+                f"broker executions report {total_qty} SELL shares for an app-owned quantity of {target_qty}; a possible over-sell must be reviewed",
+            )
+            return
+        if total_qty == target_qty and avg_price > 0:
+            self._complete_close_before_rth_sell(cycle, polled, total_qty, avg_price, commission)
+            return
+
+        cycle.touch()
+        self.active_cycle = cycle
+        self.storage.upsert_cycle(cycle)
+        terminal = str(polled.status or "").strip() in {"Filled", "Cancelled", "ApiCancelled", "Inactive", "Rejected"}
+        replacement = self._is_close_before_rth_market_order_ref(polled.order_ref or cycle.sell_order_ref)
+
+        if replacement:
+            if terminal:
+                remaining = max(0, target_qty - total_qty)
+                self._move_close_before_rth_to_error(
+                    cycle,
+                    f"the DAY market SELL ended with status {polled.status} after {total_qty} cumulative shares were sold; "
+                    f"{remaining} app-owned shares remain unsold",
+                )
+                return
+            if total_qty != previous_qty:
+                self._log(
+                    "INFO",
+                    f"Close-before-RTH market SELL partial fill: {total_qty} cumulative shares sold; "
+                    f"{target_qty - total_qty} app-owned shares remain.",
+                    cycle,
+                )
+            return
+
+        if terminal:
+            cycle.close_before_rth_cancel_requested = False
+            cycle.touch()
+            self.active_cycle = cycle
+            self.storage.upsert_cycle(cycle)
+            if str(polled.status or "").strip() == "Filled":
+                self._move_close_before_rth_to_error(
+                    cycle,
+                    f"the original SELL trail reported Filled but only {total_qty} of {target_qty} app-owned shares were confirmed sold",
+                )
+                return
+            self._submit_close_before_rth_market_sell(cycle)
+            return
+
+        if total_qty != previous_qty:
+            self._log(
+                "INFO",
+                f"Final SELL trail partially filled during close-before-RTH cancellation: {total_qty} cumulative shares sold; "
+                f"{target_qty - total_qty} app-owned shares remain.",
+                cycle,
+            )
+
     def _handle_sell_order_poll(self, cycle: CycleState, polled: PolledOrderState) -> None:
+        if bool(getattr(cycle, "close_before_rth_liquidation_requested", False)) or self._is_close_before_rth_market_order_ref(
+            polled.order_ref or cycle.sell_order_ref
+        ):
+            self._handle_close_before_rth_sell_order_poll(cycle, polled)
+            return
         self.storage.update_order_status(polled.order_ref, polled.status, polled.order_id, polled.perm_id)
         self._update_recovery_probe_from_order_poll(polled)
         if polled.filled <= 0:
@@ -5063,6 +5694,10 @@ class TradingController:
             no_new_buy_first_minutes=int(getattr(cycle, "no_new_buy_first_minutes", 5)),
             no_new_buy_last_minutes=int(getattr(cycle, "no_new_buy_last_minutes", 15)),
             cancel_buy_before_close_minutes=int(getattr(cycle, "cancel_buy_before_close_minutes", 5)),
+            cancel_sell_and_liquidate_before_close_enabled=bool(
+                getattr(cycle, "cancel_sell_and_liquidate_before_close_enabled", False)
+            ),
+            liquidate_before_close_minutes=int(getattr(cycle, "liquidate_before_close_minutes", 5)),
             reinvest_profits=cycle.reinvest_profits,
             auto_repeat=self.strategy.auto_repeat,
             rth_only=bool(getattr(cycle, "rth_only", True)),

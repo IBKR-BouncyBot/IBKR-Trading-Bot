@@ -1,5 +1,7 @@
 # BouncyBot - an IBKR Portable Trading Bot 
 
+**Current release: v3.1.0**
+
 ![Simple-view](Images/Trading-Simple-view.png)
 
 A Windows desktop application that automates one long-only Interactive Brokers stock-trading cycle at a time through Trader Workstation (TWS) or IB Gateway.
@@ -89,6 +91,8 @@ The final SELL is not submitted until the selected strategy price reaches the re
 
 A positive SELL trail creates a native SELL `TRAIL` order. A zero SELL trail creates a market SELL after the minimum-profit condition is reached. The broker controls the native trail after order submission.
 
+The optional **Cancel SELL trail and liquidate before close** policy is off by default. When enabled before Stage 4, the app uses the contract's date-specific RTH close and starts the workflow at the configured number of minutes before that close. It requests cancellation of the final native SELL trail, waits for IBKR to report a terminal order state, recalculates the remaining app-owned quantity from persisted SELL executions, and submits one `DAY` market SELL with `outsideRth=False`. A fill during the cancellation race is recorded normally; a partial trail fill reduces the replacement quantity. The market exit can fill below the trailing stop and can realize a loss. If cancellation is not confirmed before close, no second SELL is submitted. If cancellation succeeds but the replacement cannot be submitted or completed before close, the cycle moves to an error/manual-review state rather than submitting outside RTH.
+
 An optional protective SELL trail can be submitted immediately after a BUY fill. When the normal minimum-profit exit becomes eligible, the application first requests cancellation of the protective order and waits for confirmation before submitting the final SELL. This prevents two application-created SELL orders from intentionally working for the same shares at once.
 
 ### Stage 5 — complete or repeat
@@ -102,6 +106,7 @@ The application records fills, commissions received from IBKR, gross and net P/L
 - Contract search and qualification through the IBKR API.
 - Whole-share budget sizing.
 - Native IBKR BUY and SELL trailing-stop orders.
+- Optional Stage-4 cancel-confirm-market liquidation before the contract-specific RTH close.
 - Market-order alternatives when a trail percentage is exactly zero.
 - Optional automatic cycle repetition and reinvestment of positive completed application P/L.
 - Portable SQLite persistence and additive schema migration.
@@ -432,7 +437,7 @@ dist\IBKRTradingBot\IBKRTradingBot.exe
 and creates the versioned release folder and final ZIP using the same naming pattern as IBKR Market Replay Lab:
 
 ```text
-release\IBKRTradingBot_3.0.19_Windows\
+release\IBKRTradingBot_3.1.0_Windows\
   GUI\IBKRTradingBot.exe
   docs\
   README.md
@@ -441,7 +446,7 @@ release\IBKRTradingBot_3.0.19_Windows\
   SECURITY.md
   QUICK_START.txt
 
-release\IBKRTradingBot_3.0.19_Windows.zip
+release\IBKRTradingBot_3.1.0_Windows.zip
 release\SHA256SUMS.txt
 ```
 
@@ -510,6 +515,7 @@ Superseded release-specific documents are indexed under [docs/legacy](docs/legac
 
 ## Release history
 
+- [v3.1.0 release note](docs/V3_1_0_CLOSE_BEFORE_RTH_LIQUIDATION.md) — optional Stage-4 cancel-confirm-market liquidation before the contract-specific RTH close.
 - [v3.0.19 release note](docs/V3_0_19_TRADE_HISTORY_AUDIT_PERFORMANCE.md) — faster Trade History audits, unrestricted audit zoom, realistic sample data, the BouncyBot product name, and an explicit potential-loss market-SELL confirmation.
 - [CHANGELOG.md](CHANGELOG.md) — consolidated release history.
 - [Archived release notes](docs/legacy/README.md) — implementation history for v3.0.17 and earlier.

@@ -1,6 +1,6 @@
 # Maintainer review notes
 
-This file records the current review boundaries for v3.0.19. It is not a release changelog and should not be used instead of the behavioral guides.
+This file records the current review boundaries for v3.1.0. It is not a release changelog and should not be used instead of the behavioral guides.
 
 ## Source-of-truth order
 
@@ -96,7 +96,7 @@ When behavior changes:
 
 The public-repository documentation set:
 
-- keeps the application and package version at v3.0.19 for documentation-only revisions within this release;
+- keeps the application and package version at v3.1.0 for documentation-only revisions within this release;
 - keeps current operational material in `docs/` and superseded release notes in `docs/legacy/`;
 - treats SQLite files, backups, audit bundles, reports, captures, screenshots, and broker/account data as private unless deliberately sanitized;
 - uses the unmodified PolyForm Noncommercial License 1.0.0 text in the repository root;

@@ -1,6 +1,6 @@
 # Operations guide
 
-This guide describes the normal operator workflow for v3.0.19. It does not replace the broker’s API documentation or account controls.
+This guide describes the normal operator workflow for v3.1.0. It does not replace the broker’s API documentation or account controls.
 
 ## Before starting
 
@@ -78,6 +78,22 @@ The application does not block a new BUY merely because IBKR reports an existing
 Avoid manually selling, modifying, or replacing application-owned shares/orders without recording the outcome through Reconciliation. Manual activity can make the broker account position diverge from the application ledger.
 
 Never create a manual order with an `OrderRef` beginning with `IBKRBOT|`.
+
+## Monitoring optional pre-close liquidation
+
+When **Cancel SELL trail and liquidate before close** is enabled for the active cycle, configure it before Stage 4 begins. The Stage-4 controls are locked once the native final SELL trail is working. The default cutoff is five minutes before the contract-specific RTH close.
+
+At the cutoff, monitor the audit/status messages for this sequence:
+
+1. close-before-RTH workflow started;
+2. final SELL-trail cancellation requested;
+3. cancellation or another terminal status confirmed;
+4. one RTH-only `DAY` market SELL submitted for the remaining app-owned quantity;
+5. cumulative SELL fills complete the cycle.
+
+Do not submit a second SELL manually while this sequence is active. The app refuses its own Stop-screen market-close request during the workflow, but independently submitted TWS orders remain outside app ownership controls. If the cycle enters `ERROR`, inspect current IBKR orders, executions, and the account position before taking manual action.
+
+The cutoff must leave enough time for broker cancellation acknowledgement and market execution. A one-minute setting is valid but materially increases the chance that the workflow cannot finish before the close.
 
 ## Stop actions
 

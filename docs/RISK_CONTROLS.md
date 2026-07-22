@@ -4,6 +4,22 @@ Risk controls are layered. Some are always part of safe order submission, some a
 
 These controls reduce specific risks; none guarantees safety or profitability.
 
+## Optional Stage-4 liquidation before RTH close
+
+**Cancel SELL trail and liquidate before close** is off by default. It is an exit policy, not a profit guard. The configured minute value uses the contract's date-specific regular-session close and may therefore start earlier on an early-close day.
+
+The safety invariant is cancel-confirm-replace: no replacement market SELL is transmitted while the original final SELL trail may still execute. Any fills reported during cancellation reduce the remaining quantity. The replacement is RTH-only, `DAY`, and market-priced, so it prioritizes exiting over price certainty and can realize a loss.
+
+Failure behavior is conservative:
+
+- unknown session boundary: do not start the automatic workflow;
+- cancellation not terminal by close: do not submit a second SELL;
+- cancellation terminal after RTH: do not submit outside RTH;
+- replacement rejected, failed, or incomplete at close: stop in `ERROR` for manual review;
+- conflicting manual market-close request while the workflow is active: refuse the second request.
+
+This policy does not protect Stage 3, overnight holdings before Stage 4, broker/exchange halts, connection outages, or execution price.
+
 ## Control layers
 
 ### Controller and broker-state invariants

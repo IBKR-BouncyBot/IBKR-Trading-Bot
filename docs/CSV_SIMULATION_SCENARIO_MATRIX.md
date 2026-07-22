@@ -1,6 +1,6 @@
 # Deterministic CSV simulation scenario matrix
 
-This v3.0.19 test-only matrix contains 58 explicit scenario contracts across 54 CSV price-path files. It extends verification without changing `app/` or `main.py`.
+This v3.1.0 test-only matrix contains 58 explicit scenario contracts across 54 CSV price-path files. It extends verification without changing `app/` or `main.py`.
 
 Every scenario asserts an exact final stage and event sequence. Applicable contracts also assert quantities, trigger/fill prices, order payloads, P/L direction and arithmetic, budget exposure, minimum-profit preservation, RTH blocking/reopening, protective exits, and error text. Shared invariants reject overfills, duplicate lifecycle events, SELL-before-BUY ordering, non-app order references, non-maximal whole-share sizing, and inconsistent completed-cycle P/L.
 

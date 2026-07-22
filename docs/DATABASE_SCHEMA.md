@@ -56,7 +56,8 @@ A blank `account` is valid and means no explicit IBKR order account override.
 - ATR toggles, period, bar duration, multipliers, and min/max clamps;
 - protective SELL settings;
 - slippage planning settings;
-- hard risk, delayed-data, what-if, freshness, volatility, and session-timing settings.
+- hard risk, delayed-data, what-if, freshness, volatility, and session-timing settings;
+- Stage-4 close policy: `cancel_sell_and_liquidate_before_close_enabled` and `liquidate_before_close_minutes`.
 
 `rise_trigger_pct` is the historical persisted name for user-facing **Minimum profit %**. `max_cycles_per_ticker_day` is also retained as a compatibility name; current guard behavior treats it as a total completed-cycle cap for the selected ticker.
 
@@ -84,7 +85,8 @@ During blocked ATR warmup, `drop_trigger_price` can remain `NULL` by design.
 
 - `sell_order_id`, `sell_perm_id`, `sell_order_ref`, `sell_status`;
 - `sell_filled_qty`, `avg_sell_price`, `sell_commission`, `sell_filled_at`;
-- `gross_pnl`, `net_pnl`.
+- `gross_pnl`, `net_pnl`;
+- close-before-RTH runtime state: `close_before_rth_liquidation_requested` and `close_before_rth_cancel_requested`.
 
 Indexes support stage/ticker/history/recovery lookups by `ticker`, `stage`, `updated_at`, and `sell_filled_at`.
 
@@ -114,7 +116,7 @@ Recorded fills from live polling or recovery.
 | Fill | `side`, `shares`, `price`, `avg_price`, `commission`, `currency`, `executed_at` |
 | Diagnostics | `raw_json` |
 
-Execution IDs are indexed and checked to prevent duplicate insertion when the same fill is observed through more than one IBKR path. A recovered execution can exist without a cycle link when local ownership cannot be resolved safely.
+Execution IDs are indexed and checked to prevent duplicate insertion when the same fill is observed through more than one IBKR path. A recovered execution can exist without a cycle link when local ownership cannot be resolved safely. During the optional Stage-4 close workflow, persisted final-SELL executions from the original trail and replacement market order are aggregated to calculate the remaining app-owned quantity and weighted average exit price.
 
 ## `events`
 

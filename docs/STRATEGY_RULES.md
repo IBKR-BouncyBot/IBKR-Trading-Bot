@@ -1,6 +1,6 @@
 # Strategy rules
 
-This document is the current functional description of the five-stage strategy in v3.0.19. It describes application decisions; IBKR remains authoritative for accepted order state and execution.
+This document is the current functional description of the five-stage strategy in v3.1.0. It describes application decisions; IBKR remains authoritative for accepted order state and execution.
 
 ## Scope and invariants
 
@@ -124,6 +124,21 @@ The controller does not submit the final exit until the selected price reaches t
 The initial native SELL stop is calculated below the current visible SELL reference, rounded down to the minimum tick, and checked against the required minimum-profit stop.
 
 After submission, IBKR controls trailing behavior. The application polls and records status/fills.
+
+### Optional close-before-RTH liquidation
+
+The policy is disabled by default and applies only when Stage 4 contains the normal final native `SELL_TRAIL` order. It does not alter Stage 2, Stage 3, a protective SELL, or a zero-trail/other market SELL.
+
+At the configured number of minutes before the contract-specific RTH close, the controller:
+
+1. marks the close workflow active and requests cancellation of the final SELL trail once;
+2. continues polling the original order and accepts full or partial fills during the cancellation race;
+3. waits for a terminal broker status before creating another SELL;
+4. calculates remaining app-owned shares from persisted SELL executions;
+5. submits one `DAY` market SELL with `outsideRth=False` for only that remainder;
+6. completes Stage 5 only after cumulative SELL fills equal the recorded BUY quantity.
+
+If the original trail fills completely during cancellation, no replacement is sent. If cancellation is not confirmed before RTH closes, the original order remains the only app exit order. If cancellation is terminal but no open RTH session remains, or if the replacement fails or remains incomplete at the close, the cycle stops in `ERROR` for manual review. No outside-RTH replacement is submitted. The market order can realize a loss and has no price guarantee.
 
 ## Stage 5 — `CYCLE_COMPLETE`
 

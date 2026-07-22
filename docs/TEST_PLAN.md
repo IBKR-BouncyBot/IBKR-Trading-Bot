@@ -120,7 +120,23 @@ Document the account-position implications; do not assume broker lots are segreg
 - Observe a gap/poor paper fill and verify the UI does not claim guaranteed profit.
 - Verify completed cycle metrics and history details.
 
-## 12. Stop choices
+## 12. Optional Stage-4 liquidation before RTH close
+
+Use a paper account and a liquid U.S. stock with the option disabled first, then enabled with enough time for manual observation.
+
+- Verify the default is OFF and the minutes field defaults to 5, accepts only 1–240, and is disabled while the checkbox is clear.
+- Verify Stage 1, Stage 2, and Stage 3 behavior is unchanged and no cancellation occurs before the configured Stage-4 cutoff.
+- With a normal final SELL trail working, verify exactly one cancellation request is sent at the contract-specific cutoff, including on an early-close fixture.
+- Verify no market SELL is submitted until TWS/IBKR shows the original trail in a terminal state.
+- Fill the trail during the cancellation race and confirm no replacement is sent after a full fill.
+- Partially fill the trail, confirm cancellation, and verify the replacement is a SELL `MKT`, `DAY`, `outsideRth=False` for only the app-owned remainder.
+- Verify cumulative original/replacement fills, commissions, P/L, Stage 5, Trade History, and Auto-repeat are correct.
+- Leave cancellation unconfirmed through the close and verify the original trail remains the only SELL order.
+- Confirm cancellation after the close, reject the replacement, and leave a replacement incomplete at the close in separate tests; each must produce an `ERROR`/manual-review state without an outside-RTH fallback.
+- Restart once while original cancellation is pending and once while the replacement is working; reconcile before continuing and verify no duplicate replacement or duplicate fill is created.
+- While the automatic workflow is active, attempt the Stop-strategy market close and verify the app refuses to start a second market SELL.
+
+## 13. Stop choices
 
 Exercise each option in a safe paper scenario:
 
@@ -134,7 +150,7 @@ Close the window with and without an active cycle and verify it uses the same st
 
 With hard limits enabled, set Maximum completed cycles to 1, complete one BUY/SELL round, and verify auto-repeat stops. Confirm Stop and window-close do not claim an active order or offer market SELL when the persisted app-owned quantity is zero, even if unrelated external shares of the same ticker exist.
 
-## 13. Recovery scenarios
+## 14. Recovery scenarios
 
 For each, export an audit bundle before final resolution:
 
@@ -161,7 +177,7 @@ In paper mode, induce or simulate a Gateway/TWS upstream outage while keeping th
 - verify **Reconciling** precedes normal processing and app-owned fills/orders that changed during the outage are imported;
 - verify a BUY fill during the outage is not assumed absent and any required protective-order follow-up occurs only after recovery.
 
-## 14. Database and export
+## 15. Database and export
 
 - Verify `bot_state.sqlite` and expected generated folders appear beside the app.
 - Run through multiple fills and confirm backups are created and `latest_restore_validation.json` reports success.
@@ -170,13 +186,13 @@ In paper mode, induce or simulate a Gateway/TWS upstream outage while keeping th
 - Export an audit bundle and verify manifest, snapshot, database backup, reports, and JSON table exports.
 - Confirm sensitive identifiers are present before sharing externally.
 
-## 15. Market-data capture
+## 16. Market-data capture
 
 - Produce a fill and keep the application running through the post-fill window.
 - Verify the capture ZIP is written only after completion and contains expected metadata/rows.
 - In a separate test, close before completion and verify no partial ZIP is written.
 
-## 16. Full validation and build
+## 17. Full validation and build
 
 - Run `run_all_tests.bat`; require compilation, pytest with `ResourceWarning` failures enabled, at least 75% combined statement/branch coverage, entry coverage for every effective executable application callable, all CSV simulations, Ruff, and Pyright to pass.
 - Inspect `run_tests_coverage.log` and `run_tests_callable_coverage.log`; do not rely only on the final pass line.
@@ -186,7 +202,7 @@ In paper mode, induce or simulate a Gateway/TWS upstream outage while keeping th
 - Run the packaged application from a clean folder with the complete onedir contents.
 - Verify data is created beside the executable and the folder is writable.
 
-## 17. Documentation consistency
+## 18. Documentation consistency
 
 Before a release:
 

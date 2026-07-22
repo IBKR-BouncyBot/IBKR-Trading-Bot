@@ -1,6 +1,6 @@
 # Configuration reference
 
-This document describes the persisted connection and strategy settings in v3.0.19. Values shown as defaults are the dataclass defaults used for a new configuration. Saved SQLite settings override them after the first run.
+This document describes the persisted connection and strategy settings in v3.1.0. Values shown as defaults are the dataclass defaults used for a new configuration. Saved SQLite settings override them after the first run.
 
 ## Connection settings
 
@@ -141,8 +141,10 @@ The reinvestment calculation uses completed cycles stored by this application, n
 | No new BUY first | `5 min` | Entry block after the regular-session open. Zero disables this sub-window. |
 | No new BUY last | `15 min` | Entry block before the regular-session close. Zero disables this sub-window. |
 | Cancel BUY before close | `5 min` | Requests cancellation of an unfilled app BUY trail before the contract's date-specific regular-session close. Zero disables this sub-window. |
+| Cancel SELL trail and liquidate before close | off | Stage 4 only. Requests cancellation of the final native SELL trail at the configured pre-close cutoff, waits for a terminal broker status, then submits one RTH-only `DAY` market SELL for the remaining app-owned shares. |
+| Liquidate before close | `5 min` | Cutoff before the contract-specific RTH close. Valid range `1-240 min`. The field is active only when the optional policy is enabled. |
 
-The first/last-minute entry windows and cancel-before-close window use the current contract's IBKR `liquidHours` boundaries and contract timezone. This includes date-specific early closes. If IBKR does not provide usable contract hours, the adapter exposes its existing conservative US-equity fallback; if no usable boundary is available at all, a new BUY fails closed and automatic pre-close cancellation is not guessed.
+The first/last-minute entry windows, BUY cancellation window, and optional Stage-4 liquidation cutoff use the current contract's IBKR `liquidHours` boundaries and contract timezone. This includes date-specific early closes. If IBKR does not provide usable contract hours, the adapter exposes its existing conservative US-equity fallback; if no usable boundary is available at all, a new BUY fails closed and automatic pre-close cancellation is not guessed.
 
 The data-type, what-if, stale-data, ATR, RTH, and controller-state checks are independent of the optional hard-risk master where implemented. Turning off hard limits does not turn off the normal broker/data safety checks. Local socket state, Gateway/TWS upstream IBKR connectivity, post-reconnect reconciliation, and the requirement for an actual post-connect/post-recovery ticker event are controller invariants rather than user-disableable settings.
 
@@ -172,6 +174,6 @@ The active `CycleState` stores a snapshot of settings and operational state, inc
 - filled quantities, average prices, commissions, and fill timestamps;
 - protective-order cancellation state;
 - gross/net P/L;
-- recovery-required, requested-market-close, stop-after-cycle, and error state.
+- recovery-required, requested-market-close, close-before-RTH cancellation/liquidation, stop-after-cycle, and error state.
 
 These fields are persisted for restart/recovery. They are not all editable from the GUI.

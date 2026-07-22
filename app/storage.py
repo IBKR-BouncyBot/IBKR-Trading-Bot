@@ -308,8 +308,12 @@ class BotStorage:
                 "no_new_buy_first_minutes": "INTEGER NOT NULL DEFAULT 5",
                 "no_new_buy_last_minutes": "INTEGER NOT NULL DEFAULT 15",
                 "cancel_buy_before_close_minutes": "INTEGER NOT NULL DEFAULT 5",
+                "cancel_sell_and_liquidate_before_close_enabled": "INTEGER NOT NULL DEFAULT 0",
+                "liquidate_before_close_minutes": "INTEGER NOT NULL DEFAULT 5",
                 "recovery_required": "INTEGER NOT NULL DEFAULT 0",
                 "close_position_market_requested": "INTEGER NOT NULL DEFAULT 0",
+                "close_before_rth_liquidation_requested": "INTEGER NOT NULL DEFAULT 0",
+                "close_before_rth_cancel_requested": "INTEGER NOT NULL DEFAULT 0",
                 "protective_sell_order_id": "INTEGER",
                 "protective_sell_perm_id": "INTEGER",
                 "protective_sell_order_ref": "TEXT",
@@ -653,8 +657,11 @@ class BotStorage:
             "stale_data_guard_enabled",
             "volatility_filter_enabled",
             "session_timing_guard_enabled",
+            "cancel_sell_and_liquidate_before_close_enabled",
             "recovery_required",
             "close_position_market_requested",
+            "close_before_rth_liquidation_requested",
+            "close_before_rth_cancel_requested",
         ]:
             data[_bool_name] = int(bool(getattr(cycle, _bool_name, False)))
         data["protective_sell_cancel_requested"] = int(bool(getattr(cycle, "protective_sell_cancel_requested", False)))
@@ -696,8 +703,11 @@ class BotStorage:
             "stale_data_guard_enabled",
             "volatility_filter_enabled",
             "session_timing_guard_enabled",
+            "cancel_sell_and_liquidate_before_close_enabled",
             "recovery_required",
             "close_position_market_requested",
+            "close_before_rth_liquidation_requested",
+            "close_before_rth_cancel_requested",
         ]:
             if key in data:
                 data[key] = bool(data[key])
@@ -1123,6 +1133,43 @@ class BotStorage:
                 (str(execution_id),),
             ).fetchone()
         return row is not None
+
+    def get_execution_totals(
+        self,
+        cycle_id: str,
+        side: str,
+        *,
+        order_ref: Optional[str] = None,
+    ) -> dict[str, float]:
+        """Return persisted fill totals for one cycle side.
+
+        The weighted average is calculated from individual execution prices.
+        This supports a safe cancel/replace exit where the original trailing
+        SELL may fill partially before a replacement market SELL completes the
+        remaining app-owned quantity.
+        """
+        query = """
+            SELECT
+                COALESCE(SUM(ABS(shares)), 0.0) AS shares,
+                COALESCE(SUM(ABS(shares) * price), 0.0) AS notional,
+                COALESCE(SUM(commission), 0.0) AS commission
+            FROM executions
+            WHERE cycle_id=? AND UPPER(side)=?
+        """
+        params: list[Any] = [str(cycle_id), str(side).upper()]
+        if order_ref is not None:
+            query += " AND order_ref=?"
+            params.append(str(order_ref))
+        with self.connect() as con:
+            row = con.execute(query, tuple(params)).fetchone()
+        shares = float(row["shares"] if row else 0.0)
+        notional = float(row["notional"] if row else 0.0)
+        commission = float(row["commission"] if row else 0.0)
+        return {
+            "shares": shares,
+            "avg_price": (notional / shares) if shares > 0 else 0.0,
+            "commission": commission,
+        }
 
     def add_event(self, level: str, message: str, ticker: Optional[str] = None, cycle_id: Optional[str] = None, raw: Optional[dict[str, Any]] = None) -> None:
         """Append an operator/audit event without letting logging crash trading.

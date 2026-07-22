@@ -5384,7 +5384,7 @@ class CycleAuditDialog(QDialog):
             lines.extend([
                 "BUILT-IN EXAMPLE CYCLE",
                 "=" * 80,
-                "This is synthetic v3.0.19 paper-trading example data. It is not an actual market record, is not stored in SQLite, and cannot affect trading or risk totals.",
+                "This is synthetic v3.1.0 paper-trading example data. It is not an actual market record, is not stored in SQLite, and cannot affect trading or risk totals.",
                 "The scenario models a liquid U.S. stock pullback, a multi-execution trailing BUY fill, a temporary protective SELL, and a modest trailing-stop profit exit.",
                 "",
             ])
@@ -5492,7 +5492,7 @@ class MainWindow(QMainWindow):
         self._stop_dialog_exit_requested = False
         self._system_shutdown_in_progress = False
         self._last_system_shutdown_session_key = ""
-        self.setWindowTitle("BouncyBot - IBKR Portable Trading Bot v3.0.19")
+        self.setWindowTitle("BouncyBot - IBKR Portable Trading Bot v3.1.0")
         self.resize(1440, 950)
 
         self._autosave_timer = QTimer(self)
@@ -5866,7 +5866,7 @@ class MainWindow(QMainWindow):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         outer.addWidget(scroll, 1)
         outer.addWidget(self.command_bar, 0)
@@ -6094,6 +6094,13 @@ class MainWindow(QMainWindow):
         self.no_new_buy_first_spin = QSpinBox(); self.no_new_buy_first_spin.setRange(0, 240); self.no_new_buy_first_spin.setValue(5); self.no_new_buy_first_spin.setSuffix(" min")
         self.no_new_buy_last_spin = QSpinBox(); self.no_new_buy_last_spin.setRange(0, 240); self.no_new_buy_last_spin.setValue(15); self.no_new_buy_last_spin.setSuffix(" min")
         self.cancel_buy_before_close_spin = QSpinBox(); self.cancel_buy_before_close_spin.setRange(0, 240); self.cancel_buy_before_close_spin.setValue(5); self.cancel_buy_before_close_spin.setSuffix(" min")
+        self.cancel_sell_and_liquidate_before_close_check = QCheckBox("Cancel SELL trail and liquidate before close")
+        self.cancel_sell_and_liquidate_before_close_check.setChecked(False)
+        self.liquidate_before_close_spin = QSpinBox()
+        self.liquidate_before_close_spin.setRange(1, 240)
+        self.liquidate_before_close_spin.setValue(5)
+        self.liquidate_before_close_spin.setSuffix(" min")
+        self.liquidate_before_close_spin.setEnabled(False)
         self.reinvest_check = QCheckBox("Reinvest realized net profit from this ticker")
         self.reinvest_check.setChecked(True)
         self.auto_repeat_check = QCheckBox("Auto-repeat indefinitely")
@@ -6156,6 +6163,8 @@ class MainWindow(QMainWindow):
         self.no_new_buy_first_info = self._info_badge()
         self.no_new_buy_last_info = self._info_badge()
         self.cancel_buy_before_close_info = self._info_badge()
+        self.cancel_sell_and_liquidate_before_close_info = self._info_badge()
+        self.liquidate_before_close_info = self._info_badge()
 
         self._mark_zero_disabled(self.buy_rebound_spin, "0 = BUY trailing-stop disabled; market BUY after drop")
         self._mark_zero_disabled(self.sell_trail_spin, "0 = SELL trailing-stop disabled; market SELL at trigger")
@@ -6219,6 +6228,13 @@ class MainWindow(QMainWindow):
             ("no_new_buy_first_minutes", "No new BUY first", self.no_new_buy_first_spin, "risk"),
             ("no_new_buy_last_minutes", "No new BUY last", self.no_new_buy_last_spin, "risk"),
             ("cancel_buy_before_close_minutes", "Cancel BUY before close", self.cancel_buy_before_close_spin, "risk"),
+            (
+                "cancel_sell_and_liquidate_before_close_enabled",
+                "Cancel SELL trail and liquidate before close",
+                self.cancel_sell_and_liquidate_before_close_check,
+                "exit",
+            ),
+            ("liquidate_before_close_minutes", "Liquidate before close", self.liquidate_before_close_spin, "exit"),
             ("reinvest_profits", "Reinvest profits", self.reinvest_check, "automation"),
             ("auto_repeat", "Auto-repeat", self.auto_repeat_check, "automation"),
         ])
@@ -6357,10 +6373,22 @@ class MainWindow(QMainWindow):
         risk_grid.addWidget(self._pct_field(self.no_new_buy_last_spin, self.no_new_buy_last_info), 10, 3)
         risk_grid.addWidget(QLabel("Cancel BUY before close"), 11, 0)
         risk_grid.addWidget(self._pct_field(self.cancel_buy_before_close_spin, self.cancel_buy_before_close_info), 11, 1)
+        risk_grid.addWidget(
+            self._pct_field(
+                self.cancel_sell_and_liquidate_before_close_check,
+                self.cancel_sell_and_liquidate_before_close_info,
+            ),
+            12,
+            0,
+            1,
+            2,
+        )
+        risk_grid.addWidget(QLabel("Liquidate before close"), 12, 2)
+        risk_grid.addWidget(self._pct_field(self.liquidate_before_close_spin, self.liquidate_before_close_info), 12, 3)
         self.risk_zero_disabled_summary = QLabel("Values set to 0 are disabled.")
         self.risk_zero_disabled_summary.setObjectName("Muted")
         self.risk_zero_disabled_summary.setWordWrap(True)
-        risk_grid.addWidget(self.risk_zero_disabled_summary, 12, 0, 1, 4)
+        risk_grid.addWidget(self.risk_zero_disabled_summary, 13, 0, 1, 4)
         grid.addWidget(risk_box, 4, 0, 1, 4)
 
         automation_box = QGroupBox("Automation")
@@ -6396,10 +6424,11 @@ class MainWindow(QMainWindow):
         self.ticker_edit.textEdited.connect(self._clear_selected_contract_con_id)
         self.ticker_edit.returnPressed.connect(self._search_ticker_clicked)
         self.primary_exchange_edit.textEdited.connect(self._clear_selected_contract_con_id)
-        for widget in [self.initial_drop_spin, self.buy_rebound_spin, self.rise_trigger_spin, self.sell_trail_spin, self.atr_period_spin, self.atr_bar_seconds_spin, self.atr_initial_drop_mult_spin, self.atr_buy_rebound_mult_spin, self.atr_min_profit_mult_spin, self.atr_sell_trail_mult_spin, self.atr_protective_sell_mult_spin, self.atr_min_pct_spin, self.atr_max_pct_spin, self.protective_sell_trail_spin, self.slippage_buffer_spin, self.max_daily_loss_ticker_spin, self.max_daily_loss_total_spin, self.max_cycles_ticker_day_spin, self.max_consecutive_losses_spin, self.max_spread_pct_spin, self.min_trade_price_spin, self.max_gap_pct_spin, self.max_price_age_spin, self.max_bidask_age_spin, self.max_rth_age_spin, self.volatility_window_spin, self.max_recent_move_spin, self.no_new_buy_first_spin, self.no_new_buy_last_spin, self.cancel_buy_before_close_spin]:
+        for widget in [self.initial_drop_spin, self.buy_rebound_spin, self.rise_trigger_spin, self.sell_trail_spin, self.atr_period_spin, self.atr_bar_seconds_spin, self.atr_initial_drop_mult_spin, self.atr_buy_rebound_mult_spin, self.atr_min_profit_mult_spin, self.atr_sell_trail_mult_spin, self.atr_protective_sell_mult_spin, self.atr_min_pct_spin, self.atr_max_pct_spin, self.protective_sell_trail_spin, self.slippage_buffer_spin, self.max_daily_loss_ticker_spin, self.max_daily_loss_total_spin, self.max_cycles_ticker_day_spin, self.max_consecutive_losses_spin, self.max_spread_pct_spin, self.min_trade_price_spin, self.max_gap_pct_spin, self.max_price_age_spin, self.max_bidask_age_spin, self.max_rth_age_spin, self.volatility_window_spin, self.max_recent_move_spin, self.no_new_buy_first_spin, self.no_new_buy_last_spin, self.cancel_buy_before_close_spin, self.liquidate_before_close_spin]:
             widget.valueChanged.connect(self._strategy_visual_inputs_changed)
-        for widget in [self.atr_adaptive_check, self.atr_block_until_ready_check, self.atr_min_profit_adaptive_check, self.atr_protective_sell_adaptive_check, self.protective_sell_check, self.slippage_buffer_check, self.hard_risk_limits_check, self.block_delayed_live_check, self.what_if_check, self.stale_data_guard_check, self.volatility_filter_check, self.session_timing_guard_check]:
+        for widget in [self.atr_adaptive_check, self.atr_block_until_ready_check, self.atr_min_profit_adaptive_check, self.atr_protective_sell_adaptive_check, self.protective_sell_check, self.slippage_buffer_check, self.hard_risk_limits_check, self.block_delayed_live_check, self.what_if_check, self.stale_data_guard_check, self.volatility_filter_check, self.session_timing_guard_check, self.cancel_sell_and_liquidate_before_close_check]:
             widget.toggled.connect(self._strategy_visual_inputs_changed)
+        self.cancel_sell_and_liquidate_before_close_check.toggled.connect(self._update_close_before_rth_control_state)
         self._last_suggested_risk_limits: dict[str, float | int] = {}
         self._last_suggested_safety_defaults: dict[str, float | int] = {}
         self.investment_spin.valueChanged.connect(self._apply_suggested_risk_limits_from_amount)
@@ -7225,6 +7254,16 @@ class MainWindow(QMainWindow):
             (self.no_new_buy_first_spin, self.no_new_buy_first_info, f"No new BUY entries during the first {self.no_new_buy_first_spin.value()} minutes of RTH when enabled."),
             (self.no_new_buy_last_spin, self.no_new_buy_last_info, f"No new BUY entries during the last {self.no_new_buy_last_spin.value()} minutes of RTH when enabled."),
             (self.cancel_buy_before_close_spin, self.cancel_buy_before_close_info, f"Cancel unfilled app BUY trailing-stop order {self.cancel_buy_before_close_spin.value()} minutes before RTH close when enabled."),
+            (
+                self.cancel_sell_and_liquidate_before_close_check,
+                self.cancel_sell_and_liquidate_before_close_info,
+                "Default OFF. Stage 4 only. At the configured time before the contract's RTH close, the app requests cancellation of the final SELL trailing-stop, waits for IBKR to confirm that order is terminal, then submits one DAY market SELL for only the remaining app-owned shares. The market fill can be below the trailing stop and can realize a loss. No outside-RTH replacement is submitted.",
+            ),
+            (
+                self.liquidate_before_close_spin,
+                self.liquidate_before_close_info,
+                f"Start the Stage-4 cancel-confirm-market workflow {self.liquidate_before_close_spin.value()} minutes before the contract's RTH close. Choose enough time for IBKR to confirm cancellation and fill the replacement before the session ends. Default 5 minutes; range 1-240 minutes.",
+            ),
         ]
         for widget, info, text in tooltips:
             self._set_pct_tooltip(widget, info, text)
@@ -7452,12 +7491,13 @@ class MainWindow(QMainWindow):
             self.no_new_buy_first_spin,
             self.no_new_buy_last_spin,
             self.cancel_buy_before_close_spin,
+            self.liquidate_before_close_spin,
         ]:
             widget.valueChanged.connect(self._schedule_settings_autosave)
         self.port_spin.valueChanged.connect(lambda *_: self._set_custom_profile_if_needed())
         for widget in [self.market_data_combo, self.platform_combo, self.profile_combo]:
             widget.currentIndexChanged.connect(self._schedule_settings_autosave)
-        for widget in [self.reinvest_check, self.auto_repeat_check, self.atr_adaptive_check, self.atr_block_until_ready_check, self.atr_min_profit_adaptive_check, self.atr_protective_sell_adaptive_check, self.protective_sell_check, self.slippage_buffer_check, self.hard_risk_limits_check, self.block_delayed_live_check, self.what_if_check, self.stale_data_guard_check, self.volatility_filter_check, self.session_timing_guard_check]:
+        for widget in [self.reinvest_check, self.auto_repeat_check, self.atr_adaptive_check, self.atr_block_until_ready_check, self.atr_min_profit_adaptive_check, self.atr_protective_sell_adaptive_check, self.protective_sell_check, self.slippage_buffer_check, self.hard_risk_limits_check, self.block_delayed_live_check, self.what_if_check, self.stale_data_guard_check, self.volatility_filter_check, self.session_timing_guard_check, self.cancel_sell_and_liquidate_before_close_check]:
             widget.toggled.connect(self._schedule_settings_autosave)
 
     def _schedule_history_filter(self, *args: Any) -> None:
@@ -7895,6 +7935,8 @@ class MainWindow(QMainWindow):
             no_new_buy_first_minutes=int(self.no_new_buy_first_spin.value()),
             no_new_buy_last_minutes=int(self.no_new_buy_last_spin.value()),
             cancel_buy_before_close_minutes=int(self.cancel_buy_before_close_spin.value()),
+            cancel_sell_and_liquidate_before_close_enabled=self.cancel_sell_and_liquidate_before_close_check.isChecked(),
+            liquidate_before_close_minutes=int(self.liquidate_before_close_spin.value()),
             reinvest_profits=self.reinvest_check.isChecked(),
             auto_repeat=self.auto_repeat_check.isChecked(),
             rth_only=True,
@@ -9045,14 +9087,35 @@ class MainWindow(QMainWindow):
             self.no_new_buy_first_spin.setValue(int(strategy.get("no_new_buy_first_minutes", self.no_new_buy_first_spin.value())))
             self.no_new_buy_last_spin.setValue(int(strategy.get("no_new_buy_last_minutes", self.no_new_buy_last_spin.value())))
             self.cancel_buy_before_close_spin.setValue(int(strategy.get("cancel_buy_before_close_minutes", self.cancel_buy_before_close_spin.value())))
+            self.cancel_sell_and_liquidate_before_close_check.setChecked(
+                bool(
+                    strategy.get(
+                        "cancel_sell_and_liquidate_before_close_enabled",
+                        self.cancel_sell_and_liquidate_before_close_check.isChecked(),
+                    )
+                )
+            )
+            self.liquidate_before_close_spin.setValue(
+                int(strategy.get("liquidate_before_close_minutes", self.liquidate_before_close_spin.value()))
+            )
             self.reinvest_check.setChecked(bool(strategy.get("reinvest_profits", self.reinvest_check.isChecked())))
             self.auto_repeat_check.setChecked(bool(strategy.get("auto_repeat", self.auto_repeat_check.isChecked())))
         finally:
             self._applying_snapshot_to_inputs = False
         self._apply_profit_guard_bounds()
         self._update_zero_disabled_indicators()
+        self._update_close_before_rth_control_state()
         self._update_dynamic_graphs()
 
+    def _update_close_before_rth_control_state(self, *args: Any) -> None:
+        """Enable the minute field only when the optional policy is editable and checked."""
+        if not hasattr(self, "cancel_sell_and_liquidate_before_close_check") or not hasattr(self, "liquidate_before_close_spin"):
+            return
+        enabled = bool(
+            self.cancel_sell_and_liquidate_before_close_check.isEnabled()
+            and self.cancel_sell_and_liquidate_before_close_check.isChecked()
+        )
+        self.liquidate_before_close_spin.setEnabled(enabled)
 
     def _is_active_stage(self, stage: Optional[str]) -> bool:
         return stage in {
@@ -9138,28 +9201,29 @@ class MainWindow(QMainWindow):
         if stage == Stage.WAIT_INITIAL_DROP.value:
             # No native order has been submitted yet; entry and exit parameters
             # can be safely applied to the current cycle.
-            self._set_widgets_enabled([self.investment_spin, self.initial_drop_spin, self.buy_rebound_spin, self.rise_trigger_spin, self.sell_trail_spin, self.protective_sell_check, self.protective_sell_trail_spin, self.slippage_buffer_check, self.slippage_buffer_spin, self.hard_risk_limits_check, self.max_daily_loss_ticker_spin, self.max_daily_loss_total_spin, self.max_cycles_ticker_day_spin, self.max_consecutive_losses_spin, self.max_spread_pct_spin, self.min_trade_price_spin, self.max_gap_pct_spin, self.block_delayed_live_check, self.what_if_check, self.stale_data_guard_check, self.max_price_age_spin, self.max_bidask_age_spin, self.max_rth_age_spin, self.volatility_filter_check, self.volatility_window_spin, self.max_recent_move_spin, self.session_timing_guard_check, self.no_new_buy_first_spin, self.no_new_buy_last_spin, self.cancel_buy_before_close_spin, self.reinvest_check], True)
+            self._set_widgets_enabled([self.investment_spin, self.initial_drop_spin, self.buy_rebound_spin, self.rise_trigger_spin, self.sell_trail_spin, self.protective_sell_check, self.protective_sell_trail_spin, self.slippage_buffer_check, self.slippage_buffer_spin, self.hard_risk_limits_check, self.max_daily_loss_ticker_spin, self.max_daily_loss_total_spin, self.max_cycles_ticker_day_spin, self.max_consecutive_losses_spin, self.max_spread_pct_spin, self.min_trade_price_spin, self.max_gap_pct_spin, self.block_delayed_live_check, self.what_if_check, self.stale_data_guard_check, self.max_price_age_spin, self.max_bidask_age_spin, self.max_rth_age_spin, self.volatility_filter_check, self.volatility_window_spin, self.max_recent_move_spin, self.session_timing_guard_check, self.no_new_buy_first_spin, self.no_new_buy_last_spin, self.cancel_buy_before_close_spin, self.cancel_sell_and_liquidate_before_close_check, self.liquidate_before_close_spin, self.reinvest_check], True)
             message = "Running edit mode: ticker/connection locked. Investment, entry, exit, protective, slippage, risk, and reinvest settings update this waiting cycle."
         elif stage == Stage.BUY_TRAIL_ACTIVE.value:
             # The BUY order is already working in TWS. Exit settings are still
             # safe because no SELL order has been submitted yet.
             self._set_widgets_enabled([self.investment_spin, self.initial_drop_spin, self.buy_rebound_spin, self.hard_risk_limits_check, self.max_daily_loss_ticker_spin, self.max_daily_loss_total_spin, self.max_cycles_ticker_day_spin, self.max_consecutive_losses_spin, self.max_spread_pct_spin, self.min_trade_price_spin, self.max_gap_pct_spin, self.block_delayed_live_check, self.what_if_check, self.stale_data_guard_check, self.max_price_age_spin, self.max_bidask_age_spin, self.max_rth_age_spin, self.volatility_filter_check, self.volatility_window_spin, self.max_recent_move_spin, self.session_timing_guard_check, self.no_new_buy_first_spin, self.no_new_buy_last_spin, self.cancel_buy_before_close_spin, self.reinvest_check], False)
-            self._set_widgets_enabled([self.rise_trigger_spin, self.sell_trail_spin, self.protective_sell_check, self.protective_sell_trail_spin, self.slippage_buffer_check, self.slippage_buffer_spin], True)
+            self._set_widgets_enabled([self.rise_trigger_spin, self.sell_trail_spin, self.protective_sell_check, self.protective_sell_trail_spin, self.slippage_buffer_check, self.slippage_buffer_spin, self.cancel_sell_and_liquidate_before_close_check, self.liquidate_before_close_spin], True)
             message = "Running edit mode: BUY order is active, so entry/risk sizing fields are locked. Protective, minimum profit, SELL trailing-stop, and slippage still update the later exit stage."
         elif stage == Stage.WAIT_RISE_TRIGGER.value:
             self._set_widgets_enabled([self.investment_spin, self.initial_drop_spin, self.buy_rebound_spin, self.protective_sell_check, self.protective_sell_trail_spin, self.hard_risk_limits_check, self.max_daily_loss_ticker_spin, self.max_daily_loss_total_spin, self.max_cycles_ticker_day_spin, self.max_consecutive_losses_spin, self.max_spread_pct_spin, self.min_trade_price_spin, self.max_gap_pct_spin, self.block_delayed_live_check, self.what_if_check, self.stale_data_guard_check, self.max_price_age_spin, self.max_bidask_age_spin, self.max_rth_age_spin, self.volatility_filter_check, self.volatility_window_spin, self.max_recent_move_spin, self.session_timing_guard_check, self.no_new_buy_first_spin, self.no_new_buy_last_spin, self.cancel_buy_before_close_spin, self.reinvest_check], False)
-            self._set_widgets_enabled([self.rise_trigger_spin, self.sell_trail_spin, self.slippage_buffer_check, self.slippage_buffer_spin], True)
+            self._set_widgets_enabled([self.rise_trigger_spin, self.sell_trail_spin, self.slippage_buffer_check, self.slippage_buffer_spin, self.cancel_sell_and_liquidate_before_close_check, self.liquidate_before_close_spin], True)
             message = "Running edit mode: position is open. Minimum profit, final SELL trailing-stop, and slippage buffer update the waiting exit trigger; protective/risk fields are locked once a position exists."
         elif stage == Stage.SELL_TRAIL_ACTIVE.value:
-            self._set_widgets_enabled([self.investment_spin, self.initial_drop_spin, self.buy_rebound_spin, self.rise_trigger_spin, self.sell_trail_spin, self.protective_sell_check, self.protective_sell_trail_spin, self.slippage_buffer_check, self.slippage_buffer_spin, self.hard_risk_limits_check, self.max_daily_loss_ticker_spin, self.max_daily_loss_total_spin, self.max_cycles_ticker_day_spin, self.max_consecutive_losses_spin, self.max_spread_pct_spin, self.min_trade_price_spin, self.max_gap_pct_spin, self.block_delayed_live_check, self.what_if_check, self.stale_data_guard_check, self.max_price_age_spin, self.max_bidask_age_spin, self.max_rth_age_spin, self.volatility_filter_check, self.volatility_window_spin, self.max_recent_move_spin, self.session_timing_guard_check, self.no_new_buy_first_spin, self.no_new_buy_last_spin, self.cancel_buy_before_close_spin, self.reinvest_check], False)
+            self._set_widgets_enabled([self.investment_spin, self.initial_drop_spin, self.buy_rebound_spin, self.rise_trigger_spin, self.sell_trail_spin, self.protective_sell_check, self.protective_sell_trail_spin, self.slippage_buffer_check, self.slippage_buffer_spin, self.hard_risk_limits_check, self.max_daily_loss_ticker_spin, self.max_daily_loss_total_spin, self.max_cycles_ticker_day_spin, self.max_consecutive_losses_spin, self.max_spread_pct_spin, self.min_trade_price_spin, self.max_gap_pct_spin, self.block_delayed_live_check, self.what_if_check, self.stale_data_guard_check, self.max_price_age_spin, self.max_bidask_age_spin, self.max_rth_age_spin, self.volatility_filter_check, self.volatility_window_spin, self.max_recent_move_spin, self.session_timing_guard_check, self.no_new_buy_first_spin, self.no_new_buy_last_spin, self.cancel_buy_before_close_spin, self.cancel_sell_and_liquidate_before_close_check, self.liquidate_before_close_spin, self.reinvest_check], False)
             message = "Running edit mode: SELL trailing-stop is active in TWS. Current-cycle trading inputs are locked; Auto-repeat can still be changed."
         else:
-            self._set_widgets_enabled([self.investment_spin, self.initial_drop_spin, self.buy_rebound_spin, self.rise_trigger_spin, self.sell_trail_spin, self.protective_sell_check, self.protective_sell_trail_spin, self.slippage_buffer_check, self.slippage_buffer_spin, self.hard_risk_limits_check, self.max_daily_loss_ticker_spin, self.max_daily_loss_total_spin, self.max_cycles_ticker_day_spin, self.max_consecutive_losses_spin, self.max_spread_pct_spin, self.min_trade_price_spin, self.max_gap_pct_spin, self.block_delayed_live_check, self.what_if_check, self.stale_data_guard_check, self.max_price_age_spin, self.max_bidask_age_spin, self.max_rth_age_spin, self.volatility_filter_check, self.volatility_window_spin, self.max_recent_move_spin, self.session_timing_guard_check, self.no_new_buy_first_spin, self.no_new_buy_last_spin, self.cancel_buy_before_close_spin, self.reinvest_check], True)
+            self._set_widgets_enabled([self.investment_spin, self.initial_drop_spin, self.buy_rebound_spin, self.rise_trigger_spin, self.sell_trail_spin, self.protective_sell_check, self.protective_sell_trail_spin, self.slippage_buffer_check, self.slippage_buffer_spin, self.hard_risk_limits_check, self.max_daily_loss_ticker_spin, self.max_daily_loss_total_spin, self.max_cycles_ticker_day_spin, self.max_consecutive_losses_spin, self.max_spread_pct_spin, self.min_trade_price_spin, self.max_gap_pct_spin, self.block_delayed_live_check, self.what_if_check, self.stale_data_guard_check, self.max_price_age_spin, self.max_bidask_age_spin, self.max_rth_age_spin, self.volatility_filter_check, self.volatility_window_spin, self.max_recent_move_spin, self.session_timing_guard_check, self.no_new_buy_first_spin, self.no_new_buy_last_spin, self.cancel_buy_before_close_spin, self.cancel_sell_and_liquidate_before_close_check, self.liquidate_before_close_spin, self.reinvest_check], True)
             message = "Fields lock automatically when changing them would require replacing an active native order."
 
         self._set_widgets_enabled(self._atr_config_widgets(), True)
         self._set_atr_percentage_field_state(bool(self.atr_adaptive_check.isChecked()))
         self._set_widgets_enabled([self.auto_repeat_check], True)
+        self._update_close_before_rth_control_state()
         # Workflow button state is owned exclusively by
         # ``_update_command_bar_states``. Re-enabling Start/Stop here would
         # overwrite active-cycle, guard, recovery, and manual-lock gating that

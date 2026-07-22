@@ -469,6 +469,8 @@ class StrategyEngine:
             next_cycle.net_pnl = next_cycle.gross_pnl - next_cycle.buy_commission - next_cycle.sell_commission
         next_cycle.stage = Stage.CYCLE_COMPLETE
         next_cycle.close_position_market_requested = False
+        next_cycle.close_before_rth_liquidation_requested = False
+        next_cycle.close_before_rth_cancel_requested = False
         next_cycle.touch()
         return next_cycle
 
@@ -497,6 +499,8 @@ class StrategyEngine:
             next_cycle.net_pnl = next_cycle.gross_pnl - next_cycle.buy_commission - next_cycle.sell_commission
         next_cycle.stage = Stage.CYCLE_COMPLETE
         next_cycle.close_position_market_requested = False
+        next_cycle.close_before_rth_liquidation_requested = False
+        next_cycle.close_before_rth_cancel_requested = False
         next_cycle.touch()
         return next_cycle
 
@@ -571,6 +575,16 @@ class StrategyEngine:
             update("no_new_buy_first_minutes", int(settings.no_new_buy_first_minutes), "no-new-buy first minutes")
             update("no_new_buy_last_minutes", int(settings.no_new_buy_last_minutes), "no-new-buy last minutes")
             update("cancel_buy_before_close_minutes", int(settings.cancel_buy_before_close_minutes), "cancel BUY before close minutes")
+            update(
+                "cancel_sell_and_liquidate_before_close_enabled",
+                bool(settings.cancel_sell_and_liquidate_before_close_enabled),
+                "cancel SELL trail and liquidate before close",
+            )
+            update(
+                "liquidate_before_close_minutes",
+                int(settings.liquidate_before_close_minutes),
+                "liquidate before close minutes",
+            )
             if next_cycle.anchor_price is not None and next_cycle.anchor_price > 0:
                 next_cycle.drop_trigger_price = round_price(next_cycle.anchor_price * (1.0 - next_cycle.initial_drop_pct / 100.0))
             next_cycle.quantity = 0
@@ -599,6 +613,16 @@ class StrategyEngine:
             update("protective_sell_trailing_stop_pct", float(settings.protective_sell_trailing_stop_pct), "protective sell trail %")
             update("slippage_buffer_enabled", bool(settings.slippage_buffer_enabled), "slippage buffer enabled")
             update("slippage_buffer_pct", float(settings.slippage_buffer_pct), "slippage buffer %")
+            update(
+                "cancel_sell_and_liquidate_before_close_enabled",
+                bool(settings.cancel_sell_and_liquidate_before_close_enabled),
+                "cancel SELL trail and liquidate before close",
+            )
+            update(
+                "liquidate_before_close_minutes",
+                int(settings.liquidate_before_close_minutes),
+                "liquidate before close minutes",
+            )
 
         elif stage == Stage.WAIT_RISE_TRIGGER:
             # Position is open; only the future SELL-trigger decision can be
@@ -618,6 +642,16 @@ class StrategyEngine:
             update("atr_max_pct", float(settings.atr_max_pct), "ATR max %")
             update("slippage_buffer_enabled", bool(settings.slippage_buffer_enabled), "slippage buffer enabled")
             update("slippage_buffer_pct", float(settings.slippage_buffer_pct), "slippage buffer %")
+            update(
+                "cancel_sell_and_liquidate_before_close_enabled",
+                bool(settings.cancel_sell_and_liquidate_before_close_enabled),
+                "cancel SELL trail and liquidate before close",
+            )
+            update(
+                "liquidate_before_close_minutes",
+                int(settings.liquidate_before_close_minutes),
+                "liquidate before close minutes",
+            )
             # Protective parameters are locked once the protective order exists;
             # otherwise they can still be applied before the BUY fill action places it.
             if not _protective_sell_is_working(next_cycle) and not next_cycle.protective_sell_order_ref:
