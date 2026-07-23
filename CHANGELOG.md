@@ -2,6 +2,26 @@
 
 This file summarizes behavior-changing and maintenance releases represented by the repository. Historical implementation notes remain in `docs/legacy/` for traceability. Current behavior is documented in `README.md` and the current guides linked from `docs/README.md`.
 
+## v3.1.1
+
+### Fixed
+
+- Replaced contract-wide `minTick` order-price normalization with route-specific IBKR market-rule bands when `ContractDetails` advertises `marketRuleIds`. BUY stop and sizing prices round upward, SELL stop prices round downward, and the applicable increment is re-evaluated when rounding crosses a rule boundary.
+- Changed IBKR what-if requests to use the dedicated `whatIfOrder` path with `whatIf=True` and `transmit=True`. Missing order state, validation/rejection status, rejection warnings, unset sentinels, and absent margin/equity output now fail closed; legitimate zero changes remain valid.
+- Retained app-owned broker order-error callbacks, including code/message, order IDs, `OrderRef`, ticker, and advanced rejection JSON. The callback race cache is bounded and expiring, and manual orders are not attributed to BouncyBot.
+- Added a no-fill rejection circuit breaker. `Inactive`, `Rejected`, or a terminal no-fill order with a substantive broker rejection now moves the cycle to `ERROR` for manual review instead of resetting Stage 2 and repeatedly submitting the same invalid order. Ordinary confirmed cancellations, including code 202 by itself, still reset an unfilled BUY to Stage 1.
+
+### Safety and compatibility
+
+- If IBKR advertises a market rule but the matching rule cannot be resolved or loaded, submission is blocked before broker transmission instead of falling back to the smallest contract-level tick.
+- Broker order errors are persisted in the existing `broker_events` and `decision_events` audit streams; no SQLite schema migration is required. Existing v3.1.0 and v3.0.19 databases remain compatible.
+- Strategy formulas, ATR settings, Stage-4 close-before-RTH liquidation, ownership calculations, fill accounting, and order types are otherwise unchanged.
+
+### Documentation and tests
+
+- Added focused deterministic coverage for IREN-style price bands, exchange/rule mapping, band-boundary rounding, rule caching and failure, strict what-if results, callback-order races, bounded error retention, manual-order isolation, broker-event persistence, cancellation distinction, and rejection stopping.
+- Added [`docs/V3_1_1_IBKR_ORDER_VALIDATION.md`](docs/V3_1_1_IBKR_ORDER_VALIDATION.md) and archived the v3.1.0 release note under `docs/legacy/`.
+
 ## v3.1.0
 
 ### Added
@@ -22,7 +42,7 @@ This file summarizes behavior-changing and maintenance releases represented by t
 
 - Updated the configuration, strategy, order-flow, risk, operations, recovery, limitation, database, troubleshooting, and verification guides for the new optional policy.
 - Added focused regression coverage for defaults and validation, additive SQLite migration, GUI wiring, exact RTH/early-close timing, one-shot cancellation, cancellation/fill races, partial-fill aggregation, replacement-order attributes, failure handling, restart recovery, duplicate-SELL prevention, Stage-4 scope, and Auto-repeat behavior.
-- Added [`docs/V3_1_0_CLOSE_BEFORE_RTH_LIQUIDATION.md`](docs/V3_1_0_CLOSE_BEFORE_RTH_LIQUIDATION.md).
+- Added [`docs/V3_1_0_CLOSE_BEFORE_RTH_LIQUIDATION.md`](docs/legacy/V3_1_0_CLOSE_BEFORE_RTH_LIQUIDATION.md), now archived for historical traceability.
 
 ## v3.0.19
 

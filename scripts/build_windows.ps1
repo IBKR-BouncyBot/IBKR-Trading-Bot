@@ -20,7 +20,7 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
-$version = "3.1.0"
+$version = "3.1.1"
 $appName = "IBKRTradingBot"
 $releaseName = "${appName}_${version}_Windows"
 $releaseDirectory = Join-Path $root "release"

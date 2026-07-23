@@ -1,126 +1,210 @@
-BouncyBot - IBKR Portable Trading Bot v3.1.0
-Close-before-RTH liquidation implementation and verification report
-===================================================================
+BouncyBot - IBKR Portable Trading Bot v3.1.1
+IBKR order validation and rejection handling
+Implementation and verification report
+Date: 2026-07-22
 
-Release source
---------------
-The implementation was made against the user-supplied v3.0.19 source archive.
-The archive's documentation changes and root README heading were retained. The
-previous v3.0.18 implementation report remains preserved byte-for-byte at:
+BASELINE
+========
 
-    docs/legacy/V3_0_18_IMPLEMENTATION_TEST_REPORT.txt
+The release was produced from the user-supplied corrected v3.1.0 source archive:
 
-Requested production change
----------------------------
-One optional Stage-4 exit policy was added under Risk and timing:
+  IBKR_Trading_Bot_3.1.0_Close_Before_RTH_Liquidation_
+  Ruff_Horizontal_Scroll_Fixed_Source.zip
 
-    Cancel SELL trail and liquidate before close
-    Liquidate before close: 5 min
+The existing source, documentation, images, tests, and v3.1.0 close-before-RTH
+feature were retained. The release version was advanced to 3.1.1.
 
-The checkbox defaults to OFF. The minute value defaults to 5 and accepts 1
-through 240. The controls and information badges use the same tooltip and input
-locking conventions as the surrounding interface.
+PROBLEM EVIDENCE
+================
 
-Exact behavior
---------------
-The policy applies only to the normal app-owned final SELL_TRAIL while the cycle
-is in Stage 4 (SELL_TRAIL_ACTIVE). It does not change Stage 1, Stage 2, Stage 3,
-protective SELLs, ATR calculations, trailing percentages, sizing, or normal
-order construction.
+The supplied IB Gateway log showed two independent broker-boundary failures:
 
-At the configured contract-specific RTH cutoff, while RTH is confirmed open:
+1. An IREN what-if BUY TRAIL request was rejected because the request used
+   whatIf=True with transmit=False.
+2. The following live IREN BUY TRAIL used a four-decimal stop price derived
+   from ContractDetails.minTick=0.0001 and was rejected with IBKR error 201,
+   "Order rejected - reason: Invalid Price".
 
-1. BouncyBot persists that the automatic close workflow has started.
-2. It requests cancellation of the final SELL trail once.
-3. It continues polling the original order and recording fills.
-4. It submits no replacement until IBKR reports a terminal original-order state.
-5. It totals persisted final-SELL executions across the original trail and any
-   replacement.
-6. If shares remain, it submits one SELL MKT order for only that app-owned
-   remainder, with TIF DAY and outsideRth=False.
-7. It reaches Stage 5 only after cumulative SELL fills equal the app-owned BUY
-   quantity. Normal commission, P/L, capture, history, and Auto-repeat handling
-   then continue.
+The same log showed a successful NBIS BUY TRAIL, demonstrating that the account,
+Gateway connection, and general native trailing-order mechanism were working.
 
-The trailing percentage is never changed to zero.
+IMPLEMENTED CHANGES
+===================
 
-Safety and failure behavior
----------------------------
-- A complete fill during the cancellation race completes normally and suppresses
-  the replacement.
-- A partial original fill reduces the replacement quantity.
-- An original order that may still be working remains the only SELL; no second
-  SELL is submitted.
-- If cancellation is not confirmed before RTH closes, the original order remains
-  the only app exit order and the bot continues monitoring it.
-- If cancellation becomes terminal after close, no replacement is submitted.
-- Submission failure, replacement rejection/cancellation/inactivity, an
-  incomplete replacement at the RTH boundary, an invalid app-owned quantity, or
-  a possible over-sell moves the cycle to ERROR/manual review.
-- No outside-RTH fallback is submitted and the cancelled trail is not silently
-  recreated.
-- The manual Stop-screen market-close action is blocked while this automatic
-  workflow is active, preventing a second app-created market SELL.
-- Workflow settings and runtime flags are persisted in additive SQLite columns
-  and are included in reconnect/restart reconciliation.
+1. MARKET-RULE PRICE NORMALIZATION
 
-Source files with production behavior changes
----------------------------------------------
-    app/controller.py
-    app/gui.py
-    app/models.py
-    app/storage.py
-    app/strategy.py
+The live IBKR adapter now:
 
-Other modified files are release metadata, current documentation, schema and
-regression tests, or pre-existing static version assertions updated to v3.1.0.
+- reads validExchanges and the positionally corresponding marketRuleIds;
+- preserves empty rule positions so an exchange cannot inherit another route's
+  rule accidentally;
+- selects the rule for the requested route, normally SMART;
+- requests price bands through reqMarketRule;
+- selects the increment applicable at the proposed price;
+- rounds BUY stop/sizing prices upward and SELL stop prices downward with exact
+  decimal arithmetic;
+- re-evaluates the band if rounding crosses a price boundary;
+- caches successful contract-detail and market-rule results for the adapter
+  session; and
+- fails closed before order intent/submission when IBKR advertises a market rule
+  but that rule cannot be selected or loaded.
 
-Automated validation
---------------------
-Complete plain pytest run, with ResourceWarning promoted to error:
+The established contract-level minimum-tick fallback remains available only for
+adapters/contracts that do not advertise a market rule.
 
-    861 collected/executed
-    860 passed
-    1 documented strict expected failure
-    0 unexpected failures
+2. STRICT WHAT-IF VALIDATION
 
-Focused v3.1.0 tests cover defaults, validation, SQLite round-trip, disabled and
-pre-cutoff behavior, one-shot cancellation, terminal confirmation, market-order
-attributes, full-fill and partial-fill cancellation races, aggregate P/L and
-commission accounting, unconfirmed cancellation, post-close confirmation,
-submission failure, incomplete replacement, Auto-repeat, Stage-4 scoping,
-manual duplicate prevention, input locking, early-close boundaries, unavailable
-session metadata, and restart recovery during both original and replacement
-partial fills.
+What-if checks now use IB.whatIfOrder with whatIf=True and transmit=True.
+The result fails closed for missing OrderState, validation/rejection/error
+statuses, rejection warning text, unset-value sentinels, or a response with no
+usable margin/equity result. Legitimate numeric zero changes remain valid.
 
-Additional repository gates:
+A ValidationError can no longer be reported as a passing margin check.
 
-    Combined statement/branch coverage: 77.1% (minimum 75%)
-    Executable application callables entered: 848/848
-    Safety mutation checks: 6/6 killed
-    Deterministic simulations: 58/58 across 54 CSV price-path files
-    Bounded soak tests: 5/5 passed
-    Python compilation: passed
-    AST/source and duplicate-definition audits: passed
-    Patch whitespace validation: passed
-    Release metadata consistency: passed
-    Relative documentation links: passed
+3. BROKER-ORDER ERROR RETENTION
 
-Coverage collection note
-------------------------
-Coverage was collected in isolated chunks because the complete suite under one
-instrumented process was impractically slow on the Linux validation host. The
-two timing-sensitive tests in tests/test_v300_large_database_performance.py were
-run separately without coverage instrumentation and both passed. All 861 tests
-were still executed in the complete plain pytest run.
+Order-related IBKR callbacks for app-owned orders now retain:
 
-External checks not claimed
----------------------------
-Ruff and Pyright were unavailable in the offline Linux environment and could not
-be installed without network access. The Windows run_all_tests.bat quality gate
-therefore remains required before producing the release executable.
+- error code and message;
+- request/order ID;
+- OrderRef and permanent order ID when available;
+- ticker and currency;
+- advanced rejection JSON when supplied; and
+- callback timestamp and diagnostic representation.
 
-A native Windows PyInstaller launch, clean Windows-machine smoke test, and live
-TWS/IB Gateway paper-account cancellation/fill exercise were also outside this
-environment. Those checks are necessary before production use because broker
-cancellation timing and exchange fills cannot be proven by deterministic tests.
+The callback race in which IBKR reports an error before local trade registration
+is handled through a 30-second, 256-entry bounded cache. Only definitive
+order-validation codes or clearly order-specific messages enter that unbound
+cache. Manual orders and unrelated request errors are not attributed to the bot.
+
+The controller persists the error in broker_events, adds a BROKER_ORDER_ERROR
+decision event, and exposes the broker reason through the existing status/audit
+interfaces.
+
+4. NO-FILL REJECTION CIRCUIT BREAKER
+
+An unfilled BUY order that becomes Inactive or Rejected no longer resets to
+Stage 1 for repeated automatic attempts. A terminal no-fill state carrying a
+substantive broker validation/rejection error also stops the cycle.
+
+The cycle enters ERROR/manual review and records that no replacement or fresh
+cycle retry will be submitted. A normal Cancelled or ApiCancelled state without
+substantive rejection remains a normal Stage-2 cancellation and resets to
+Stage 1. IBKR code 202 alone remains an ordinary cancellation notification.
+
+SCOPE AND COMPATIBILITY
+=======================
+
+- No SQLite schema change was introduced in v3.1.1.
+- A database created by v3.1.0 with saved connection/strategy settings, an
+  active Stage-4 cycle, a working SELL order, an execution, and an audit event
+  was opened by v3.1.1 successfully.
+- Tables, columns, indexes, row counts, saved settings, and cycle fields were
+  unchanged by v3.1.1 initialization.
+- Existing v3.1.0 and v3.0.19 databases remain forward-compatible.
+- ATR calculations, strategy percentages, order ownership, quantity/P&L
+  calculations, market-data capture, Stage-4 close-before-RTH liquidation, and
+  recovery policy were not otherwise changed.
+
+AUTOMATED VERIFICATION
+======================
+
+Final working-tree pytest run
+-----------------------------
+
+Command class:
+
+  python -m pytest -q -W error::ResourceWarning
+
+Result:
+
+  893 tests collected and executed
+  892 passed
+  1 strict documented expected failure
+  0 unexpected failures
+
+The expected failure documents the existing Master Client/shared IBKRBOT-prefix
+multi-instance ownership limitation. ResourceWarning was promoted to an error.
+
+Focused v3.1.1/release regressions
+---------------------------------
+
+  36 passed
+
+The focused set includes market-rule mapping/bands/rounding/fail-closed paths,
+what-if request/result handling, callback ownership and race behavior, bounded
+error caching, controller audit persistence, rejection-versus-cancellation
+state transitions, v3.1.0 compatibility regressions, and v3.1.1 release metadata.
+
+Coverage
+--------
+
+Coverage instrumentation was run in four deterministic groups over every test
+except the two large-database timing tests, which were executed separately to
+avoid instrumentation distortion:
+
+  891 tests under statement/branch coverage
+  890 passed and 1 expected failure
+  2/2 large-database timing tests passed separately
+  Combined statement/branch coverage: 77.3%
+  Required minimum: 75.0%
+
+Coverage.py generated .coverage, coverage.json, and coverage.xml. These are
+validation artifacts and are excluded from the release ZIP.
+
+Callable-entry gate
+-------------------
+
+  876/876 executable application callables entered
+
+This is entry coverage, not a claim that every mutually exclusive path or every
+real external-system failure mode was exercised.
+
+Additional gates
+----------------
+
+  6/6 safety mutants killed
+  58/58 deterministic simulation contracts passed across 54 CSV price paths
+  5/5 bounded soak tests passed
+  2/2 large-database timing tests passed
+  Python compileall passed
+  AST parsing and duplicate-definition audit passed across 134 Python files
+  Markdown relative-link audit passed across 82 Markdown files
+  Git patch whitespace validation passed
+  v3.1.1 release/version metadata audit passed
+
+RELEASE ARTIFACT VERIFICATION
+=============================
+
+The v3.1.0-to-v3.1.1 unified patch was checked against a fresh extraction of the
+user-supplied v3.1.0 source. Applying it reconstructed the final v3.1.1 source
+manifest byte-for-byte.
+
+The final source ZIP was integrity-tested, extracted into a clean directory, and
+compared with the tested source manifest. The clean extraction was independently
+compiled and reran the complete pytest collection with the same result:
+
+  892 passed, 1 strict expected failure, 0 unexpected failures
+
+Generated caches, coverage files, runtime databases, logs, backups, captures,
+virtual environments, and build output are excluded from the source ZIP.
+SHA-256 hashes are supplied in the release checksum file.
+
+EXTERNAL VALIDATION STILL REQUIRED
+==================================
+
+Ruff and Pyright were not installed in the offline Linux validation environment,
+so no local v3.1.1 Ruff or Pyright pass is claimed. The Windows run_all_tests.bat
+gate must be run before producing the production executable.
+
+The following also remain external checks:
+
+- native Windows PyInstaller build and launch;
+- actual PySide6 rendering and interaction on Windows;
+- live TWS/IB Gateway market-rule and error-callback behavior;
+- paper-account what-if and order lifecycle testing, including IREN; and
+- production market-data, entitlement, pacing, fill, commission, and latency
+  behavior.
+
+This release should first be exercised with IBKR paper trading. A passing offline
+suite cannot guarantee broker acceptance, execution price, or exchange behavior.
