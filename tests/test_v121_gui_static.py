@@ -6,8 +6,8 @@ CONTROLLER = Path("app/controller.py").read_text(encoding="utf-8")
 
 
 def test_v121_version_labels_are_current():
-    assert "BouncyBot - IBKR Portable Trading Bot v3.0.19" in GUI
-    assert "# BouncyBot - IBKR Portable Trading Bot v3.0.19" in README
+    assert "BouncyBot - IBKR Portable Trading Bot v3.1.1" in GUI
+    assert "# BouncyBot - an IBKR Portable Trading Bot " in README
     assert 'self._visual_refresh_timer.setInterval(75)' in GUI
     assert 'self._history_filter_timer.setInterval(200)' in GUI
     assert 'now - self._last_human_report_monotonic < 60.0' in CONTROLLER

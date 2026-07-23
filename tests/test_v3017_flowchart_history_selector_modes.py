@@ -8,9 +8,9 @@ RUN_ALL_TESTS_BAT = Path("run_all_tests.bat").read_text(encoding="utf-8")
 
 
 def test_v3017_version_metadata_and_release_note_are_current():
-    assert "BouncyBot - IBKR Portable Trading Bot v3.0.19" in GUI
-    assert "# BouncyBot - IBKR Portable Trading Bot v3.0.19" in README
-    assert 'version = "3.0.19"' in PYPROJECT
+    assert "BouncyBot - IBKR Portable Trading Bot v3.1.1" in GUI
+    assert "# BouncyBot - an IBKR Portable Trading Bot " in README
+    assert 'version = "3.1.1"' in PYPROJECT
     assert Path("docs/legacy/V3_0_17_FLOWCHART_HISTORY_SELECTOR.md").exists()
 
 
