@@ -48,8 +48,8 @@ def test_v302_run_all_tests_requires_quality_tools_after_requirements_install():
 
 
 def test_v302_documentation_and_version_metadata_are_current():
-    assert "# BouncyBot - IBKR Portable Trading Bot v3.0.19" in README
-    assert 'version = "3.0.19"' in PYPROJECT
+    assert "# BouncyBot - an IBKR Portable Trading Bot " in README
+    assert 'version = "3.1.1"' in PYPROJECT
     assert "v3.0.4 quality-gate result handling and cleanup" in ARCHIVE
     assert "v3.0.4 quality-gate result handling and cleanup" in DOC
     assert "ruff" in DOC.lower() and "pyright" in DOC.lower()

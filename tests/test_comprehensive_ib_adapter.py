@@ -86,6 +86,10 @@ class FakeIB:
         self.matching_symbols: list[Any] = []
         self.qualified_contracts: list[Any] | None = None
         self.contract_details: list[Any] = []
+        self.market_rule_values: dict[int, list[Any]] = {}
+        self.market_rule_requests: list[int] = []
+        self.what_if_orders: list[tuple[Any, Any]] = []
+        self.next_order_state: Any = None
         self.open_trades: list[Any] = []
         self.all_trades: list[Any] = []
         self.fill_values: list[Any] = []
@@ -130,6 +134,24 @@ class FakeIB:
 
     def reqContractDetails(self, contract: Any) -> list[Any]:
         return list(self.contract_details)
+
+    def reqMarketRule(self, market_rule_id: int) -> list[Any]:
+        self.market_rule_requests.append(int(market_rule_id))
+        return list(self.market_rule_values.get(int(market_rule_id), []))
+
+    def whatIfOrder(self, contract: Any, order: Any) -> Any:
+        self.what_if_orders.append((contract, order))
+        if self.next_order_state is not None:
+            return self.next_order_state
+        if self.next_trade is not None:
+            return getattr(self.next_trade, "orderState", None)
+        return SimpleNamespace(
+            status="PreSubmitted",
+            warningText="",
+            initMarginChange="1",
+            maintMarginChange="2",
+            equityWithLoanChange="-1",
+        )
 
     def placeOrder(self, contract: Any, order: Any) -> Any:
         self.placed_orders.append((contract, order))
@@ -550,13 +572,25 @@ def test_what_if_order_builders_preserve_optional_account_and_report_warnings(li
         outside_rth=True,
     )
     assert trailing["ok"] is False
-    order = ib.placed_orders[-1][1]
-    assert order.orderType == "TRAIL" and order.whatIf is True and order.account == "DU1"
+    order = ib.what_if_orders[-1][1]
+    assert order.orderType == "TRAIL"
+    assert order.whatIf is True
+    assert order.transmit is True
+    assert order.account == "DU1"
 
-    ib.next_trade = SimpleNamespace(orderState=None, orderStatus=SimpleNamespace(status="PreSubmitted"))
+    ib.next_trade = None
+    ib.next_order_state = SimpleNamespace(
+        status="PreSubmitted",
+        warningText="",
+        initMarginChange="0",
+        maintMarginChange=0,
+        equityWithLoanChange="0.00",
+    )
     market = adapter.what_if_market_order(contract=contract, action="SELL", quantity=5, order_ref="ref")
     assert market["ok"] is True
-    assert ib.placed_orders[-1][1].orderType == "MKT"
+    assert market["initMarginChange"] == "0"
+    assert ib.what_if_orders[-1][1].orderType == "MKT"
+    assert ib.what_if_orders[-1][1].transmit is True
 
 
 def test_live_order_builders_validate_and_return_broker_identity(live_adapter: tuple[IbAsyncTwsAdapter, FakeIB]) -> None:

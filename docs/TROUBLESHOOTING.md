@@ -55,6 +55,26 @@ Hover the **Trading** box. It lists all currently evaluated blockers, not only t
 
 A blocker is usually intentional. Do not disable it solely to make the status green; verify the underlying data and operating assumption. A normal guard pause is not a recovery fault, so the Reconciliation tab intentionally disables Reconcile and resume and other broker/local-state-changing buttons while leaving Refresh from IBKR/TWS and audit export available.
 
+## A BUY becomes Inactive or Rejected
+
+Open the Live Strategy event list or the Cycle Audit broker/decision events and locate the retained IBKR error code and message. In v3.1.1 a definitive no-fill rejection moves the cycle to `ERROR` and does not automatically retry. This is intentional; restarting the same invalid request can produce repeated broker rejections.
+
+For `Invalid Price`, minimum-variation, or invalid-stop errors:
+
+1. confirm that the selected contract and route are correct;
+2. inspect the contract's advertised market-rule ID and the increment selected at the proposed price;
+3. confirm the submitted stop is aligned to that increment, not merely to `ContractDetails.minTick`;
+4. preserve the audit bundle and Gateway/TWS log; and
+5. do not restart the cycle until the structural cause is understood.
+
+A normal operator or session cancellation should report `Cancelled` or `ApiCancelled`. Code 202 by itself is an ordinary cancellation notification and should return an unfilled BUY to Stage 1.
+
+## The what-if check reports a failure
+
+The check now requires a real IBKR `OrderState` with non-error status and at least one finite margin/equity result. `ValidationError`, missing state, rejection warnings, and IBKR unset sentinels fail closed. Review the retained message and Gateway/TWS API log. Do not treat an empty warning as approval when the status is a validation error.
+
+A successful what-if result is only a preflight. A later live order can still be rejected if price, account, permissions, market rules, or broker controls change.
+
 ## Maximum spread appears to change by itself
 
 The **Maximum spread %** setting is not derived from live bid/ask and is never rewritten by quote updates. The live spread changes; the configured threshold does not. It can change only when:

@@ -10,5 +10,7 @@ def test_v3018_release_note_is_archived_and_changelog_is_retained() -> None:
     assert archived_note.is_file()
     assert archived_report.is_file()
     assert "# v3.0.18 Event-driven controller cadences" in archived_note.read_text(encoding="utf-8")
-    assert not Path("docs/V3_0_18_EVENT_DRIVEN_CADENCES.md").exists()
+    # The attached v3.0.19 source intentionally retains this historical note
+    # at the repository-root docs path as well as in the archive.
+    assert Path("docs/V3_0_18_EVENT_DRIVEN_CADENCES.md").is_file()
     assert Path("docs/legacy/V3_0_17_FLOWCHART_HISTORY_SELECTOR.md").is_file()

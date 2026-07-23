@@ -1,8 +1,8 @@
 # Automated test coverage specification
 
-This document defines the automated verification scope for v3.1.0. It is the maintainer-facing map between the application modules, test layers, and repository quality gates.
+This document defines the automated verification scope for v3.1.1. It is the maintainer-facing map between the application modules, test layers, and repository quality gates.
 
-The v3.1.0 offline test architecture includes focused coverage for shutdown checkpoints, event-driven worker scheduling, independent cadences, nonblocking broker reads, GUI responsiveness, broker connectivity, reconciliation, flowchart history selection, and the optional Stage-4 close-before-RTH cancel-confirm-market workflow. Tests use temporary databases, deterministic clocks and data, protocol-shaped broker doubles, and headless Qt doubles. They do not connect to IBKR, launch TWS/Gateway, or transmit orders.
+The v3.1.1 offline test architecture includes focused coverage for shutdown checkpoints, event-driven worker scheduling, independent cadences, nonblocking broker reads, GUI responsiveness, broker connectivity, reconciliation, flowchart history selection, the optional Stage-4 close-before-RTH cancel-confirm-market workflow, market-rule price normalization, strict what-if interpretation, broker error retention, and rejection circuit breaking. Tests use temporary databases, deterministic clocks and data, protocol-shaped broker doubles, and headless Qt doubles. They do not connect to IBKR, launch TWS/Gateway, or transmit orders.
 
 ## Test objectives
 
@@ -23,10 +23,10 @@ The callable gate is derived from the effective function map in `coverage.json`.
 
 | Application module | Executable callables entered | Primary automated focus |
 |---|---:|---|
-| `app/controller.py` | 187 / 187 | Event-driven command queue, independent broker/strategy/database/GUI/maintenance cadences, lifecycle, connectivity, guards, recovery, execution reconstruction, order-side effects, snapshots |
+| `app/controller.py` | 192 / 192 | Event-driven command queue, independent broker/strategy/database/GUI/maintenance cadences, lifecycle, connectivity, guards, recovery, execution reconstruction, order-side effects, snapshots |
 | `app/flowchart_model.py` | 9 / 9 | Stage-card construction, labels, details, filtering |
 | `app/gui.py` | 338 / 338 | Formatting, blocker/recovery classification, widget state, command gating, timelines, panels, dialogs, layout helpers |
-| `app/ib_adapter.py` | 99 / 99 | Data normalization, event ownership, connectivity, market data, contracts, orders, executions, positions |
+| `app/ib_adapter.py` | 122 / 122 | Data normalization, event ownership, connectivity, market data, contracts, orders, executions, positions |
 | `app/ib_platform.py` | 11 / 11 | Profiles, path discovery, socket probing, process-launch outcomes |
 | `app/lockfile.py` | 8 / 8 | Acquisition, stale-lock handling, release, context-manager behavior |
 | `app/market_data_capture.py` | 22 / 22 | Bounded buffers, capture lifecycle, serialization, asynchronous write behavior |
@@ -38,15 +38,19 @@ The callable gate is derived from the effective function map in `coverage.json`.
 | `app/strategy.py` | 21 / 21 | Five-stage transitions, fills, partial fills, editable settings, error states |
 | `app/timeline_scaling.py` | 28 / 28 | Parsing, filtering, robust bounds, downsampling, marker/time-axis placement |
 | `main.py` | 3 / 3 | Stable palette setup, single-instance startup, window lifecycle, cleanup |
-| **Total** | **848 / 848** | All effective executable application callables |
+| **Total** | **876 / 876** | All effective executable application callables |
 
-The counts are a snapshot of v3.1.0. The gate recalculates them from the current source and coverage report on every full test run. Adding a callable without a test causes the callable-coverage step to fail.
+The counts are a snapshot of v3.1.1. The gate recalculates them from the current source and coverage report on every full test run. Adding a callable without a test causes the callable-coverage step to fail.
 
 ## Test layers
 
 ### v3.1.0 close-before-RTH layer
 
 Focused tests cover default-off configuration, validation and SQLite migration, exact contract-session timing, one-shot cancellation, full/partial fill races, remaining-quantity calculation, `DAY`/RTH-only market replacement attributes, failure-to-`ERROR` behavior, restart/recovery continuity, manual-close conflict prevention, Auto-repeat preservation, and static GUI/documentation wiring.
+
+### v3.1.1 broker-validation layer
+
+Focused tests cover exchange-to-market-rule mapping (including empty positional rule IDs), price-band selection, side-aware exact-decimal rounding, boundary re-evaluation, cache reuse, fail-closed unresolved rules, strict `whatIfOrder` status/margin interpretation, legitimate zero values, broker error callback ownership and race handling, manual-order isolation, bounded expiration, unrelated request-error exclusion, audit persistence, and the no-fill rejection circuit breaker versus ordinary cancellation.
 
 
 ### Pure unit tests

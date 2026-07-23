@@ -71,6 +71,10 @@ def test_schema_upgrade_adds_missing_recent_columns(tmp_path):
     assert "atr_block_new_buy_until_ready" in columns
     assert "atr_adapt_protective_sell_enabled" in columns
     assert "atr_protective_sell_multiplier" in columns
+    assert "cancel_sell_and_liquidate_before_close_enabled" in columns
+    assert "liquidate_before_close_minutes" in columns
+    assert "close_before_rth_liquidation_requested" in columns
+    assert "close_before_rth_cancel_requested" in columns
 
 
 def test_execution_exists_treats_empty_id_as_missing(tmp_path):

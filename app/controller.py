@@ -3042,6 +3042,29 @@ class TradingController:
                 )
             except Exception as exc:
                 self._log("WARN", f"Could not persist broker callback event {event_type}: {exc}", cycle)
+            if event_type == "ORDER_ERROR":
+                code = self._optional_int(event.get("error_code") or event.get("errorCode"))
+                message = str(event.get("message") or event.get("error_string") or "IBKR rejected the order request.")
+                prefix = f"IBKR order error {code}" if code is not None else "IBKR order error"
+                if order_ref:
+                    prefix += f" for {order_ref}"
+                text = f"{prefix}: {message}"
+                self.status = text
+                try:
+                    self.storage.add_decision_event(
+                        event_type="BROKER_ORDER_ERROR",
+                        message=text,
+                        cycle=cycle,
+                        stage_before=(cycle.stage.value if cycle else None),
+                        stage_after=(cycle.stage.value if cycle else None),
+                        decision_result="broker_error",
+                        broker_order_id=self._optional_int(event.get("order_id") or event.get("orderId")),
+                        perm_id=self._optional_int(event.get("perm_id") or event.get("permId")),
+                        raw=event,
+                    )
+                except Exception as exc:
+                    self._log("WARN", f"Could not persist structured broker-order error: {exc}", cycle)
+                self._log("ERROR", text, cycle)
 
     def _cycle_for_order_ref(self, order_ref: Optional[str]) -> Optional[CycleState]:
         if not order_ref:
@@ -4366,6 +4389,43 @@ class TradingController:
         decimals = max(decimals, 2)
         return round(max(0.0, rounded), decimals)
 
+    def _normalize_order_price_for_submission(self, price: float, direction: str) -> dict[str, Any]:
+        """Normalize one broker-facing price with market-rule support when available."""
+        method = getattr(self.adapter, "normalize_order_price", None)
+        if callable(method) and self.contract is not None:
+            result = method(self.contract, float(price), direction)
+            normalized = float(getattr(result, "normalized_price"))
+            increment = float(getattr(result, "increment"))
+            if normalized <= 0 or not isfinite(normalized):
+                raise BrokerAdapterError("IBKR order-price normalization returned an invalid price.")
+            if increment <= 0 or not isfinite(increment):
+                raise BrokerAdapterError("IBKR order-price normalization returned an invalid increment.")
+            return {
+                "price": normalized,
+                "increment": increment,
+                "source": str(getattr(result, "source", "") or "broker"),
+                "market_rule_id": getattr(result, "market_rule_id", None),
+                "market_rule_exchange": str(getattr(result, "market_rule_exchange", "") or ""),
+            }
+        increment = self._contract_min_tick()
+        return {
+            "price": self._round_to_increment(float(price), increment, direction),
+            "increment": increment,
+            "source": "contract_min_tick",
+            "market_rule_id": None,
+            "market_rule_exchange": "",
+        }
+
+    @staticmethod
+    def _order_price_normalization_label(details: dict[str, Any]) -> str:
+        increment = float(details.get("increment") or 0.0)
+        if str(details.get("source") or "") == "market_rule":
+            rule_id = details.get("market_rule_id")
+            exchange = str(details.get("market_rule_exchange") or "")
+            route = f" for {exchange}" if exchange else ""
+            return f"IBKR market rule {rule_id}{route} increment {increment:g}"
+        return f"contract tick {increment:g}"
+
     def _buy_stop_reference_price(self) -> Optional[float]:
         """Return the highest current visible price relevant to a BUY stop.
 
@@ -4406,15 +4466,15 @@ class TradingController:
         cleaned = [value for value in (self._positive_float(item) for item in candidates) if value is not None]
         return min(cleaned) if cleaned else None
 
-    def _normalize_trailing_order_payload(self, cycle: CycleState, payload: dict[str, Any], side: str, role: str = "") -> tuple[dict[str, Any], Optional[str]]:
-        """Return a payload copy with broker-valid order stop precision.
-
-        The pure strategy uses app price data and four-decimal calculations. The
-        broker order must use the contract's minimum tick. This function is the
-        last safety adjustment before what-if/order placement.
-        """
+    def _normalize_trailing_order_payload(
+        self,
+        cycle: CycleState,
+        payload: dict[str, Any],
+        side: str,
+        role: str = "",
+    ) -> tuple[dict[str, Any], Optional[str]]:
+        """Return a payload copy with broker-valid market-rule precision."""
         updated = dict(payload)
-        tick = self._contract_min_tick()
         try:
             trail_pct = max(0.0, float(updated.get("trailing_percent") or 0.0))
             stop = float(updated.get("initial_stop_price") or 0.0)
@@ -4422,43 +4482,83 @@ class TradingController:
             return updated, None
         if trail_pct <= 0 or stop <= 0:
             return updated, None
-        message: Optional[str] = None
-        if side.upper() == "BUY":
-            ref = self._buy_stop_reference_price()
-            if ref is not None:
-                stop = max(stop, ref * (1.0 + trail_pct / 100.0))
-            normalized_stop = self._round_to_increment(stop, tick, "up")
-            updated["initial_stop_price"] = normalized_stop
-            sizing = normalized_stop
-            if bool(getattr(cycle, "slippage_buffer_enabled", False)):
-                sizing *= 1.0 + max(0.0, float(getattr(cycle, "slippage_buffer_pct", 0.0) or 0.0)) / 100.0
-            sizing = self._round_to_increment(sizing, tick, "up")
-            updated["sizing_price"] = sizing
-            if sizing > 0:
-                qty = int(floor(float(cycle.budget) / sizing))
-                updated["quantity"] = max(0, qty)
-            if float(payload.get("initial_stop_price") or 0.0) != normalized_stop:
-                message = f"Normalized BUY trailing stop to contract tick {tick:g}: {normalized_stop:.8g}."
-        else:
-            ref = self._sell_stop_reference_price()
-            if ref is not None:
-                stop = min(stop, ref * (1.0 - trail_pct / 100.0))
-            normalized_stop = self._round_to_increment(stop, tick, "down")
-            updated["initial_stop_price"] = normalized_stop
-            minimum_stop = None
-            try:
-                minimum_stop = float(getattr(cycle, "avg_buy_price", 0.0) or 0.0) * (1.0 + float(getattr(cycle, "rise_trigger_pct", 0.0) or 0.0) / 100.0)
+        try:
+            message: Optional[str] = None
+            if side.upper() == "BUY":
+                reference = self._buy_stop_reference_price()
+                if reference is not None:
+                    stop = max(stop, reference * (1.0 + trail_pct / 100.0))
+                stop_details = self._normalize_order_price_for_submission(stop, "up")
+                normalized_stop = float(stop_details["price"])
+                updated["initial_stop_price"] = normalized_stop
+                updated["price_increment"] = float(stop_details["increment"])
+                updated["price_increment_source"] = str(stop_details["source"])
+                updated["market_rule_id"] = stop_details.get("market_rule_id")
+                updated["market_rule_exchange"] = stop_details.get("market_rule_exchange")
+
+                sizing = normalized_stop
                 if bool(getattr(cycle, "slippage_buffer_enabled", False)):
-                    slip = max(0.0, float(getattr(cycle, "slippage_buffer_pct", 0.0) or 0.0)) / 100.0
-                    minimum_stop = minimum_stop / max(1e-12, 1.0 - slip)
-                minimum_stop = self._round_to_increment(minimum_stop, tick, "up")
-            except Exception:
-                minimum_stop = None
-            if minimum_stop is not None and normalized_stop + 1e-9 < minimum_stop and side.upper() == "SELL" and role != "PROTECTIVE_SELL":
-                return updated, f"SELL stop {normalized_stop:.8g} no longer protects minimum-profit stop {minimum_stop:.8g}; waiting for a higher price."
-            if float(payload.get("initial_stop_price") or 0.0) != normalized_stop:
-                message = f"Normalized SELL trailing stop to contract tick {tick:g}: {normalized_stop:.8g}."
-        return updated, message
+                    sizing *= 1.0 + max(
+                        0.0,
+                        float(getattr(cycle, "slippage_buffer_pct", 0.0) or 0.0),
+                    ) / 100.0
+                sizing_details = self._normalize_order_price_for_submission(sizing, "up")
+                sizing = float(sizing_details["price"])
+                updated["sizing_price"] = sizing
+                if sizing > 0:
+                    updated["quantity"] = max(0, int(floor(float(cycle.budget) / sizing)))
+                if float(payload.get("initial_stop_price") or 0.0) != normalized_stop:
+                    label = self._order_price_normalization_label(stop_details)
+                    message = f"Normalized BUY trailing stop to {label}: {normalized_stop:.8g}."
+            else:
+                reference = self._sell_stop_reference_price()
+                if reference is not None:
+                    stop = min(stop, reference * (1.0 - trail_pct / 100.0))
+                stop_details = self._normalize_order_price_for_submission(stop, "down")
+                normalized_stop = float(stop_details["price"])
+                updated["initial_stop_price"] = normalized_stop
+                updated["price_increment"] = float(stop_details["increment"])
+                updated["price_increment_source"] = str(stop_details["source"])
+                updated["market_rule_id"] = stop_details.get("market_rule_id")
+                updated["market_rule_exchange"] = stop_details.get("market_rule_exchange")
+
+                minimum_stop: Optional[float]
+                try:
+                    minimum_stop = float(getattr(cycle, "avg_buy_price", 0.0) or 0.0) * (
+                        1.0 + float(getattr(cycle, "rise_trigger_pct", 0.0) or 0.0) / 100.0
+                    )
+                    if bool(getattr(cycle, "slippage_buffer_enabled", False)):
+                        slip = max(
+                            0.0,
+                            float(getattr(cycle, "slippage_buffer_pct", 0.0) or 0.0),
+                        ) / 100.0
+                        minimum_stop = minimum_stop / max(1e-12, 1.0 - slip)
+                    minimum_stop = float(
+                        self._normalize_order_price_for_submission(minimum_stop, "up")["price"]
+                    )
+                except BrokerAdapterError:
+                    raise
+                except Exception:
+                    minimum_stop = None
+                if (
+                    minimum_stop is not None
+                    and normalized_stop + 1e-9 < minimum_stop
+                    and side.upper() == "SELL"
+                    and role != "PROTECTIVE_SELL"
+                ):
+                    return (
+                        updated,
+                        f"SELL stop {normalized_stop:.8g} no longer protects minimum-profit "
+                        f"stop {minimum_stop:.8g}; waiting for a higher price.",
+                    )
+                if float(payload.get("initial_stop_price") or 0.0) != normalized_stop:
+                    label = self._order_price_normalization_label(stop_details)
+                    message = f"Normalized SELL trailing stop to {label}: {normalized_stop:.8g}."
+            return updated, message
+        except BrokerAdapterError as exc:
+            return updated, f"Order-price validation blocked {side.upper()} submission: {exc}"
+        except Exception as exc:
+            return updated, f"Order-price validation blocked {side.upper()} submission: {exc}"
 
     @staticmethod
     def _trading_blocker(side: str, code: str, message: str, short: str) -> dict[str, str]:
@@ -4774,7 +4874,7 @@ class TradingController:
         payload = dict(action.payload)
         payload, normalization_message = self._normalize_trailing_order_payload(cycle, payload, side, role=role)
         if normalization_message:
-            if normalization_message.startswith("SELL stop"):
+            if normalization_message.startswith(("SELL stop", "Order-price validation blocked")):
                 self.active_cycle = StrategyEngine.rollback_unsubmitted_order(cycle, side, normalization_message)
                 self.storage.upsert_cycle(self.active_cycle)
                 self._log("WARN", normalization_message, self.active_cycle)
@@ -4971,14 +5071,70 @@ class TradingController:
     def _order_terminal_without_fill(status: str) -> bool:
         return str(status or "").strip() in {"Cancelled", "ApiCancelled", "Inactive", "Rejected"}
 
-    def _move_no_fill_order_to_stopped_error(self, cycle: CycleState, polled: PolledOrderState, side: str) -> None:
-        # Terminal no-fill order states pause the strategy in ERROR instead of
-        # entering a Manual Review stage. Market data continues to update so the
-        # user can inspect the ticker and decide whether to start a fresh cycle.
+    @staticmethod
+    def _broker_errors_from_polled(polled: PolledOrderState) -> list[dict[str, Any]]:
+        raw = polled.raw if isinstance(polled.raw, dict) else {}
+        values = raw.get("broker_errors")
+        result = [dict(item) for item in values if isinstance(item, dict)] if isinstance(values, list) else []
+        latest = raw.get("broker_error")
+        if isinstance(latest, dict) and latest not in result:
+            result.append(dict(latest))
+        return result
+
+    @staticmethod
+    def _broker_error_is_rejection(item: dict[str, Any]) -> bool:
+        try:
+            code = int(item.get("error_code") or item.get("errorCode"))
+        except Exception:
+            code = None
+        message = str(item.get("message") or item.get("error_string") or "").lower()
+        rejection_words = (
+            "reject",
+            "invalid",
+            "not allowed",
+            "validation",
+            "does not conform",
+            "insufficient",
+            "failed",
+            "error",
+        )
+        if code == 202 and not any(word in message for word in rejection_words):
+            return False
+        if code is not None and code != 202:
+            return True
+        return any(word in message for word in rejection_words)
+
+    @classmethod
+    def _polled_order_rejection(cls, polled: PolledOrderState) -> Optional[dict[str, Any]]:
+        status = str(polled.status or "").strip()
+        errors = cls._broker_errors_from_polled(polled)
+        for item in reversed(errors):
+            if cls._broker_error_is_rejection(item):
+                return item
+        if status in {"Inactive", "Rejected"}:
+            return {"error_code": None, "message": f"IBKR terminal order status {status}"}
+        return None
+
+    def _move_no_fill_order_to_stopped_error(
+        self,
+        cycle: CycleState,
+        polled: PolledOrderState,
+        side: str,
+    ) -> None:
+        rejection = self._polled_order_rejection(polled)
+        detail = ""
+        if rejection:
+            code = self._optional_int(rejection.get("error_code") or rejection.get("errorCode"))
+            text = str(rejection.get("message") or rejection.get("error_string") or "").strip()
+            if code is not None and text:
+                detail = f" IBKR error {code}: {text}."
+            elif text:
+                detail = f" {text}."
         cycle.stage = Stage.ERROR
         cycle.error_message = (
             f"{side} order is no longer working with no filled quantity "
-            f"(status {polled.status}). Strategy paused; no new order will be sent automatically."
+            f"(status {polled.status}).{detail} Strategy paused for manual review; "
+            "no replacement or automatic fresh-cycle retry will be sent."
         )
         if side == "BUY":
             cycle.buy_status = polled.status
@@ -4994,6 +5150,16 @@ class TradingController:
         cycle.touch()
         self.active_cycle = cycle
         self.storage.upsert_cycle(cycle)
+        raw = dict(polled.raw or {})
+        raw.update(
+            {
+                "order_ref": polled.order_ref,
+                "order_id": polled.order_id,
+                "perm_id": polled.perm_id,
+                "terminal_status": polled.status,
+                "rejection": rejection,
+            }
+        )
         self.storage.add_decision_event(
             event_type="ORDER_TERMINAL_WITHOUT_FILL",
             message=cycle.error_message,
@@ -5001,9 +5167,9 @@ class TradingController:
             decision_result="stopped_error",
             broker_order_id=polled.order_id,
             perm_id=polled.perm_id,
-            raw=polled.raw,
+            raw=raw,
         )
-        self._log("WARN", cycle.error_message, cycle)
+        self._log("ERROR", cycle.error_message, cycle)
 
     def _log_native_order_wait_diagnostic(self, cycle: CycleState, status: str) -> None:
         """Throttle a clear explanation when a native trailing order is still waiting.
@@ -5028,20 +5194,27 @@ class TradingController:
         self._update_recovery_probe_from_order_poll(polled)
         if polled.filled <= 0:
             if self._order_terminal_without_fill(polled.status):
+                if self._polled_order_rejection(polled) is not None:
+                    self._move_no_fill_order_to_stopped_error(cycle, polled, "BUY")
+                    return
                 message = (
-                    f"BUY order is no longer working with no filled quantity (status {polled.status}). "
-                    "No position was opened. The strategy reset to Stage 1 and will require a fresh initial-drop setup before trying again."
+                    f"BUY order was cancelled with no filled quantity (status {polled.status}). "
+                    "No position was opened. The strategy reset to Stage 1 and requires "
+                    "a fresh initial-drop setup before another BUY."
                 )
                 reset_cycle = StrategyEngine.rollback_unsubmitted_order(cycle, "BUY", message)
-                # Avoid retrying the same rejected/inactive order on the next
-                # worker tick.  Reset the anchor to the latest app-selected
-                # price so a new drop condition is required.
                 try:
-                    latest = float((self.price_snapshot or {}).get("price") or reset_cycle.last_price or 0.0)
+                    latest = float(
+                        (self.price_snapshot or {}).get("price")
+                        or reset_cycle.last_price
+                        or 0.0
+                    )
                     if latest > 0:
                         reset_cycle.last_price = latest
                         reset_cycle.anchor_price = latest
-                        reset_cycle.drop_trigger_price = latest * (1.0 - float(reset_cycle.initial_drop_pct) / 100.0)
+                        reset_cycle.drop_trigger_price = latest * (
+                            1.0 - float(reset_cycle.initial_drop_pct) / 100.0
+                        )
                 except Exception:
                     pass
                 reset_cycle.buy_status = polled.status

@@ -103,14 +103,20 @@ It does not import Qt, connect to IBKR, or write SQLite. The controller validate
 - actual `pendingTickersEvent` sequencing, subscription identity, and callback timestamps so cached `Ticker` reads cannot impersonate fresh data;
 - separate local-socket and upstream IBKR connectivity state driven by broker system messages, including 1100, 1101, 1102, 1300, and 2110;
 - RTH/liquid-hours interpretation;
+- route-specific IBKR market-rule selection, price-band loading, and side-aware order-price normalization;
 - native trailing and market order construction;
-- what-if checks;
+- strict dedicated what-if checks;
 - app-order filtering;
+- app-owned broker rejection/error retention, including bounded callback-race association;
 - order status, fills, open-order, and recent-execution recovery.
 
 The adapter does not own strategy stages. It returns broker facts or raises a broker error that causes the controller to pause or enter recovery. On code 1101 it discards obsolete market-data handles so future reads issue new subscriptions. On code 1102 it retains the active handles but clears update metadata until a new ticker event arrives. The production adapter requires event identity; if `pendingTickersEvent` cannot be registered, populated cached fields remain diagnostic only and no strategy price is produced.
 
 Scheduled price reads are nonblocking: the adapter inspects the current subscription immediately and returns without sleeping when the timeout is zero. Bounded explicit reads first inspect the same snapshot and wait only if data is still absent, in slices no longer than 50 ms. Periodic order polling likewise consumes cached `Trade` state immediately; a missing cache entry can start a throttled `reqOpenOrders` refresh, with the response handled by a later broker callback cycle. Explicit connect/recovery/cancel paths retain their bounded waits.
+
+When `ContractDetails` advertises market rules, the live adapter does not treat its smallest `minTick` as universally valid. It maps `validExchanges` to `marketRuleIds`, requests the selected rule, chooses the increment at the proposed price, and fails closed if the advertised rule is unavailable. Successful rules are cached for the adapter session.
+
+IBKR order errors are filtered by application ownership before they enter the audit stream. A short-lived bounded pending cache bridges the placement callback race; once the app-owned `Trade` is known, errors are attached to both order polling and broker-event persistence.
 
 ## Storage layer
 

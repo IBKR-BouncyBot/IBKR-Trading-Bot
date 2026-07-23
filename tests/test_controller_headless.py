@@ -158,7 +158,7 @@ def test_strategy_edit_places_order_when_same_condition_is_rth_open(tmp_path, mo
     assert controller.adapter.placed_orders[0]["action"] == "BUY"
 
 
-def test_buy_trail_terminal_without_fill_resets_to_stage_1_without_manual_review(tmp_path, monkeypatch):
+def test_buy_trail_inactive_without_fill_stops_in_error_without_retry(tmp_path, monkeypatch):
     controller_module = _install_qt_stub(monkeypatch)
     from app.ib_adapter import PolledOrderState
 
@@ -184,9 +184,9 @@ def test_buy_trail_terminal_without_fill_resets_to_stage_1_without_manual_review
     )
     controller._handle_buy_order_poll(cycle, polled)
 
-    assert controller.active_cycle.stage == Stage.WAIT_INITIAL_DROP
-    assert controller.active_cycle.buy_order_ref is None
-    assert "no filled quantity" in controller.active_cycle.error_message
+    assert controller.active_cycle.stage == Stage.ERROR
+    assert controller.active_cycle.buy_order_ref == polled.order_ref
+    assert "no replacement or automatic fresh-cycle retry" in controller.active_cycle.error_message
 
 
 def test_protective_cancel_confirmation_does_not_force_manual_review(tmp_path, monkeypatch):

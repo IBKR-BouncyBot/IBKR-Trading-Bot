@@ -18,6 +18,7 @@ from collections import deque
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from datetime import time as datetime_time
+from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP, Decimal, InvalidOperation
 from math import isfinite
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
@@ -56,6 +57,27 @@ class PolledOrderState:
     raw: dict[str, Any]
 
 
+@dataclass(slots=True, frozen=True)
+class PriceIncrementBand:
+    """One IBKR market-rule price band."""
+
+    low_edge: float
+    increment: float
+
+
+@dataclass(slots=True, frozen=True)
+class OrderPriceNormalization:
+    """Broker-facing price normalization result."""
+
+    original_price: float
+    normalized_price: float
+    increment: float
+    direction: str
+    source: str
+    market_rule_id: Optional[int] = None
+    market_rule_exchange: str = ""
+
+
 @dataclass(slots=True)
 class QualifiedContract:
     ticker: str
@@ -65,6 +87,9 @@ class QualifiedContract:
     local_symbol: str = ""
     trading_class: str = ""
     min_tick: float = 0.01
+    market_rule_id: Optional[int] = None
+    market_rule_exchange: str = ""
+    market_rule_advertised: bool = False
 
 
 @dataclass(slots=True)
@@ -193,6 +218,49 @@ class RthStatus:
         return asdict(self)
 
 
+def _normalize_round_direction(direction: str) -> str:
+    value = str(direction or "nearest").strip().lower()
+    if value not in {"up", "down", "nearest"}:
+        raise BrokerAdapterError(f"Unsupported order-price rounding direction: {direction}")
+    return value
+
+
+def _positive_increment(value: Any, *, fallback: Optional[float] = None) -> float:
+    try:
+        increment = float(value)
+    except Exception:
+        increment = 0.0
+    if increment > 0 and isfinite(increment):
+        return increment
+    if fallback is not None:
+        fallback_value = float(fallback)
+        if fallback_value > 0 and isfinite(fallback_value):
+            return fallback_value
+    raise BrokerAdapterError("IBKR did not provide a usable order-price increment.")
+
+
+def _round_decimal_increment(price: float, increment: float, direction: str) -> float:
+    """Round exactly to an increment without binary floating-point drift."""
+    round_direction = _normalize_round_direction(direction)
+    try:
+        decimal_price = Decimal(str(price))
+        decimal_increment = Decimal(str(increment))
+    except (InvalidOperation, ValueError) as exc:
+        raise BrokerAdapterError("Order price and increment must be finite numeric values.") from exc
+    if not decimal_price.is_finite() or decimal_price <= 0:
+        raise BrokerAdapterError("Order price must be a finite value greater than zero.")
+    if not decimal_increment.is_finite() or decimal_increment <= 0:
+        raise BrokerAdapterError("Order-price increment must be a finite value greater than zero.")
+    rounding = {
+        "up": ROUND_CEILING,
+        "down": ROUND_FLOOR,
+        "nearest": ROUND_HALF_UP,
+    }[round_direction]
+    units = (decimal_price / decimal_increment).to_integral_value(rounding=rounding)
+    normalized = units * decimal_increment
+    return float(normalized)
+
+
 class BrokerAdapter:
     """Interface used by TradingController.
 
@@ -260,6 +328,29 @@ class BrokerAdapter:
 
     def last_price(self, contract: QualifiedContract, timeout: float = 1.0) -> Optional[float]:
         return self.price_snapshot(contract, timeout=timeout).price
+
+    def normalize_order_price(
+        self,
+        contract: QualifiedContract,
+        price: float,
+        direction: str,
+    ) -> OrderPriceNormalization:
+        """Normalize a price using the contract fallback increment.
+
+        Deterministic adapters written before v3.1.1 do not know IBKR market
+        rules.  The interface default preserves their contract-level behavior;
+        the live adapter overrides this method and resolves the applicable
+        price band through ``reqMarketRule``.
+        """
+        increment = _positive_increment(getattr(contract, "min_tick", 0.01), fallback=0.01)
+        normalized = _round_decimal_increment(price, increment, direction)
+        return OrderPriceNormalization(
+            original_price=float(price),
+            normalized_price=normalized,
+            increment=increment,
+            direction=_normalize_round_direction(direction),
+            source="contract_min_tick",
+        )
 
     def what_if_trailing_stop(
         self,
@@ -363,11 +454,30 @@ class IbAsyncTwsAdapter(BrokerAdapter):
     _AUTO_MODE_SEQUENCE = (1, 3, 2, 4)  # live, delayed, frozen, delayed-frozen.
     _AUTO_RESCAN_SECONDS = 60.0
     _MARKET_DATA_WAIT_SLICE_SECONDS = 0.05
+    _ORDER_ERROR_CACHE_TTL_SECONDS = 30.0
+    _ORDER_ERROR_CACHE_MAX_ITEMS = 256
+    # Only definitive order-validation codes are accepted into the short-lived
+    # callback-race cache before a Trade object exists.  Once a request ID is
+    # already associated with a known app-owned Trade, every non-connectivity
+    # error is retained because IBKR has already established that ownership.
+    # This prevents contract-details or market-data errors (for example code
+    # 200) from being mis-bound to a later order that happens to reuse a request
+    # ID within the cache window.
+    _DEFINITIVE_ORDER_ERROR_CODES = frozenset({
+        103, 107, 109, 110, 111, 113, 201, 202, 321, 361, 403,
+        10147, 10148, 10149, 10150, 10151, 10152, 10153, 10154,
+    })
 
     def __init__(self) -> None:
         self.ib: Any = None
         self._contracts: dict[str, Any] = {}
         self._contracts_by_con_id: dict[int, Any] = {}
+        self._contract_details: dict[str, Any] = {}
+        self._market_rule_cache: dict[int, tuple[PriceIncrementBand, ...]] = {}
+        self._market_rule_failures: dict[int, str] = {}
+        self._order_errors_by_id: dict[int, deque[dict[str, Any]]] = {}
+        self._order_errors_by_ref: dict[str, deque[dict[str, Any]]] = {}
+        self._pending_order_errors: dict[int, deque[tuple[float, dict[str, Any]]]] = {}
         self._tickers: dict[tuple[int, str, str, str], Any] = {}
         self._trades_by_ref: dict[str, Any] = {}
         self._market_data_type = 0  # logical request: 0 means auto best available.
@@ -510,17 +620,193 @@ class IbAsyncTwsAdapter(BrokerAdapter):
         except Exception:
             return None
 
-    def _on_ib_error(self, *args: Any, **kwargs: Any) -> None:
-        """Track IBKR server-connectivity system messages.
+    @staticmethod
+    def _order_error_fingerprint(item: dict[str, Any]) -> tuple[Any, ...]:
+        return (
+            item.get("request_id"),
+            item.get("error_code"),
+            str(item.get("message") or ""),
+            str(item.get("advanced_reject_json") or ""),
+        )
 
-        The callback signature is ``(reqId, errorCode, errorString, contract)``.
-        Flexible argument parsing keeps the handler compatible with test doubles
-        and minor ib_async callback-shape changes.
-        """
+    def _purge_pending_order_errors(self, now: Optional[float] = None) -> None:
+        current = time.monotonic() if now is None else float(now)
+        cutoff = current - self._ORDER_ERROR_CACHE_TTL_SECONDS
+        for request_id, values in list(self._pending_order_errors.items()):
+            retained = deque(
+                ((created, item) for created, item in values if created >= cutoff),
+                maxlen=16,
+            )
+            if retained:
+                self._pending_order_errors[request_id] = retained
+            else:
+                self._pending_order_errors.pop(request_id, None)
+
+        total = sum(len(values) for values in self._pending_order_errors.values())
+        while total > self._ORDER_ERROR_CACHE_MAX_ITEMS:
+            oldest_id: Optional[int] = None
+            oldest_time = float("inf")
+            for request_id, values in self._pending_order_errors.items():
+                if values and values[0][0] < oldest_time:
+                    oldest_id = request_id
+                    oldest_time = values[0][0]
+            if oldest_id is None:
+                break
+            values = self._pending_order_errors.get(oldest_id)
+            if values:
+                values.popleft()
+                total -= 1
+                if not values:
+                    self._pending_order_errors.pop(oldest_id, None)
+            else:
+                self._pending_order_errors.pop(oldest_id, None)
+
+    def _trade_for_order_id(self, order_id: Optional[int]) -> Any:
+        if order_id is None:
+            return None
+        for trade in self._trades_by_ref.values():
+            order = getattr(trade, "order", None)
+            if self._event_int(getattr(order, "orderId", None)) == order_id:
+                return trade
+        return None
+
+    @staticmethod
+    def _app_order_ref_from_trade(trade: Any) -> str:
+        order = getattr(trade, "order", None)
+        order_ref = str(getattr(order, "orderRef", "") or "")
+        return order_ref if order_ref.startswith(APP_ORDER_PREFIX + "|") else ""
+
+    @classmethod
+    def _looks_like_order_error(cls, request_id: Optional[int], error_code: Optional[int], message: str) -> bool:
+        """Return whether an unbound callback is safe to cache as order-related."""
+        if request_id is None or request_id <= 0 or error_code is None:
+            return False
+        if error_code in cls._DEFINITIVE_ORDER_ERROR_CODES:
+            return True
+        text = str(message or "").lower()
+        order_tokens = (
+            "order rejected",
+            "order validation",
+            "invalid order",
+            "what-if order",
+            "whatif order",
+            "transmit flag",
+            "minimum variation",
+            "invalid price",
+            "invalid quantity",
+            "trailing stop",
+            "trail stop",
+            "stop price",
+        )
+        return any(token in text for token in order_tokens)
+
+    def _append_owned_order_error(self, item: dict[str, Any], trade: Any) -> None:
+        order = getattr(trade, "order", None)
+        order_status = getattr(trade, "orderStatus", None)
+        contract = getattr(trade, "contract", None) or item.get("contract")
+        order_ref = self._app_order_ref_from_trade(trade)
+        if not order_ref:
+            return
+        order_id = self._event_int(getattr(order, "orderId", None)) or self._event_int(item.get("request_id"))
+        perm_id = self._event_int(getattr(order, "permId", None)) or self._event_int(
+            getattr(order_status, "permId", None)
+        )
+        owned = dict(item)
+        owned.pop("contract", None)
+        owned.update(
+            {
+                "event_type": "ORDER_ERROR",
+                "order_ref": order_ref,
+                "order_id": order_id,
+                "perm_id": perm_id,
+                "ticker": str(getattr(contract, "symbol", "") or "").upper(),
+                "currency": str(getattr(contract, "currency", "") or "").upper(),
+            }
+        )
+        fingerprint = self._order_error_fingerprint(owned)
+        existing: list[dict[str, Any]] = []
+        if order_id is not None:
+            existing.extend(self._order_errors_by_id.get(order_id, ()))
+        existing.extend(self._order_errors_by_ref.get(order_ref, ()))
+        if any(self._order_error_fingerprint(value) == fingerprint for value in existing):
+            return
+        if order_id is not None:
+            self._order_errors_by_id.setdefault(order_id, deque(maxlen=16)).append(owned)
+        self._order_errors_by_ref.setdefault(order_ref, deque(maxlen=16)).append(owned)
+        self._broker_events.append(owned)
+
+    def _remember_pending_order_error(self, request_id: int, item: dict[str, Any]) -> None:
+        now = time.monotonic()
+        self._purge_pending_order_errors(now)
+        values = self._pending_order_errors.setdefault(request_id, deque(maxlen=16))
+        fingerprint = self._order_error_fingerprint(item)
+        if not any(self._order_error_fingerprint(existing) == fingerprint for _, existing in values):
+            values.append((now, item))
+        self._purge_pending_order_errors(now)
+
+    def _bind_pending_order_errors(self, trade: Any) -> None:
+        order = getattr(trade, "order", None)
+        order_id = self._event_int(getattr(order, "orderId", None))
+        order_ref = self._app_order_ref_from_trade(trade)
+        if order_id is None or not order_ref:
+            return
+        self._purge_pending_order_errors()
+        values = self._pending_order_errors.pop(order_id, deque())
+        for _, item in values:
+            self._append_owned_order_error(item, trade)
+
+    def _order_errors_for(self, order_ref: str, order_id: Optional[int]) -> list[dict[str, Any]]:
+        values: list[dict[str, Any]] = []
+        seen: set[tuple[Any, ...]] = set()
+        for item in list(self._order_errors_by_ref.get(order_ref, ())):
+            fingerprint = self._order_error_fingerprint(item)
+            if fingerprint not in seen:
+                seen.add(fingerprint)
+                values.append(dict(item))
+        if order_id is not None:
+            for item in list(self._order_errors_by_id.get(order_id, ())):
+                fingerprint = self._order_error_fingerprint(item)
+                if fingerprint not in seen:
+                    seen.add(fingerprint)
+                    values.append(dict(item))
+        values.sort(key=lambda item: str(item.get("created_at") or ""))
+        return values
+
+    def _on_ib_error(self, *args: Any, **kwargs: Any) -> None:
+        """Track connectivity messages and retain app-owned order errors."""
         request_id = self._event_int(args[0] if len(args) > 0 else kwargs.get("reqId"))
         error_code = self._event_int(args[1] if len(args) > 1 else kwargs.get("errorCode"))
         message = str(args[2] if len(args) > 2 else kwargs.get("errorString") or "")
-        if error_code not in {1100, 1101, 1102, 1300, 2103, 2104, 2110, 10197}:
+        contract = args[3] if len(args) > 3 else kwargs.get("contract")
+        advanced = (
+            args[4]
+            if len(args) > 4
+            else kwargs.get("advancedOrderRejectJson", kwargs.get("advanced_order_reject_json", ""))
+        )
+        connectivity_codes = {1100, 1101, 1102, 1300, 2103, 2104, 2110, 10197}
+        if error_code not in connectivity_codes:
+            trade = self._trade_for_order_id(request_id)
+            is_owned_trade = trade is not None and bool(self._app_order_ref_from_trade(trade))
+            should_cache_for_race = trade is None and self._looks_like_order_error(
+                request_id,
+                error_code,
+                message,
+            )
+            if is_owned_trade or should_cache_for_race:
+                item = {
+                    "created_at": utc_now_iso(),
+                    "request_id": request_id,
+                    "error_code": error_code,
+                    "message": message,
+                    "advanced_reject_json": str(advanced or ""),
+                    "contract": contract,
+                    "raw_args": [repr(arg) for arg in args],
+                    "raw_kwargs": {str(key): repr(value) for key, value in kwargs.items()},
+                }
+                if is_owned_trade:
+                    self._append_owned_order_error(item, trade)
+                elif request_id is not None:
+                    self._remember_pending_order_error(request_id, item)
             return
 
         if error_code in {1100, 2110}:
@@ -559,9 +845,6 @@ class IbAsyncTwsAdapter(BrokerAdapter):
         elif error_code == 10197:
             self._invalidate_market_data_event_state()
             self._set_upstream_state(
-                # A quote-delivery message must never upgrade a previously
-                # reported full IBKR server outage. 1100/2110 remains the
-                # stronger state until an explicit 1101/1102 restoration.
                 connected=self._upstream_connected is not False,
                 state="market_data_competing_session",
                 message=message or "No market data is available because another IBKR session has priority.",
@@ -689,6 +972,7 @@ class IbAsyncTwsAdapter(BrokerAdapter):
             return
         if trade is not None and order_ref:
             self._trades_by_ref[str(order_ref)] = trade
+            self._bind_pending_order_errors(trade)
         item = {
             "event_type": event_type,
             "created_at": utc_now_iso(),
@@ -952,6 +1236,83 @@ class IbAsyncTwsAdapter(BrokerAdapter):
         self._search_cache[cache_key] = results[: int(max_results)]
         return list(self._search_cache[cache_key])
 
+    @staticmethod
+    def _select_contract_detail(details: list[Any], con_id: Any) -> Any:
+        """Choose the detail row for the qualified contract."""
+        try:
+            wanted = int(con_id) if con_id not in (None, "") else 0
+        except Exception:
+            wanted = 0
+        if wanted > 0:
+            for detail in details:
+                detail_contract = getattr(detail, "contract", None)
+                try:
+                    detail_con_id = int(getattr(detail_contract, "conId", 0) or 0)
+                except Exception:
+                    detail_con_id = 0
+                if detail_con_id == wanted:
+                    return detail
+        return details[0] if details else None
+
+    @staticmethod
+    def _csv_tokens(value: Any, *, keep_empty: bool = False) -> list[str]:
+        tokens = [token.strip() for token in str(value or "").split(",")]
+        return tokens if keep_empty else [token for token in tokens if token]
+
+    @classmethod
+    def _market_rule_metadata(
+        cls,
+        detail: Any,
+        *,
+        requested_exchange: str,
+        contract_exchange: str,
+        primary_exchange: str,
+    ) -> tuple[Optional[int], str, bool]:
+        """Map ContractDetails.validExchanges to the corresponding rule ID."""
+        exchanges = [token.upper() for token in cls._csv_tokens(getattr(detail, "validExchanges", ""))]
+        # Preserve empty rule positions: IBKR documents marketRuleIds as aligned
+        # with validExchanges. Dropping an empty token could assign another
+        # exchange's rule to the requested route.
+        rule_tokens = cls._csv_tokens(getattr(detail, "marketRuleIds", ""), keep_empty=True)
+        advertised = any(rule_tokens)
+        entries: list[tuple[str, Optional[int]]] = []
+        for index, exchange_name in enumerate(exchanges):
+            rule_text = rule_tokens[index] if index < len(rule_tokens) else ""
+            try:
+                parsed = int(rule_text)
+            except Exception:
+                parsed = 0
+            entries.append((exchange_name, parsed if parsed > 0 else None))
+
+        route_candidates: list[str] = []
+        for value in (requested_exchange, contract_exchange):
+            candidate = str(value or "").upper().strip()
+            if candidate and candidate not in route_candidates:
+                route_candidates.append(candidate)
+        if not route_candidates:
+            for value in ("SMART", primary_exchange):
+                candidate = str(value or "").upper().strip()
+                if candidate and candidate not in route_candidates:
+                    route_candidates.append(candidate)
+
+        for candidate in route_candidates:
+            for exchange_name, rule_id in entries:
+                if exchange_name != candidate:
+                    continue
+                # A listed route with an empty/zero rule must not inherit the
+                # rule from another exchange.  Returning no ID makes the live
+                # order path fail closed when market-rule metadata exists.
+                if rule_id is None:
+                    return None, candidate, advertised
+                return rule_id, exchange_name, advertised
+
+        positive_entries = [(exchange_name, rule_id) for exchange_name, rule_id in entries if rule_id]
+        unique_rules = {rule_id for _, rule_id in positive_entries}
+        if not route_candidates and len(unique_rules) == 1:
+            exchange_name, rule_id = positive_entries[0]
+            return rule_id, exchange_name, advertised
+        return None, "", advertised
+
     def qualify_stock(
         self,
         ticker: str,
@@ -1001,22 +1362,30 @@ class IbAsyncTwsAdapter(BrokerAdapter):
         con_id_result = getattr(contract, "conId", None)
         if con_id_result is not None:
             self._contracts_by_con_id[int(con_id_result)] = contract
+
+        detail = self._contract_details.get(key)
+        if detail is None:
+            try:
+                details = list(self.ib.reqContractDetails(contract) or [])
+            except Exception:
+                details = []
+            detail = self._select_contract_detail(details, con_id_result)
+            if detail is not None:
+                self._contract_details[key] = detail
+
         min_tick = 0.01
-        # IBKR validates order prices against the instrument's minimum price
-        # increment.  US stocks usually trade in cents above $1, but the API can
-        # supply the contract's minimum increment through ContractDetails.minTick.
-        # Stop/trailing-stop prices that do not conform can be rejected or become
-        # Inactive, so the controller uses this value to normalize order prices.
-        try:
-            details = list(self.ib.reqContractDetails(contract) or [])
-            self.ib.sleep(0.10)
-            for detail in details:
-                value = float(getattr(detail, "minTick", 0.0) or 0.0)
-                if value > 0 and isfinite(value):
-                    min_tick = value
-                    break
-        except Exception:
-            min_tick = 0.01
+        market_rule_id: Optional[int] = None
+        market_rule_exchange = ""
+        market_rule_advertised = False
+        if detail is not None:
+            min_tick = _positive_increment(getattr(detail, "minTick", 0.0), fallback=0.01)
+            market_rule_id, market_rule_exchange, market_rule_advertised = self._market_rule_metadata(
+                detail,
+                requested_exchange=exchange,
+                contract_exchange=str(getattr(contract, "exchange", "") or ""),
+                primary_exchange=str(getattr(contract, "primaryExchange", primary_exchange) or ""),
+            )
+
         return QualifiedContract(
             ticker=ticker,
             con_id=con_id_result,
@@ -1025,6 +1394,100 @@ class IbAsyncTwsAdapter(BrokerAdapter):
             local_symbol=str(getattr(contract, "localSymbol", "") or ""),
             trading_class=str(getattr(contract, "tradingClass", "") or ""),
             min_tick=float(min_tick),
+            market_rule_id=market_rule_id,
+            market_rule_exchange=market_rule_exchange,
+            market_rule_advertised=market_rule_advertised,
+        )
+
+    @staticmethod
+    def _market_rule_band_rows(values: Any) -> tuple[PriceIncrementBand, ...]:
+        rows: list[PriceIncrementBand] = []
+        for item in list(values or []):
+            try:
+                low_edge = float(getattr(item, "lowEdge"))
+                increment = _positive_increment(getattr(item, "increment"))
+            except Exception:
+                continue
+            if low_edge < 0 or not isfinite(low_edge):
+                continue
+            rows.append(PriceIncrementBand(low_edge=low_edge, increment=increment))
+        rows.sort(key=lambda row: row.low_edge)
+        return tuple(rows)
+
+    def _market_rule_bands(self, market_rule_id: int) -> tuple[PriceIncrementBand, ...]:
+        rule_id = int(market_rule_id)
+        cached = self._market_rule_cache.get(rule_id)
+        if cached:
+            return cached
+        if not self.is_connected():
+            raise BrokerAdapterError(f"Cannot request IBKR market rule {rule_id} while disconnected.")
+        try:
+            values = self.ib.reqMarketRule(rule_id)
+        except Exception as exc:
+            message = f"IBKR market rule {rule_id} request failed: {exc}"
+            self._market_rule_failures[rule_id] = message
+            raise BrokerAdapterError(message) from exc
+        rows = self._market_rule_band_rows(values)
+        if not rows:
+            message = f"IBKR market rule {rule_id} returned no usable price increments."
+            self._market_rule_failures[rule_id] = message
+            raise BrokerAdapterError(message)
+        self._market_rule_cache[rule_id] = rows
+        self._market_rule_failures.pop(rule_id, None)
+        return rows
+
+    @staticmethod
+    def _increment_for_market_price(price: float, rows: tuple[PriceIncrementBand, ...]) -> float:
+        selected: Optional[PriceIncrementBand] = None
+        for row in rows:
+            if float(price) + 1e-12 >= row.low_edge:
+                selected = row
+            else:
+                break
+        if selected is None:
+            selected = rows[0] if rows else None
+        if selected is None:
+            raise BrokerAdapterError("IBKR market rule contains no usable price band.")
+        return selected.increment
+
+    def normalize_order_price(
+        self,
+        contract: QualifiedContract,
+        price: float,
+        direction: str,
+    ) -> OrderPriceNormalization:
+        round_direction = _normalize_round_direction(direction)
+        original = float(price)
+        rule_id = getattr(contract, "market_rule_id", None)
+        advertised = bool(getattr(contract, "market_rule_advertised", False))
+        if rule_id is None:
+            if advertised:
+                raise BrokerAdapterError(
+                    "IBKR advertised market-rule pricing for this contract, but no rule matched "
+                    f"the requested route {getattr(contract.raw, 'exchange', '') or 'unknown'}."
+                )
+            return super().normalize_order_price(contract, original, round_direction)
+
+        rows = self._market_rule_bands(int(rule_id))
+        candidate = original
+        increment = self._increment_for_market_price(candidate, rows)
+        for _ in range(4):
+            normalized = _round_decimal_increment(original, increment, round_direction)
+            next_increment = self._increment_for_market_price(normalized, rows)
+            candidate = normalized
+            if abs(next_increment - increment) <= 1e-15:
+                break
+            increment = next_increment
+        else:
+            raise BrokerAdapterError(f"IBKR market rule {rule_id} did not converge for price {original}.")
+        return OrderPriceNormalization(
+            original_price=original,
+            normalized_price=candidate,
+            increment=increment,
+            direction=round_direction,
+            source="market_rule",
+            market_rule_id=int(rule_id),
+            market_rule_exchange=str(getattr(contract, "market_rule_exchange", "") or ""),
         )
 
     @staticmethod
@@ -1672,6 +2135,88 @@ class IbAsyncTwsAdapter(BrokerAdapter):
         self._rth_cache[cache_key] = (now_mono, status)
         return status
 
+    @staticmethod
+    def _what_if_margin_value(value: Any) -> tuple[str, bool]:
+        if value is None or value == "":
+            return "", False
+        text = str(value)
+        try:
+            number = float(value)
+        except Exception:
+            return text, False
+        if not isfinite(number) or abs(number) >= 1e300:
+            return text, False
+        return text, True
+
+    @classmethod
+    def _what_if_result(cls, order_state: Any, order_type: str) -> dict[str, Any]:
+        if order_state is None:
+            return {
+                "ok": False,
+                "message": "IBKR returned no OrderState for the what-if request.",
+                "initMarginChange": "",
+                "maintMarginChange": "",
+                "equityWithLoanChange": "",
+                "status": "",
+                "orderType": order_type,
+            }
+        status = str(getattr(order_state, "status", "") or "").strip()
+        warning = str(getattr(order_state, "warningText", "") or "").strip()
+        init_margin, init_ok = cls._what_if_margin_value(getattr(order_state, "initMarginChange", None))
+        maint_margin, maint_ok = cls._what_if_margin_value(getattr(order_state, "maintMarginChange", None))
+        equity_change, equity_ok = cls._what_if_margin_value(getattr(order_state, "equityWithLoanChange", None))
+        status_key = status.replace("_", "").replace(" ", "").lower()
+        invalid_statuses = {
+            "validationerror",
+            "inactive",
+            "rejected",
+            "cancelled",
+            "apicancelled",
+            "error",
+        }
+        warning_key = warning.lower()
+        warning_failed = any(
+            token in warning_key
+            for token in (
+                "reject",
+                "insufficient",
+                "invalid",
+                "error",
+                "not allowed",
+                "failed",
+            )
+        )
+        margins_available = init_ok or maint_ok or equity_ok
+        ok = status_key not in invalid_statuses and not warning_failed and margins_available
+        if status_key in invalid_statuses:
+            message = warning or status or "IBKR rejected the what-if request."
+        elif warning_failed:
+            message = warning
+        elif not margins_available:
+            message = warning or status or "IBKR returned no usable margin or equity impact."
+            message = f"{message} No usable margin or equity impact was returned."
+        else:
+            message = warning or status or "IBKR returned usable what-if margin impact."
+        return {
+            "ok": ok,
+            "message": message,
+            "initMarginChange": init_margin,
+            "maintMarginChange": maint_margin,
+            "equityWithLoanChange": equity_change,
+            "status": status,
+            "orderType": order_type,
+        }
+
+    def _request_what_if(self, contract: QualifiedContract, order: Any, order_type: str) -> dict[str, Any]:
+        method = getattr(self.ib, "whatIfOrder", None)
+        if not callable(method):
+            raise BrokerAdapterError("The installed ib_async API does not expose IB.whatIfOrder().")
+        try:
+            order_state = method(contract.raw, order)
+        except Exception as exc:
+            raise BrokerAdapterError(f"IBKR {order_type} what-if request failed: {exc}") from exc
+        return self._what_if_result(order_state, order_type)
+
     def what_if_trailing_stop(
         self,
         *,
@@ -1685,22 +2230,25 @@ class IbAsyncTwsAdapter(BrokerAdapter):
         account: str = "",
         outside_rth: bool = False,
     ) -> dict[str, Any]:
-        """Ask IBKR for margin/order impact without transmitting the BUY.
-
-        ib_async exposes the IBKR what-if order state through placeOrder on an
-        order with whatIf=True and transmit=False. The method returns a compact
-        dict so the controller and tests do not depend on ib_async classes.
-        """
+        """Ask IBKR for margin/order impact without transmitting a live order."""
         _, Order, _ = self._require_ib_async()
         if not self.is_connected():
             raise BrokerAdapterError("Not connected to TWS.")
         side = action.upper().strip()
+        if side not in {"BUY", "SELL"}:
+            raise BrokerAdapterError(f"Unsupported what-if trailing-stop side: {action}")
         try:
             qty = int(quantity)
             trail = float(trailing_percent)
             stop = float(initial_stop_price)
         except Exception as exc:
             raise BrokerAdapterError("What-if order quantity/trail/stop must be numeric.") from exc
+        if qty <= 0:
+            raise BrokerAdapterError("What-if order quantity must be greater than zero.")
+        if not (0.0 < trail < 100.0):
+            raise BrokerAdapterError("What-if trailing percent must be greater than 0 and less than 100.")
+        if not (stop > 0.0 and isfinite(stop)):
+            raise BrokerAdapterError("What-if initial stop price must be a finite positive value.")
         order = Order(
             action=side,
             orderType="TRAIL",
@@ -1709,7 +2257,7 @@ class IbAsyncTwsAdapter(BrokerAdapter):
             trailStopPrice=stop,
             tif=(tif or "GTC").upper().strip(),
             orderRef=order_ref,
-            transmit=False,
+            transmit=True,
             whatIf=True,
         )
         try:
@@ -1722,27 +2270,7 @@ class IbAsyncTwsAdapter(BrokerAdapter):
                 order.account = account
             except Exception:
                 pass
-        try:
-            trade = self.ib.placeOrder(contract.raw, order)
-            self.ib.sleep(1.0)
-        except Exception as exc:
-            raise BrokerAdapterError(f"IBKR what-if order failed: {exc}") from exc
-        order_state = getattr(trade, "orderState", None)
-        warning = str(getattr(order_state, "warningText", "") or "") if order_state is not None else ""
-        init_margin = str(getattr(order_state, "initMarginChange", "") or "") if order_state is not None else ""
-        maint_margin = str(getattr(order_state, "maintMarginChange", "") or "") if order_state is not None else ""
-        equity_change = str(getattr(order_state, "equityWithLoanChange", "") or "") if order_state is not None else ""
-        status = str(getattr(order_state, "status", "") or getattr(getattr(trade, "orderStatus", None), "status", "") or "")
-        ok = not any(token in warning.lower() for token in ("reject", "insufficient", "invalid", "error"))
-        return {
-            "ok": ok,
-            "message": warning or status or "What-if margin check returned no warning.",
-            "initMarginChange": init_margin,
-            "maintMarginChange": maint_margin,
-            "equityWithLoanChange": equity_change,
-            "status": status,
-            "orderType": "TRAIL",
-        }
+        return self._request_what_if(contract, order, "TRAIL")
 
     def what_if_market_order(
         self,
@@ -1760,17 +2288,21 @@ class IbAsyncTwsAdapter(BrokerAdapter):
         if not self.is_connected():
             raise BrokerAdapterError("Not connected to TWS.")
         side = action.upper().strip()
+        if side not in {"BUY", "SELL"}:
+            raise BrokerAdapterError(f"Unsupported what-if market-order side: {action}")
         try:
             qty = int(quantity)
         except Exception as exc:
             raise BrokerAdapterError("What-if market order quantity must be numeric.") from exc
+        if qty <= 0:
+            raise BrokerAdapterError("What-if market order quantity must be greater than zero.")
         order = Order(
             action=side,
             orderType="MKT",
             totalQuantity=qty,
             tif=(tif or "GTC").upper().strip(),
             orderRef=order_ref,
-            transmit=False,
+            transmit=True,
             whatIf=True,
         )
         try:
@@ -1782,27 +2314,7 @@ class IbAsyncTwsAdapter(BrokerAdapter):
                 order.account = account
             except Exception:
                 pass
-        try:
-            trade = self.ib.placeOrder(contract.raw, order)
-            self.ib.sleep(1.0)
-        except Exception as exc:
-            raise BrokerAdapterError(f"IBKR what-if market order failed: {exc}") from exc
-        order_state = getattr(trade, "orderState", None)
-        warning = str(getattr(order_state, "warningText", "") or "") if order_state is not None else ""
-        init_margin = str(getattr(order_state, "initMarginChange", "") or "") if order_state is not None else ""
-        maint_margin = str(getattr(order_state, "maintMarginChange", "") or "") if order_state is not None else ""
-        equity_change = str(getattr(order_state, "equityWithLoanChange", "") or "") if order_state is not None else ""
-        status = str(getattr(order_state, "status", "") or getattr(getattr(trade, "orderStatus", None), "status", "") or "")
-        ok = not any(token in warning.lower() for token in ("reject", "insufficient", "invalid", "error"))
-        return {
-            "ok": ok,
-            "message": warning or status or "What-if margin check returned no warning.",
-            "initMarginChange": init_margin,
-            "maintMarginChange": maint_margin,
-            "equityWithLoanChange": equity_change,
-            "status": status,
-            "orderType": "MKT",
-        }
+        return self._request_what_if(contract, order, "MKT")
 
     def place_trailing_stop(
         self,
@@ -1871,6 +2383,7 @@ class IbAsyncTwsAdapter(BrokerAdapter):
         trade = self.ib.placeOrder(contract.raw, order)
         self.ib.sleep(0.75)
         self._trades_by_ref[order_ref] = trade
+        self._bind_pending_order_errors(trade)
         status = getattr(getattr(trade, "orderStatus", None), "status", "Submitted") or "Submitted"
         order_id = getattr(getattr(trade, "order", None), "orderId", None)
         perm_id = getattr(getattr(trade, "order", None), "permId", None) or getattr(getattr(trade, "orderStatus", None), "permId", None)
@@ -1936,6 +2449,7 @@ class IbAsyncTwsAdapter(BrokerAdapter):
         trade = self.ib.placeOrder(contract.raw, order)
         self.ib.sleep(0.75)
         self._trades_by_ref[order_ref] = trade
+        self._bind_pending_order_errors(trade)
         status = getattr(getattr(trade, "orderStatus", None), "status", "Submitted") or "Submitted"
         order_id = getattr(getattr(trade, "order", None), "orderId", None)
         perm_id = getattr(getattr(trade, "order", None), "permId", None) or getattr(getattr(trade, "orderStatus", None), "permId", None)
@@ -2005,6 +2519,7 @@ class IbAsyncTwsAdapter(BrokerAdapter):
             ref = getattr(getattr(trade, "order", None), "orderRef", "") or ""
             if ref.startswith(APP_ORDER_PREFIX + "|"):
                 self._trades_by_ref[ref] = trade
+                self._bind_pending_order_errors(trade)
 
     def _to_polled_order_state(self, trade: Any) -> Optional[PolledOrderState]:
         order = getattr(trade, "order", None)
@@ -2051,6 +2566,10 @@ class IbAsyncTwsAdapter(BrokerAdapter):
             execution_shares = 0.0
         if (not avg_fill_price or float(avg_fill_price) <= 0) and execution_shares > 0:
             avg_fill_price = execution_value / execution_shares
+        broker_errors = self._order_errors_for(
+            ref,
+            int(order_id) if order_id is not None else None,
+        )
         return PolledOrderState(
             order_ref=ref,
             order_id=int(order_id) if order_id is not None else None,
@@ -2066,6 +2585,8 @@ class IbAsyncTwsAdapter(BrokerAdapter):
                 "orderType": getattr(order, "orderType", ""),
                 "totalQuantity": getattr(order, "totalQuantity", None),
                 "executions": executions,
+                "broker_errors": broker_errors,
+                "broker_error": broker_errors[-1] if broker_errors else None,
             },
         )
 

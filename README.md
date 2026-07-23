@@ -1,6 +1,6 @@
 # BouncyBot - an IBKR Portable Trading Bot 
 
-**Current release: v3.1.0**
+**Current release: v3.1.1**
 
 ![Simple-view](Images/Trading-Simple-view.png)
 
@@ -95,6 +95,12 @@ The optional **Cancel SELL trail and liquidate before close** policy is off by d
 
 An optional protective SELL trail can be submitted immediately after a BUY fill. When the normal minimum-profit exit becomes eligible, the application first requests cancellation of the protective order and waits for confirmation before submitting the final SELL. This prevents two application-created SELL orders from intentionally working for the same shares at once.
 
+### Broker price validation and rejection handling
+
+Before a trailing order is submitted, BouncyBot reads the selected contract's exchange-specific IBKR market rule when one is advertised. The app selects the increment for the proposed price, rounds BUY prices upward and SELL prices downward, and blocks submission if the advertised rule cannot be resolved. `ContractDetails.minTick` remains only a fallback for contracts that do not advertise a market rule.
+
+The optional IBKR what-if check now fails closed on missing or invalid order state, rejection warnings, unset values, or absent margin/equity output. App-owned broker error callbacks are retained in the audit trail. An unfilled BUY that becomes `Inactive` or `Rejected` stops in `ERROR` for manual review instead of automatically resetting and repeatedly resubmitting the same invalid order. A normal confirmed cancellation still returns Stage 2 to Stage 1.
+
 ### Stage 5 — complete or repeat
 
 The application records fills, commissions received from IBKR, gross and net P/L, timing, order references, and audit events. With auto-repeat enabled, another cycle starts unless **Stop after current cycle** is active or the enabled hard-risk maximum completed-cycle cap has been reached.
@@ -103,9 +109,9 @@ The application records fills, commissions received from IBKR, gross and net P/L
 
 - PySide6 desktop GUI with connection, strategy, flowchart, history, and reconciliation views.
 - TWS and IB Gateway connection profiles for live and paper endpoints.
-- Contract search and qualification through the IBKR API.
+- Contract search and qualification through the IBKR API, including route-specific market-rule price increments.
 - Whole-share budget sizing.
-- Native IBKR BUY and SELL trailing-stop orders.
+- Native IBKR BUY and SELL trailing-stop orders with side-aware broker-price normalization.
 - Optional Stage-4 cancel-confirm-market liquidation before the contract-specific RTH close.
 - Market-order alternatives when a trail percentage is exactly zero.
 - Optional automatic cycle repetition and reinvestment of positive completed application P/L.
@@ -193,7 +199,7 @@ The regular-session open/close window comes from the qualified IBKR contract's d
 - recent observed volatility;
 - configured daily-loss, cycle-count, or loss-streak limits;
 - an unresolved application-owned long quantity;
-- what-if, preflight, order-submission, or protective-order cancellation failures.
+- what-if, market-rule, preflight, order-submission, broker-rejection, or protective-order cancellation failures.
 
 Expected guard/session pauses are displayed as caution states. **Red is reserved for real broker/local-state inconsistencies** and states requiring operator reconciliation. The Maximum spread field is never rewritten from live bid/ask data; only explicit user edits and loading the saved setting can change it.
 
@@ -340,7 +346,7 @@ Enter a stock symbol and use **2. Search/select ticker**. Review the API matches
 
 ### 3. Confirm the ticker and price
 
-Use **3. Confirm ticker + get price**. The application qualifies the contract and starts/refreshes market-data diagnostics. Review the selected price source, bid/ask, **actual update age**, update sequence/subscription identity, market-data type, minimum tick, and RTH state. A cached value can remain visible after an outage, but it is labelled cached-only and does not count as a fresh update.
+Use **3. Confirm ticker + get price**. The application qualifies the contract and starts/refreshes market-data diagnostics. Review the selected price source, bid/ask, **actual update age**, update sequence/subscription identity, market-data type, contract minimum tick, and RTH state. The applicable market rule is resolved at order-preflight time and recorded in order diagnostics. A cached value can remain visible after an outage, but it is labelled cached-only and does not count as a fresh update.
 
 ### 4. Configure and start
 
@@ -437,7 +443,7 @@ dist\IBKRTradingBot\IBKRTradingBot.exe
 and creates the versioned release folder and final ZIP using the same naming pattern as IBKR Market Replay Lab:
 
 ```text
-release\IBKRTradingBot_3.1.0_Windows\
+release\IBKRTradingBot_3.1.1_Windows\
   GUI\IBKRTradingBot.exe
   docs\
   README.md
@@ -446,7 +452,7 @@ release\IBKRTradingBot_3.1.0_Windows\
   SECURITY.md
   QUICK_START.txt
 
-release\IBKRTradingBot_3.1.0_Windows.zip
+release\IBKRTradingBot_3.1.1_Windows.zip
 release\SHA256SUMS.txt
 ```
 
@@ -515,7 +521,8 @@ Superseded release-specific documents are indexed under [docs/legacy](docs/legac
 
 ## Release history
 
-- [v3.1.0 release note](docs/V3_1_0_CLOSE_BEFORE_RTH_LIQUIDATION.md) — optional Stage-4 cancel-confirm-market liquidation before the contract-specific RTH close.
+- [v3.1.1 release note](docs/V3_1_1_IBKR_ORDER_VALIDATION.md) — market-rule order-price normalization, strict what-if validation, broker rejection diagnostics, and no-fill rejection circuit breaker.
+- [v3.1.0 release note](docs/legacy/V3_1_0_CLOSE_BEFORE_RTH_LIQUIDATION.md) — optional Stage-4 cancel-confirm-market liquidation before the contract-specific RTH close.
 - [v3.0.19 release note](docs/V3_0_19_TRADE_HISTORY_AUDIT_PERFORMANCE.md) — faster Trade History audits, unrestricted audit zoom, realistic sample data, the BouncyBot product name, and an explicit potential-loss market-SELL confirmation.
 - [CHANGELOG.md](CHANGELOG.md) — consolidated release history.
 - [Archived release notes](docs/legacy/README.md) — implementation history for v3.0.17 and earlier.

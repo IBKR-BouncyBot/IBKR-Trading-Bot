@@ -28,7 +28,7 @@ The controller requires, as applicable:
 - ATR readiness when the ATR entry blocker is enabled;
 - session timing, fixed user-configured spread threshold, gap, price, volatility, P/L, cycle, and streak limits;
 - a successful IBKR what-if check when enabled;
-- a broker-valid minimum-tick-normalized order payload.
+- a broker-valid order payload normalized to the applicable route-specific IBKR market-rule increment, or to the contract minimum tick only when no market rule is advertised.
 
 The controller returns the first fail-closed blocker to the submission path while the GUI can display the complete evaluated list.
 
@@ -58,7 +58,7 @@ For a positive BUY trail, the adapter creates a BUY trailing-stop order with:
 - app `OrderRef`;
 - account set only when an explicit override is configured.
 
-The controller chooses a stop reference at or above visible ask/last/selected values and rounds up to the contract’s minimum tick.
+The controller chooses a stop reference at or above visible ask/last/selected values. When IBKR advertises market rules, the adapter selects the rule for the requested route, requests its price bands, and rounds the stop upward to the increment applicable at that price. The quantity sizing price is normalized independently because a slippage adjustment can cross a market-rule boundary. If the advertised rule cannot be resolved or loaded, submission is blocked. Contract `minTick` is used only when no market rule is advertised.
 
 ### Market BUY
 
@@ -67,6 +67,18 @@ When BUY trail is zero, the drop condition produces a market BUY rather than a n
 ### Acceptance and persistence
 
 Before transmission the application creates a database backup. After the adapter returns a submission handle, the controller records the reported IDs, reference, status, payload, and cycle stage. A submission failure rolls the logical cycle back to the waiting stage because the application must not claim an unconfirmed active order.
+
+### What-if validation
+
+When enabled, the BUY preflight uses `IB.whatIfOrder` with `whatIf=True` and `transmit=True`. IBKR interprets the request as a what-if evaluation rather than a live order. The result is accepted only when an `OrderState` exists, its status and warning text do not indicate validation failure, and at least one finite margin/equity impact is present. IBKR unset-value sentinels are treated as missing; legitimate zero changes are retained.
+
+What-if approval is not order acceptance. The market, account, contract, and broker controls can change before the real order is transmitted.
+
+### Broker errors and no-fill rejection circuit breaker
+
+For app-owned orders, the adapter retains order-specific IBKR error callbacks and associates them with the app `OrderRef`, broker order ID, permanent ID, ticker, message, and advanced rejection JSON when supplied. A bounded 30-second callback-race cache handles errors that arrive before the new `Trade` object has been registered. Manual orders are ignored.
+
+If a Stage-2 BUY has no fill and becomes `Inactive` or `Rejected`, or reaches a terminal no-fill state with a substantive broker rejection, the cycle moves to `ERROR` for manual review. BouncyBot does not create a replacement or automatically return to Stage 1. A normal `Cancelled` or `ApiCancelled` result without a substantive rejection still resets the entry setup; code 202 by itself is treated as the ordinary cancellation notification.
 
 ## BUY fills and partial fills
 
@@ -107,7 +119,7 @@ For a positive SELL trail, the adapter creates a SELL `TRAIL` order with:
 - configured trailing percent;
 - initial stop below the current SELL reference;
 - initial stop not below the minimum-profit planning floor;
-- minimum-tick rounding downward;
+- downward rounding to the route-specific IBKR market-rule increment, with contract `minTick` fallback only when no rule is advertised;
 - `TIF=GTC`, `outsideRth=False`, app `OrderRef`, and optional explicit account.
 
 ### Market SELL

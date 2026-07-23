@@ -1,6 +1,6 @@
 # Maintainer review notes
 
-This file records the current review boundaries for v3.1.0. It is not a release changelog and should not be used instead of the behavioral guides.
+This file records the current review boundaries for v3.1.1. It is not a release changelog and should not be used instead of the behavioral guides.
 
 ## Source-of-truth order
 
@@ -22,7 +22,7 @@ Changes in these areas require focused strategy, recovery, and failure-path revi
 - protective/final/market SELL cancellation sequencing;
 - optional account routing and managed-account validation;
 - app-owned versus account-wide position logic;
-- RTH, stale-data, session, ATR, what-if, and hard-risk blockers, including the user-owned Maximum spread setting;
+- RTH, stale-data, session, ATR, strict what-if, route-specific market-rule pricing, broker rejection, and hard-risk blockers, including the user-owned Maximum spread setting;
 - recovery after missing callbacks or reconnect, including ordering between point-in-time probes and newer terminal polls;
 - SQLite migration, execution deduplication, backup validation, and writable-directory assumptions;
 - minimum-tick rounding and stop reference prices;
@@ -96,7 +96,7 @@ When behavior changes:
 
 The public-repository documentation set:
 
-- keeps the application and package version at v3.1.0 for documentation-only revisions within this release;
+- keeps the application and package version at v3.1.1 for documentation-only revisions within this release;
 - keeps current operational material in `docs/` and superseded release notes in `docs/legacy/`;
 - treats SQLite files, backups, audit bundles, reports, captures, screenshots, and broker/account data as private unless deliberately sanitized;
 - uses the unmodified PolyForm Noncommercial License 1.0.0 text in the repository root;
