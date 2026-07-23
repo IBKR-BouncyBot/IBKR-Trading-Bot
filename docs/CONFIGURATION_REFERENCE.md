@@ -1,6 +1,6 @@
 # Configuration reference
 
-This document describes the persisted connection and strategy settings in v3.1.0. Values shown as defaults are the dataclass defaults used for a new configuration. Saved SQLite settings override them after the first run.
+This document describes the persisted connection and strategy settings in v3.1.1. Values shown as defaults are the dataclass defaults used for a new configuration. Saved SQLite settings override them after the first run.
 
 ## Connection settings
 
@@ -129,7 +129,7 @@ The reinvestment calculation uses completed cycles stored by this application, n
 | Setting | Default | Meaning |
 |---|---:|---|
 | Block delayed data in live mode | on | Blocks a live BUY when the effective data type is not live. |
-| Run IBKR what-if check before BUY | on | Performs a margin/account preflight without transmitting the order. |
+| Run IBKR what-if check before BUY | on | Uses IBKR's dedicated what-if path; missing/error state or absent finite margin/equity output blocks the live BUY. |
 | Enable stale-data guard | on | Requires current selected price, bid/ask, and RTH status. |
 | Maximum selected-price age | `3.0 s` | Maximum accepted age for the confirmed strategy price. |
 | Maximum bid/ask age | `3.0 s` | Maximum accepted age for bid/ask fields. |

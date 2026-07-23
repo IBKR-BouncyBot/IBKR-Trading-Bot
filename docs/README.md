@@ -1,6 +1,6 @@
 # Documentation index
 
-The files in this directory describe the current v3.1.0 behavior unless explicitly marked otherwise. The root of `docs/` is intentionally limited to current operating, design, recovery, and verification material. Superseded release notes are stored under [`legacy/`](legacy/README.md).
+The files in this directory describe the current v3.1.1 behavior unless explicitly marked otherwise. The root of `docs/` is intentionally limited to current operating, design, recovery, and verification material. Superseded release notes are stored under [`legacy/`](legacy/README.md).
 
 When documents disagree, use this source-of-truth order:
 
@@ -48,7 +48,7 @@ When documents disagree, use this source-of-truth order:
 
 ## Current release note
 
-[`V3_1_0_CLOSE_BEFORE_RTH_LIQUIDATION.md`](V3_1_0_CLOSE_BEFORE_RTH_LIQUIDATION.md) records the optional Stage-4 cancel-confirm-market liquidation policy, its RTH timing, cancellation and partial-fill handling, failure behavior, recovery boundaries, and verification scope.
+[`V3_1_1_IBKR_ORDER_VALIDATION.md`](V3_1_1_IBKR_ORDER_VALIDATION.md) records market-rule order-price normalization, strict what-if validation, broker rejection diagnostics, the no-fill rejection circuit breaker, compatibility, and verification scope.
 
 ## Archived documentation
 

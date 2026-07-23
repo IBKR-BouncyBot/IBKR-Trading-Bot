@@ -62,9 +62,20 @@ A quote can legitimately remain numerically unchanged while fresh events continu
 
 ### IBKR what-if preflight
 
-Enabled by default. Before a BUY, the adapter asks IBKR to evaluate the order without transmitting it. A rejection or failed/uncertain response blocks the actual BUY.
+Enabled by default. Before a BUY, the adapter uses IBKR's dedicated what-if request with `whatIf=True` and `transmit=True`. The what-if flag prevents a normal live transmission while satisfying the API validation requirement.
 
-What-if success is not an execution guarantee. Buying power, prices, account state, and broker controls can change between preflight and submission.
+The check fails closed when IBKR returns no order state, a validation/rejection terminal status, rejection text, only unset floating-point sentinels, or no usable margin/equity impact. Numeric zero changes are valid and remain visible. A failed or uncertain response blocks the actual BUY.
+
+What-if success is not an execution guarantee. Buying power, prices, account state, market-rule data, and broker controls can change between preflight and submission.
+
+
+### Market-rule price validation
+
+IBKR contract `minTick` can be the smallest increment seen anywhere for a contract rather than the valid increment for the selected route and current price. When a contract advertises `marketRuleIds`, BouncyBot maps the selected exchange to its rule, requests the rule's price bands, and applies the increment for the proposed order price. BUY prices round upward and SELL prices round downward. If an advertised rule cannot be resolved, the order is blocked before transmission.
+
+### Rejection circuit breaker
+
+An unfilled BUY that becomes `Inactive` or `Rejected`, or that carries a substantive terminal broker rejection, stops the cycle in `ERROR` for manual review. This prevents a structural validation failure such as an invalid price from generating repeated fresh entry attempts. Ordinary confirmed cancellations remain recoverable and reset Stage 2 to Stage 1; IBKR code 202 alone is not treated as a rejection.
 
 ### ATR warmup
 

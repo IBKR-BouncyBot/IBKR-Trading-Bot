@@ -54,7 +54,8 @@ Depending on stage and availability, recovery examines:
 - current account/contract identity;
 - local API socket state and upstream IBKR system-message state;
 - market-data subscription/update identity and post-recovery freshness;
-- local recovery flags and requested stop/market-close state.
+- local recovery flags and requested stop/market-close state;
+- retained app-owned IBKR order errors, including code, message, order identity, and advanced rejection details when supplied.
 
 The account-wide position can be shown as a broker fact, but it is not the entry blocker or authoritative app-owned quantity.
 
@@ -72,7 +73,10 @@ Recovery may:
 - import one or more missing BUY executions;
 - cancel a remaining unfilled quantity after a positive fill;
 - advance to post-BUY management using the recorded fill;
+- stop in `ERROR` when an unfilled order is `Inactive`/`Rejected` or carries a substantive broker validation error;
 - require review when multiple/conflicting BUY orders or unidentified facts exist.
+
+A broker rejection is not converted into a fresh entry setup. The rejected order reference and broker identifiers remain attached to the stopped cycle so the operator can reconcile the exact request. A normal confirmed cancellation without a substantive rejection remains recoverable and can reset Stage 2 to Stage 1.
 
 ### Post-BUY/protective stage
 

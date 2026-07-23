@@ -1,6 +1,6 @@
 # Deterministic offline behavior tests
 
-This document describes the current non-GUI, non-Windows, non-network test layer in v3.1.0. It covers strategy behavior, controller state transitions, broker-event handling, persistence and recovery, shutdown checkpoints, GUI contracts, and bounded performance behavior.
+This document describes the current non-GUI, non-Windows, non-network test layer in v3.1.1. It covers strategy behavior, controller state transitions, broker-event handling, persistence and recovery, shutdown checkpoints, GUI contracts, and bounded performance behavior.
 
 The suite deliberately avoids:
 
@@ -15,6 +15,8 @@ The tests use temporary SQLite databases, deterministic clocks and prices, proto
 ## Test layers
 
 ### Broker callback replay and permutation
+
+v3.1.1 adds protocol-shaped coverage for app-owned order rejection callbacks, including errors received before and after local trade registration, advanced rejection details, manual-order exclusion, expiration and capacity bounds, unrelated request-error exclusion, controller audit persistence, and terminal no-fill behavior.
 
 `tests/test_broker_event_replay_permutations.py` replays equivalent order histories with callbacks in different orders. It covers open-order, order-status, execution, and commission events; duplicate execution identifiers; repeated terminal polls; persisted raw events; and idempotent replay.
 
@@ -129,12 +131,12 @@ The complete Windows launcher runs the deterministic layers in this order:
 
 The Unix `scripts/run_tests.sh` helper still separates non-soak coverage from the soak subset to keep that development-host command practical.
 
-The current v3.1.0 validation inventory is:
+The current v3.1.1 validation inventory is:
 
-- 856 non-soak tests: 855 expected passes and 1 strict expected failure documenting the Master Client/shared-prefix limitation;
+- 888 non-soak tests: 887 expected passes and 1 strict expected failure documenting the Master Client/shared-prefix limitation;
 - 5 bounded soak tests;
-- 848/848 effective executable application callables entered;
-- 77.1% measured combined statement/branch coverage against the 75% minimum;
+- 876/876 effective executable application callables entered;
+- 77.3% measured combined statement/branch coverage against the 75% minimum;
 - 6/6 safety mutants killed;
 - 58 validated CSV scenario contracts across 54 price-path files.
 

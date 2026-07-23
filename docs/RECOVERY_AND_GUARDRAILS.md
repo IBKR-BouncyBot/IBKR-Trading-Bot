@@ -38,11 +38,19 @@ A new BUY is blocked when required facts are missing, stale, inconsistent, or ex
 - current session window;
 - configured limits, including the fixed user-saved Maximum spread % (live bid/ask never rewrites the threshold);
 - local unsold app quantity;
-- what-if acceptance;
+- strict what-if acceptance based on a real non-error `OrderState` and finite margin/equity output;
+- route-specific market-rule price normalization when IBKR advertises a rule;
 - minimum-tick-valid payload;
 - recovery confidence.
 
 The complete GUI blocker list is informational; the order path uses fail-closed priority and stops at the first submission blocker.
+
+## Broker rejection invariants
+
+- App-owned order errors are retained and tied to the app `OrderRef`; manual orders are not attributed to BouncyBot.
+- A short bounded cache may hold a definitive order error that arrives before the new `Trade` object, but unrelated contract/market-data request errors are not cached as order ownership facts.
+- An unfilled BUY that becomes `Inactive` or `Rejected`, or has a substantive terminal rejection, moves to `ERROR` and is not automatically retried.
+- `Cancelled`/`ApiCancelled` without a substantive rejection remains an ordinary Stage-2 reset. Code 202 alone does not activate the circuit breaker.
 
 ## Exit policy
 

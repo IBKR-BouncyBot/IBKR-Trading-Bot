@@ -101,6 +101,10 @@ Validate:
 - ATR calculation/adaptation/readiness, including continued RTH collection while adaptation is off;
 - validation and serialization.
 
+### v3.1.1 broker-boundary regressions
+
+The focused release suite verifies market-rule exchange mapping, positional rule IDs, price-band boundaries, exact BUY-up/SELL-down normalization, failure when advertised rules cannot be loaded, strict what-if behavior, callback-race association, manual-order isolation, audit persistence, and rejection-versus-cancellation state transitions. The tests reproduce the structural IREN invalid-price failure without connecting to IBKR.
+
 ### Controller tests
 
 Use test adapters/headless signals to validate:
@@ -149,7 +153,7 @@ The callable gate proves entry, not exhaustive path coverage. Assertions, branch
 
 The non-GUI offline expansion adds broker callback permutations, generated controller invariants, numerical/payload properties, recovery decision matrices, differential simulation, multi-instance isolation, subprocess crash/restart tests, schema migration and restore fixtures, storage fault injection, Gateway outage sequences, bounded soak tests, and a six-mutant safety gate. The complete scope and exclusions are in [`OFFLINE_BEHAVIOR_TESTS.md`](OFFLINE_BEHAVIOR_TESTS.md).
 
-The current v3.1.0 inventory contains 856 non-soak tests (855 expected passes and one strict expected failure documenting the shared-prefix Master Client limitation), five bounded soak tests, and 58 validated CSV scenario contracts across 54 price-path files. The complete collection contains 861 pytest cases. The current repository gate reports 77.1% combined statement/branch coverage, entry into all 848/848 effective executable application callables, 6/6 safety mutants killed, and all 58 simulation contracts passing.
+The current v3.1.1 inventory contains 888 non-soak tests (887 expected passes and one strict expected failure documenting the shared-prefix Master Client limitation), five bounded soak tests, and 58 validated CSV scenario contracts across 54 price-path files. The complete collection contains 893 pytest cases. The current repository gate reports 77.3% combined statement/branch coverage, entry into all 876/876 effective executable application callables, 6/6 safety mutants killed, and all 58 simulation contracts passing.
 
 ### Build-script tests
 

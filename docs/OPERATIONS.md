@@ -1,6 +1,6 @@
 # Operations guide
 
-This guide describes the normal operator workflow for v3.1.0. It does not replace the broker’s API documentation or account controls.
+This guide describes the normal operator workflow for v3.1.1. It does not replace the broker’s API documentation or account controls.
 
 ## Before starting
 
@@ -26,7 +26,9 @@ A single-instance lock is created beside the application. If the application rep
 5. Enter the symbol and click **2. Search/select ticker**.
 6. Select the intended API contract. Use the primary exchange or conId to resolve ambiguity.
 7. Click **3. Confirm ticker + get price**.
-8. Review the local/upstream connection state, price source, data type, bid/ask, actual update age/sequence, minimum tick, and RTH status. A populated cached quote is not a fresh update.
+8. Review the local/upstream connection state, price source, data type, bid/ask, actual update age/sequence, contract minimum tick, and RTH status. The route-specific market rule is resolved at order-preflight time and recorded in the order/audit diagnostics. A populated cached quote is not a fresh update.
+
+Contract `minTick` is not treated as universally valid when IBKR advertises a market rule. Before a priced order is transmitted, BouncyBot loads the rule for the selected route and normalizes the proposed price to the applicable band. If that broker metadata cannot be resolved, the order is blocked rather than guessed.
 
 Do not infer contract identity from the symbol alone when multiple API matches exist.
 
@@ -70,6 +72,14 @@ Simple, Advanced, and Debug modes all show **Recovery / audit log** across the f
 Normal configured pauses, such as ATR warmup, closed RTH, session windows, stale data, or a hard-risk limit, are caution states. They do not mean the local database and broker disagree. Reconciliation therefore disables Reconcile-and-resume, Stop, Cancel, Sell, Leave-working, and Mark-handled actions during an ordinary guard/strategy wait; read-only **Refresh from IBKR/TWS** and audit export remain available.
 
 Red is reserved for actual or suspected broker/local inconsistency, an uncertain recovery state, or a condition requiring operator review.
+
+## Broker validation failures
+
+If an app-owned BUY becomes `Inactive` or `Rejected` without a fill, BouncyBot stops the cycle in `ERROR` for manual review. It does not automatically return to Stage 1 and resubmit the same structure. Open the Live Strategy event list or Cycle Audit to inspect the retained IBKR error code, message, order reference, and advanced rejection details when provided.
+
+A normal confirmed cancellation is different: `Cancelled` or `ApiCancelled` without a substantive rejection still resets an unfilled Stage-2 setup to Stage 1. IBKR code 202 by itself is treated as the ordinary cancellation notification.
+
+When the optional what-if check is enabled, missing state, validation/rejection status, rejection warnings, unset values, or absent margin/equity output block the BUY. A successful result is only a preflight and does not guarantee that the later live order will be accepted or filled.
 
 ## External positions and manual activity
 

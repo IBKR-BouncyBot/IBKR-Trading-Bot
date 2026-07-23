@@ -1,6 +1,6 @@
 # Limitations and non-goals
 
-This document states the boundaries of v3.1.0. Treat each limitation as an operational constraint, not as a future guarantee.
+This document states the boundaries of v3.1.1. Treat each limitation as an operational constraint, not as a future guarantee.
 
 ## Strategy scope
 
@@ -43,6 +43,14 @@ Use separate accounts or deliberate operating procedures when strict position se
 - ATR uses prices observed while this application is running and RTH is open. Observation/bar collection continues when adaptation is disabled, but the buffer is not persisted. It resets on restart, is not exchange-native historical ATR, and does not warm up while the application is closed.
 - The recent-volatility filter uses the application’s observed sample range, not a broker historical-volatility product.
 - Normal RTH and session-timing guards use date-specific IBKR contract `liquidHours`, including early closes. The fallback used when IBKR contract hours are unavailable is designed for US equities and may not represent holidays, halts, or special sessions perfectly.
+
+## Broker validation and order-price limits
+
+- IBKR market rules are broker-provided session facts. BouncyBot can normalize to the rule returned for the selected route and proposed price, but it cannot guarantee that a later order will be accepted after market, exchange, account, or broker-control changes.
+- When a market rule is advertised but unavailable or ambiguous, the application blocks submission rather than guessing. This can prevent an otherwise acceptable order until the broker metadata becomes available.
+- The what-if request is a broker preflight, not a reservation of buying power, price, route, or permission. A successful result does not guarantee live acceptance or execution.
+- Error callbacks can arrive before, during, or after order-status callbacks. The adapter retains a bounded short-lived race cache, but a process/network failure can still prevent some diagnostics from reaching local SQLite. Gateway/TWS logs remain an important external source.
+- `Inactive` is treated as a structural no-fill failure for an app-owned BUY and stops the cycle. An unusual broker workflow that uses `Inactive` for a benign condition therefore requires manual review rather than automatic continuation.
 
 ## Availability and recovery limits
 

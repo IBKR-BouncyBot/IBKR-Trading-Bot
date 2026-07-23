@@ -153,7 +153,7 @@ Raw broker/recovery event records.
 - `order_ref`, `order_id`, `perm_id`, `execution_id`;
 - required `raw_json`.
 
-This table preserves broker facts used for diagnostics. It is indexed by time, order reference, and execution ID.
+This table preserves broker facts used for diagnostics. In v3.1.1, app-owned `ORDER_ERROR` rows retain IBKR error code/message, request/order identity, app `OrderRef`, ticker/currency, and advanced rejection JSON when supplied. The corresponding controller interpretation is also written to `decision_events` as `BROKER_ORDER_ERROR`. The table is indexed by time, order reference, and execution ID.
 
 ## Foreign-key behavior
 
@@ -172,6 +172,8 @@ Normal application operation does not delete completed cycle history as part of 
 4. preserve unknown/newer row data when deserializing by using known dataclass fields and defaults.
 
 The migration path does not drop tables or rewrite trading history.
+
+v3.1.1 adds no tables or columns. Existing v3.1.0 and v3.0.19 databases open without a schema-format conversion; the new diagnostics use the existing JSON audit fields.
 
 ## Backups
 

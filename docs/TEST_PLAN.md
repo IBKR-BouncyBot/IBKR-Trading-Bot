@@ -36,7 +36,8 @@ For Gateway paper/live and TWS paper/live as available:
 
 - Search a unique US stock symbol.
 - Search an ambiguous symbol and select the intended primary exchange/conId.
-- Confirm the price and inspect bid, ask, last/market source, previous close, minimum tick, data type, and RTH status.
+- Confirm the price and inspect bid, ask, last/market source, previous close, contract minimum tick, data type, and RTH status. At order preflight, inspect the selected route-specific market rule and increment in the order/audit diagnostics.
+- For a contract whose `minTick` is smaller than the valid increment at the current price, verify the submitted stop follows the applicable `reqMarketRule` band rather than the smallest contract-level tick.
 - Disconnect/reconnect and verify actual-update timestamps/counters resume with a fresh subscription; cached fields alone must not clear data-pending state.
 
 ## 5. Workflow lock
@@ -93,7 +94,9 @@ In paper mode with controlled settings:
 - zero BUY trail: verify the drop condition produces a market BUY;
 - slippage buffer: verify quantity is lower/equal compared with unbuffered sizing while the transmitted order type is unchanged;
 - partial fill: verify the remainder cancellation request and transition using the filled quantity;
-- rejection: verify the application does not remain in a fictional active-order stage.
+- what-if: verify the request uses the broker what-if path with `whatIf=True` and `transmit=True`, and that missing/invalid state or absent finite margin output blocks the live BUY;
+- invalid price/rejection: verify the retained IBKR code and message appear in Live Strategy/Cycle Audit, the cycle moves to `ERROR`, and no automatic fresh-cycle retry occurs;
+- ordinary cancellation: verify `Cancelled`/`ApiCancelled` without a substantive rejection still resets Stage 2 to Stage 1.
 
 ## 9. External and application-owned positions
 
@@ -195,6 +198,7 @@ In paper mode, induce or simulate a Gateway/TWS upstream outage while keeping th
 ## 17. Full validation and build
 
 - Run `run_all_tests.bat`; require compilation, pytest with `ResourceWarning` failures enabled, at least 75% combined statement/branch coverage, entry coverage for every effective executable application callable, all CSV simulations, Ruff, and Pyright to pass.
+- In a paper-account Gateway/TWS session, exercise a contract with a price-dependent market rule and confirm the normalized stop is accepted; verify a deliberately rejected app order records the exact broker reason and does not retry.
 - Inspect `run_tests_coverage.log` and `run_tests_callable_coverage.log`; do not rely only on the final pass line.
 - Preserve `coverage.json` or `coverage.xml` as a release/CI artifact when traceable machine-readable coverage evidence is required.
 - Run `build_windows.bat`; verify the final output is not falsely red on success.

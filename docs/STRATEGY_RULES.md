@@ -1,6 +1,6 @@
 # Strategy rules
 
-This document is the current functional description of the five-stage strategy in v3.1.0. It describes application decisions; IBKR remains authoritative for accepted order state and execution.
+This document is the current functional description of the five-stage strategy in v3.1.1. It describes application decisions; IBKR remains authoritative for accepted order state and execution.
 
 ## Scope and invariants
 
@@ -52,7 +52,7 @@ At the drop condition:
 projected BUY stop = current price × (1 + buy_rebound_trail_pct / 100)
 ```
 
-The controller raises/rounds the broker stop as needed so it remains valid relative to visible ask/last fields and the contract’s minimum price increment.
+The controller raises the broker stop as needed so it remains valid relative to visible ask/last fields. It then normalizes the stop upward to the increment for the selected IBKR route and proposed price. When the contract advertises a market rule, its price bands are authoritative; contract `minTick` is only the fallback when no rule is advertised. An unresolved advertised rule blocks the order.
 
 ### Quantity
 
@@ -77,6 +77,8 @@ A quantity below one blocks order submission.
 - `buy_rebound_trail_pct == 0`: submit a market BUY immediately after the initial-drop condition.
 
 After any positive BUY fill, the controller attempts to cancel the unfilled remainder. The cycle proceeds with the recorded filled quantity and actual average fill.
+
+An unfilled BUY that becomes `Inactive` or `Rejected`, or reaches a terminal state with a substantive broker rejection, stops the cycle in `ERROR` for manual review. It is not automatically retried. An ordinary confirmed cancellation without a substantive rejection still resets Stage 2 to Stage 1.
 
 ## Stage 3 — `WAIT_RISE_TRIGGER`
 
@@ -121,7 +123,7 @@ The controller does not submit the final exit until the selected price reaches t
 - `sell_trailing_stop_pct > 0`: submit a native SELL `TRAIL` order for the unsold app-owned quantity.
 - `sell_trailing_stop_pct == 0`: submit a market SELL when the Stage-3 minimum-profit condition is met.
 
-The initial native SELL stop is calculated below the current visible SELL reference, rounded down to the minimum tick, and checked against the required minimum-profit stop.
+The initial native SELL stop is calculated below the current visible SELL reference, rounded down to the applicable route-specific IBKR market-rule increment (or contract minimum tick when no rule is advertised), and checked against the required minimum-profit stop.
 
 After submission, IBKR controls trailing behavior. The application polls and records status/fills.
 
