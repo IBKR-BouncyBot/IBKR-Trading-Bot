@@ -1,6 +1,6 @@
 # Operations guide
 
-This guide describes the normal operator workflow for v3.1.1. It does not replace the broker’s API documentation or account controls.
+This guide describes the normal operator workflow for v3.1.2. It does not replace the broker’s API documentation or account controls.
 
 ## Before starting
 
@@ -91,9 +91,18 @@ Never create a manual order with an `OrderRef` beginning with `IBKRBOT|`.
 
 ## Monitoring optional pre-close liquidation
 
-When **Cancel SELL trail and liquidate before close** is enabled for the active cycle, configure it before Stage 4 begins. The Stage-4 controls are locked once the native final SELL trail is working. The default cutoff is five minutes before the contract-specific RTH close.
+When **Cancel SELL trail and liquidate before close** is enabled for the active cycle, configure it before the position reaches the cutoff. The controls are locked once the Stage-4 final SELL trail is working. The default cutoff is five minutes before the contract-specific RTH close.
 
-At the cutoff, monitor the audit/status messages for this sequence:
+In Stage 3, BouncyBot acts only when a fresh selected current price is strictly above the weighted average BUY price. Commissions are ignored for that eligibility comparison. If no protective SELL is working, the app submits one RTH-only `DAY` market SELL for the app-owned unsold quantity. If a protective SELL is working, the expected sequence is:
+
+1. Stage-3 profitable close workflow started;
+2. protective SELL cancellation requested;
+3. cancellation or another terminal status confirmed, including any fills during the race;
+4. selected price checked again against average BUY;
+5. one RTH-only `DAY` market SELL submitted for the remaining app-owned quantity;
+6. cumulative SELL fills complete the cycle.
+
+In Stage 4, the expected sequence remains:
 
 1. close-before-RTH workflow started;
 2. final SELL-trail cancellation requested;
@@ -101,9 +110,9 @@ At the cutoff, monitor the audit/status messages for this sequence:
 4. one RTH-only `DAY` market SELL submitted for the remaining app-owned quantity;
 5. cumulative SELL fills complete the cycle.
 
-Do not submit a second SELL manually while this sequence is active. The app refuses its own Stop-screen market-close request during the workflow, but independently submitted TWS orders remain outside app ownership controls. If the cycle enters `ERROR`, inspect current IBKR orders, executions, and the account position before taking manual action.
+Do not submit a second SELL manually while either sequence is active. The app refuses its own Stop-screen market-close request during the workflow, but independently submitted TWS orders remain outside app ownership controls. If the cycle enters `ERROR`, inspect current IBKR orders, executions, and the account position before taking manual action.
 
-The cutoff must leave enough time for broker cancellation acknowledgement and market execution. A one-minute setting is valid but materially increases the chance that the workflow cannot finish before the close.
+The Stage-3 quote comparison does not guarantee a profitable fill. A market order can execute below the checked quote or average BUY price. The cutoff must leave enough time for broker cancellation acknowledgement and market execution. A one-minute setting is valid but materially increases the chance that the workflow cannot finish before the close.
 
 ## Stop actions
 

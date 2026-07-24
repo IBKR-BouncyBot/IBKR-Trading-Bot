@@ -5384,7 +5384,7 @@ class CycleAuditDialog(QDialog):
             lines.extend([
                 "BUILT-IN EXAMPLE CYCLE",
                 "=" * 80,
-                "This is synthetic v3.1.1 paper-trading example data. It is not an actual market record, is not stored in SQLite, and cannot affect trading or risk totals.",
+                "This is synthetic v3.1.2 paper-trading example data. It is not an actual market record, is not stored in SQLite, and cannot affect trading or risk totals.",
                 "The scenario models a liquid U.S. stock pullback, a multi-execution trailing BUY fill, a temporary protective SELL, and a modest trailing-stop profit exit.",
                 "",
             ])
@@ -5492,7 +5492,7 @@ class MainWindow(QMainWindow):
         self._stop_dialog_exit_requested = False
         self._system_shutdown_in_progress = False
         self._last_system_shutdown_session_key = ""
-        self.setWindowTitle("BouncyBot - IBKR Portable Trading Bot v3.1.1")
+        self.setWindowTitle("BouncyBot - IBKR Portable Trading Bot v3.1.2")
         self.resize(1440, 950)
 
         self._autosave_timer = QTimer(self)
@@ -7257,12 +7257,12 @@ class MainWindow(QMainWindow):
             (
                 self.cancel_sell_and_liquidate_before_close_check,
                 self.cancel_sell_and_liquidate_before_close_info,
-                "Default OFF. Stage 4 only. At the configured time before the contract's RTH close, the app requests cancellation of the final SELL trailing-stop, waits for IBKR to confirm that order is terminal, then submits one DAY market SELL for only the remaining app-owned shares. The market fill can be below the trailing stop and can realize a loss. No outside-RTH replacement is submitted.",
+                "Default OFF. In Stage 3, at the configured time before the contract's RTH close, the app submits one DAY market SELL only when the selected current price is strictly above the average BUY fill price; commissions are ignored for that comparison. If a protective SELL is working, it is cancelled and confirmed terminal first. In Stage 4, the app cancels the final SELL trailing-stop, waits for a terminal broker status, and then market-sells only the remaining app-owned shares. A market fill can be below the checked price or trailing stop and can still realize a loss. No outside-RTH replacement is submitted.",
             ),
             (
                 self.liquidate_before_close_spin,
                 self.liquidate_before_close_info,
-                f"Start the Stage-4 cancel-confirm-market workflow {self.liquidate_before_close_spin.value()} minutes before the contract's RTH close. Choose enough time for IBKR to confirm cancellation and fill the replacement before the session ends. Default 5 minutes; range 1-240 minutes.",
+                f"Start the close-before-RTH workflow {self.liquidate_before_close_spin.value()} minutes before the contract's RTH close. Stage 3 requires the selected current price to be strictly above the average BUY price. Stage 4 uses cancel-confirm-replace for the final SELL trail. Choose enough time for IBKR to confirm any cancellation and fill the market order before the session ends. Default 5 minutes; range 1-240 minutes.",
             ),
         ]
         for widget, info, text in tooltips:

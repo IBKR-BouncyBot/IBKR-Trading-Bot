@@ -8,7 +8,7 @@ TWS or IB Gateway after startup and reconnect.
 Design invariants used throughout this file:
 
 * broker side effects occur only in the worker path;
-* cancellation and recovery target orders carrying this app's OrderRef prefix;
+* cancellation and recovery require exact OrderRefs persisted by this installation;
 * a stored active cycle requires explicit operator Start/resume after launch;
 * external account positions do not replace the app-owned fill ledger;
 * live-cycle edits are applied only when safe for the current stage;
@@ -190,6 +190,7 @@ class TradingController:
             "errors": {},
         }
         self._executions_recorded: set[str] = set()
+        self._pending_commissions_by_execution_id: dict[str, dict[str, Any]] = {}
         self._last_price_warning_at: dict[str, float] = {}
         self.price_snapshot: Optional[dict[str, Any]] = None
         self._last_price_poll_monotonic = 0.0
@@ -1852,7 +1853,7 @@ class TradingController:
             self.emit_snapshot(force=True)
             return
         try:
-            open_orders = self.adapter.open_app_orders()
+            open_orders = self._local_open_app_orders(self.adapter.open_app_orders())
             self._capture_recovery_probe(self.active_cycle, open_orders)
             self._recovery_required = bool(self.active_cycle is None and open_orders)
             self.status = "Broker state refreshed for Recovery screen."
@@ -1908,7 +1909,7 @@ class TradingController:
             self.emit_snapshot(force=True)
             return
         try:
-            open_orders = self.adapter.open_app_orders()
+            open_orders = self._local_open_app_orders(self.adapter.open_app_orders())
             self._capture_recovery_probe(None, open_orders)
         except Exception as exc:
             self.status = f"Could not load app-owned open orders for cancellation: {exc}"
@@ -1935,7 +1936,7 @@ class TradingController:
                 self.storage.add_event("ERROR", f"Recovery cancel failed for orphan app-owned order {ref}: {exc}", raw={"order_ref": ref, "order_id": order_id})
         self.status = f"Cancel requested for {cancelled} app-owned order(s) visible in recovery." if cancelled else "No cancellable app-owned order was found."
         try:
-            refreshed = self.adapter.open_app_orders()
+            refreshed = self._local_open_app_orders(self.adapter.open_app_orders())
             self._capture_recovery_probe(None, refreshed)
             self._recovery_required = bool(refreshed)
             if refreshed:
@@ -1981,6 +1982,15 @@ class TradingController:
         self.status = "Recovery marked manually handled; active cycle stopped in SQLite. No broker order was sent."
         self.emit_snapshot(force=True)
 
+    def _local_open_app_orders(self, orders: list[PolledOrderState]) -> list[PolledOrderState]:
+        """Filter a shared Master feed to exact OrderRefs known by this copy."""
+        known = self.storage.known_order_refs()
+        return [
+            order
+            for order in list(orders or [])
+            if str(getattr(order, "order_ref", "") or "") in known
+        ]
+
     def _recover_after_connect(self) -> None:
         """Reconcile SQLite state with app-owned TWS orders and executions.
 
@@ -1993,7 +2003,7 @@ class TradingController:
         """
         self._recovery_required = False
         self.active_cycle = self.storage.get_latest_active_cycle()
-        open_orders = self.adapter.open_app_orders()
+        open_orders = self._local_open_app_orders(self.adapter.open_app_orders())
         self._capture_recovery_probe(self.active_cycle, open_orders)
         open_refs = {o.order_ref for o in open_orders}
         if self.active_cycle is None:
@@ -2010,11 +2020,20 @@ class TradingController:
             else:
                 polled = self.adapter.poll_order(cycle.buy_order_ref or "") if cycle.buy_order_ref else None
                 if polled and polled.filled > 0:
-                    cycle, actions = StrategyEngine.on_buy_fill(cycle, polled.filled, polled.avg_fill_price, polled.status, polled.commission)
-                    self.active_cycle = cycle
-                    self.storage.upsert_cycle(cycle)
-                    self._execute_actions(actions, cycle)
-                    self._log("INFO", f"Recovered filled BUY order for {cycle.ticker}; resumed minimum-profit stage.", cycle)
+                    self._handle_buy_order_poll(cycle, polled)
+                    recovered = self.active_cycle or cycle
+                    if recovered.stage == Stage.BUY_TRAIL_ACTIVE:
+                        self._log(
+                            "INFO",
+                            f"Recovered partial BUY fill for {cycle.ticker}; waiting for the original BUY order to become terminal.",
+                            recovered,
+                        )
+                    else:
+                        self._log(
+                            "INFO",
+                            f"Recovered settled BUY order for {cycle.ticker}; resumed minimum-profit stage.",
+                            recovered,
+                        )
                 elif self._recover_buy_from_executions(cycle) is not None:
                     pass
                 else:
@@ -2337,8 +2356,8 @@ class TradingController:
             return False
         expected_ref, expected_order_id, expected_perm_id = self._order_identity_for_side(cycle, side)
         ref = str(execution.get("order_ref") or execution.get("orderRef") or "")
-        if expected_ref and ref == expected_ref:
-            return True
+        if ref:
+            return bool(expected_ref and ref == expected_ref)
         try:
             perm_id = int(execution.get("perm_id") or execution.get("permId") or 0)
         except Exception:
@@ -2377,20 +2396,22 @@ class TradingController:
     def _record_recovered_executions(self, cycle: CycleState, rows: list[dict[str, Any]], side: str) -> None:
         for row in rows:
             execution_id = str(row.get("execution_id") or row.get("execId") or "")
-            if execution_id and self.storage.execution_exists(execution_id):
-                continue
             shares = float(row.get("shares") or 0.0)
             price = float(row.get("price") or row.get("avg_price") or row.get("avgPrice") or 0.0)
             if shares <= 0 or price <= 0:
                 continue
-            self.storage.add_execution(
+            self.storage.upsert_execution(
                 cycle=cycle,
                 ticker=cycle.ticker,
                 side=side,
                 shares=shares,
                 price=price,
                 avg_price=float(row.get("avg_price") or row.get("avgPrice") or price),
-                commission=float(row.get("commission") or 0.0),
+                commission=(
+                    float(row.get("commission"))
+                    if row.get("commission") not in (None, "")
+                    else None
+                ),
                 currency=str(row.get("currency") or cycle.currency),
                 order_ref=str(row.get("order_ref") or self._order_identity_for_side(cycle, side)[0] or ""),
                 order_id=int(row.get("order_id") or row.get("orderId") or 0) or None,
@@ -3027,7 +3048,7 @@ class TradingController:
             self._handle_connectivity_broker_event(event)
             order_ref = str(event.get("order_ref") or event.get("orderRef") or "") or None
             event_type = str(event.get("event_type") or event.get("type") or "BROKER_EVENT")
-            cycle = self._cycle_for_order_ref(order_ref) if order_ref else self.active_cycle
+            cycle = self._cycle_for_order_ref(order_ref)
             try:
                 self.storage.add_broker_event(
                     event_type=event_type,
@@ -3042,7 +3063,18 @@ class TradingController:
                 )
             except Exception as exc:
                 self._log("WARN", f"Could not persist broker callback event {event_type}: {exc}", cycle)
+            if event_type in {"EXEC_DETAILS", "COMMISSION_REPORT"}:
+                try:
+                    self._apply_execution_callback_event(event_type, event, cycle)
+                except Exception as exc:
+                    self._log("ERROR", f"Could not reconcile broker execution callback {event_type}: {exc}", cycle)
             if event_type == "ORDER_ERROR":
+                if cycle is None:
+                    # A shared Master API feed can expose another portable
+                    # installation's IBKRBOT-prefixed order.  Persist it only as
+                    # an unowned broker event; never mutate this instance's
+                    # status, decision stream, or active cycle.
+                    continue
                 code = self._optional_int(event.get("error_code") or event.get("errorCode"))
                 message = str(event.get("message") or event.get("error_string") or "IBKR rejected the order request.")
                 prefix = f"IBKR order error {code}" if code is not None else "IBKR order error"
@@ -3072,7 +3104,255 @@ class TradingController:
         cycle = self.active_cycle
         if cycle and order_ref in {cycle.buy_order_ref, cycle.sell_order_ref, cycle.protective_sell_order_ref}:
             return cycle
-        return self.storage.get_latest_active_cycle()
+        return self.storage.get_cycle_for_order_ref(order_ref)
+
+    @staticmethod
+    def _execution_role_for_order_ref(cycle: CycleState, order_ref: str) -> Optional[str]:
+        if order_ref and order_ref == cycle.buy_order_ref:
+            return "BUY"
+        if order_ref and order_ref == cycle.protective_sell_order_ref:
+            return "PROTECTIVE_SELL"
+        if order_ref and order_ref == cycle.sell_order_ref:
+            return "SELL"
+        return None
+
+    def _remember_pending_commission(self, execution_id: str, event: dict[str, Any]) -> None:
+        if not execution_id:
+            return
+        if len(self._pending_commissions_by_execution_id) >= 512:
+            oldest = next(iter(self._pending_commissions_by_execution_id), None)
+            if oldest is not None:
+                self._pending_commissions_by_execution_id.pop(oldest, None)
+        self._pending_commissions_by_execution_id[execution_id] = dict(event)
+
+    def _apply_execution_callback_event(
+        self,
+        event_type: str,
+        event: dict[str, Any],
+        cycle: Optional[CycleState],
+    ) -> None:
+        """Persist and apply execution/commission callbacks exactly once.
+
+        Ownership has already been resolved by exact OrderRef.  Foreign events
+        are deliberately retained only in ``broker_events`` with no cycle ID.
+        """
+        if cycle is None:
+            return
+        order_ref = str(event.get("order_ref") or event.get("orderRef") or "").strip()
+        role = self._execution_role_for_order_ref(cycle, order_ref)
+        if role is None:
+            return
+        event_ticker = str(event.get("ticker") or "").strip().upper()
+        if event_ticker and event_ticker != cycle.ticker.upper():
+            return
+        if event_type == "EXEC_DETAILS":
+            callback_side = str(event.get("side") or "").strip().upper()
+            if role == "BUY" and callback_side not in {"", "BUY", "BOT"}:
+                return
+            if role in {"SELL", "PROTECTIVE_SELL"} and callback_side not in {"", "SELL", "SLD"}:
+                return
+        execution_id = str(event.get("execution_id") or event.get("execId") or "").strip()
+        if not execution_id:
+            return
+
+        existing = self.storage.get_execution(execution_id)
+        buy_quantity_before = int(cycle.buy_filled_qty or 0) if role == "BUY" else 0
+        commission_value = event.get("commission")
+        try:
+            commission = float(commission_value) if commission_value not in (None, "") else None
+        except Exception:
+            commission = None
+
+        shares_value = event.get("shares")
+        price_value = event.get("price")
+        try:
+            shares = abs(float(shares_value or 0.0))
+            price = float(price_value or 0.0)
+        except Exception:
+            shares = 0.0
+            price = 0.0
+
+        if event_type == "COMMISSION_REPORT" and (existing is None or shares <= 0 or price <= 0):
+            if existing is None:
+                self._remember_pending_commission(execution_id, event)
+                return
+            shares = abs(float(existing.get("shares") or 0.0))
+            price = float(existing.get("price") or 0.0)
+
+        pending = self._pending_commissions_by_execution_id.pop(execution_id, None)
+        if pending is not None:
+            try:
+                pending_value = pending.get("commission")
+                pending_commission = float(pending_value) if pending_value not in (None, "") else None
+                # A commissionReport callback is authoritative.  An earlier or
+                # simultaneously materialized execDetails Fill may still expose
+                # the library's default 0.0 commission placeholder.
+                if pending_commission is not None:
+                    commission = pending_commission
+            except Exception:
+                pass
+
+        if existing is not None:
+            if shares <= 0:
+                shares = abs(float(existing.get("shares") or 0.0))
+            if price <= 0:
+                price = float(existing.get("price") or 0.0)
+        if shares <= 0 or price <= 0:
+            return
+
+        avg_price_value = event.get("avg_price") or event.get("avgPrice") or price
+        try:
+            avg_price = float(avg_price_value or price)
+        except Exception:
+            avg_price = price
+        executed_at = str(
+            event.get("executed_at")
+            or event.get("time")
+            or (existing or {}).get("executed_at")
+            or event.get("created_at")
+            or utc_now_iso()
+        )
+        raw = dict(event)
+        if pending is not None:
+            raw["pending_commission_callback"] = pending
+        self.storage.upsert_execution(
+            cycle=cycle,
+            ticker=cycle.ticker,
+            side=role,
+            shares=shares,
+            price=price,
+            avg_price=avg_price,
+            commission=commission,
+            currency=str(event.get("currency") or (existing or {}).get("currency") or cycle.currency),
+            order_ref=order_ref,
+            order_id=self._optional_int(event.get("order_id") or event.get("orderId")),
+            perm_id=self._optional_int(event.get("perm_id") or event.get("permId")),
+            execution_id=execution_id,
+            executed_at=executed_at,
+            raw=raw,
+        )
+        self.storage.rebalance_cumulative_execution_placeholder(
+            cycle=cycle,
+            side=role,
+            order_ref=order_ref,
+        )
+        self._reconcile_cycle_execution_ledger(cycle.id)
+        if event_type == "EXEC_DETAILS" and role == "BUY" and existing is None and buy_quantity_before <= 0:
+            updated_cycle = self.storage.get_cycle(cycle.id) or cycle
+            if int(updated_cycle.buy_filled_qty or 0) > 0:
+                self._start_trade_market_data_capture(
+                    "BUY_FILL",
+                    updated_cycle,
+                    extra={"source": "EXEC_DETAILS_CALLBACK", "execution": dict(event)},
+                )
+                try:
+                    self.storage.backup_database("after_buy_partial_fill")
+                except Exception:
+                    pass
+
+    def _reconcile_cycle_execution_ledger(self, cycle_id: str) -> None:
+        """Project the idempotent execution ledger back onto cycle totals.
+
+        Broker order-status polling can report a cumulative fill before every
+        individual execDetails callback has arrived.  Callback projection is
+        therefore monotonic: a partial ledger must never reduce a quantity or
+        replace a broker cumulative average with an incomplete subset.
+        """
+        cycle = self.storage.get_cycle(cycle_id)
+        if cycle is None:
+            return
+        original_buy_qty = int(cycle.buy_filled_qty or 0)
+        buy = self.storage.get_execution_totals(cycle.id, "BUY")
+        ledger_buy_qty = int(round(float(buy.get("shares", 0.0) or 0.0)))
+        buy_qty = max(original_buy_qty, ledger_buy_qty)
+        if ledger_buy_qty > 0:
+            if ledger_buy_qty >= original_buy_qty:
+                cycle.avg_buy_price = float(buy.get("avg_price", 0.0) or cycle.avg_buy_price or 0.0)
+            cycle.buy_filled_qty = buy_qty
+            cycle.buy_commission = max(
+                float(cycle.buy_commission or 0.0),
+                float(buy.get("commission", 0.0) or 0.0),
+            )
+            cycle.buy_filled_at = cycle.buy_filled_at or utc_now_iso()
+            cycle.rise_trigger_price = StrategyEngine.recalculate_rise_trigger_price(cycle)
+
+        follow_actions: list[StrategyAction] = []
+        if ledger_buy_qty > 0 and cycle.stage == Stage.BUY_TRAIL_ACTIVE:
+            cycle, follow_actions = StrategyEngine.on_buy_fill(
+                cycle,
+                buy_qty,
+                float(cycle.avg_buy_price or buy.get("avg_price", 0.0) or 0.0),
+                str(cycle.buy_status or "Submitted"),
+                float(cycle.buy_commission or 0.0),
+            )
+
+        protective = self.storage.get_execution_totals(cycle.id, "PROTECTIVE_SELL")
+        ledger_protective_qty = int(round(float(protective.get("shares", 0.0) or 0.0)))
+        current_protective_qty = int(cycle.protective_sell_filled_qty or 0)
+        protective_qty = max(current_protective_qty, ledger_protective_qty)
+        protective_avg = float(cycle.protective_avg_sell_price or 0.0)
+        if ledger_protective_qty > 0:
+            if ledger_protective_qty >= current_protective_qty:
+                protective_avg = float(protective.get("avg_price", 0.0) or protective_avg)
+            cycle.protective_sell_filled_qty = protective_qty
+            cycle.protective_avg_sell_price = protective_avg
+            cycle.protective_sell_commission = max(
+                float(cycle.protective_sell_commission or 0.0),
+                float(protective.get("commission", 0.0) or 0.0),
+            )
+            cycle.protective_sell_filled_at = cycle.protective_sell_filled_at or utc_now_iso()
+
+        normal_sell = self.storage.get_execution_totals(cycle.id, "SELL")
+        ledger_normal_sell_qty = int(round(float(normal_sell.get("shares", 0.0) or 0.0)))
+        normal_sell_avg = float(normal_sell.get("avg_price", 0.0) or 0.0)
+        normal_sell_commission = float(normal_sell.get("commission", 0.0) or 0.0)
+        ledger_total_sell_qty = ledger_normal_sell_qty + ledger_protective_qty
+        current_total_sell_qty = int(cycle.sell_filled_qty or 0)
+        total_sell_qty = max(current_total_sell_qty, ledger_total_sell_qty)
+        if ledger_total_sell_qty > 0:
+            if ledger_total_sell_qty >= current_total_sell_qty:
+                total_notional = ledger_normal_sell_qty * normal_sell_avg + ledger_protective_qty * float(
+                    protective.get("avg_price", 0.0) or protective_avg or 0.0
+                )
+                cycle.avg_sell_price = total_notional / ledger_total_sell_qty
+            cycle.sell_filled_qty = total_sell_qty
+            cycle.sell_commission = max(
+                float(cycle.sell_commission or 0.0),
+                normal_sell_commission + float(protective.get("commission", 0.0) or 0.0),
+            )
+            cycle.sell_filled_at = cycle.sell_filled_at or cycle.protective_sell_filled_at or utc_now_iso()
+
+        if buy_qty > original_buy_qty and cycle.stage in {
+            Stage.WAIT_RISE_TRIGGER,
+            Stage.SELL_TRAIL_ACTIVE,
+            Stage.CYCLE_COMPLETE,
+        }:
+            has_exit_order = bool(cycle.protective_sell_order_ref or cycle.sell_order_ref)
+            if has_exit_order and buy_qty > total_sell_qty:
+                cycle.stage = Stage.ERROR
+                cycle.error_message = (
+                    "A late BUY execution increased the app-owned quantity after a SELL order had already been created. "
+                    "Trading is paused for manual review so the exit quantity cannot be understated."
+                )
+
+        if total_sell_qty > buy_qty > 0:
+            cycle.stage = Stage.ERROR
+            cycle.error_message = (
+                f"The execution ledger contains {total_sell_qty} SELL shares for only {buy_qty} app-owned BUY shares. "
+                "Trading is paused for manual review to prevent an unintended short position."
+            )
+
+        if cycle.avg_buy_price and cycle.avg_sell_price and cycle.sell_filled_qty > 0:
+            overlap = min(cycle.buy_filled_qty, cycle.sell_filled_qty)
+            cycle.gross_pnl = (cycle.avg_sell_price - cycle.avg_buy_price) * overlap
+            cycle.net_pnl = cycle.gross_pnl - cycle.buy_commission - cycle.sell_commission
+
+        cycle.touch()
+        self.storage.upsert_cycle(cycle)
+        if self.active_cycle is not None and self.active_cycle.id == cycle.id:
+            self.active_cycle = cycle
+        if follow_actions and self.active_cycle is not None and self.active_cycle.id == cycle.id:
+            self._execute_actions(follow_actions, cycle)
 
     @staticmethod
     def _optional_int(value: Any) -> Optional[int]:
@@ -3170,6 +3450,11 @@ class TradingController:
                     cycle,
                     "Waiting for a fresh market-data event. Cached TWS/API fields cannot advance the strategy.",
                 )
+                return
+            if cycle.stage == Stage.WAIT_RISE_TRIGGER and self._liquidate_profitable_stage3_before_close_if_needed(
+                cycle,
+                last_price,
+            ):
                 return
             rth_status = self._update_rth_status(self.contract)
             is_rth = bool(rth_status.get("is_open", True))
@@ -3828,8 +4113,15 @@ class TradingController:
             self._set_price_error_snapshot(exc)
             self._log("WARN", f"Confirmed contract price refresh failed: {exc}")
 
-    def _log_price_warning_throttled(self, cycle: CycleState, message: str, interval_seconds: float = 30.0) -> None:
-        key = f"{cycle.ticker}|{cycle.stage.value}|{message}"
+    def _log_price_warning_throttled(
+        self,
+        cycle: CycleState,
+        message: str,
+        interval_seconds: float = 30.0,
+        *,
+        throttle_key: Optional[str] = None,
+    ) -> None:
+        key = throttle_key or f"{cycle.ticker}|{cycle.stage.value}|{message}"
         now = time.monotonic()
         last = self._last_price_warning_at.get(key, 0.0)
         # Long-running bots can see many transient ticker/stage/error combinations.
@@ -4059,6 +4351,112 @@ class TradingController:
             self._log("WARN", message, cycle)
             return
         self._log_price_warning_throttled(cycle, message, interval_seconds=60.0)
+
+    def _liquidate_profitable_stage3_before_close_if_needed(
+        self,
+        cycle: CycleState,
+        current_price: float,
+    ) -> bool:
+        """Start the Stage-3 close policy only for a grossly profitable quote."""
+        if cycle.stage != Stage.WAIT_RISE_TRIGGER:
+            return False
+        if not bool(getattr(cycle, "cancel_sell_and_liquidate_before_close_enabled", False)):
+            return False
+        cutoff = int(getattr(cycle, "liquidate_before_close_minutes", 0) or 0)
+        if cutoff <= 0:
+            return False
+        timing = self._session_minutes_from_rth_status()
+        minutes_raw = timing.get("minutes_to_close") if timing.get("available") else None
+        if minutes_raw is None:
+            self._log_price_warning_throttled(
+                cycle,
+                "Close-before-RTH is enabled in Stage 3, but the regular-session boundary is unavailable. "
+                "No market SELL will be submitted without a confirmed cutoff.",
+                interval_seconds=60.0,
+                throttle_key=f"stage3_close_boundary|{cycle.id}",
+            )
+            return False
+        minutes_to_close = float(minutes_raw)
+        rth_open = bool((self._latest_rth_status or {}).get("is_open"))
+        if not rth_open or not (0 < minutes_to_close <= cutoff):
+            return False
+
+        avg_buy = float(cycle.avg_buy_price or 0.0)
+        selected_price = float(current_price or 0.0)
+        if avg_buy <= 0 or selected_price <= avg_buy:
+            self._log_price_warning_throttled(
+                cycle,
+                "Close-before-RTH Stage-3 liquidation was not started because the selected current price "
+                f"({selected_price:.4f}) is not strictly above the average BUY price ({avg_buy:.4f}). "
+                "Commissions are intentionally ignored for this comparison.",
+                interval_seconds=60.0,
+                throttle_key=f"stage3_close_not_profitable|{cycle.id}",
+            )
+            return False
+
+        if not bool(getattr(cycle, "close_before_rth_liquidation_requested", False)):
+            cycle.close_before_rth_liquidation_requested = True
+            cycle.close_before_rth_cancel_requested = False
+            cycle.error_message = (
+                f"Stage-3 close-before-RTH liquidation started at selected price {selected_price:.4f}, "
+                f"above average BUY {avg_buy:.4f}, with {minutes_to_close:.1f} minutes to close."
+            )
+            cycle.touch()
+            self.active_cycle = cycle
+            self.storage.upsert_cycle(cycle)
+            self.storage.add_decision_event(
+                event_type="RTH_CLOSE_STAGE3_PROFITABLE_LIQUIDATION_REQUESTED",
+                message=cycle.error_message,
+                cycle=cycle,
+                stage_before=cycle.stage.value,
+                stage_after=cycle.stage.value,
+                decision_result="gross_profit_condition_passed",
+                raw={
+                    "selected_price": selected_price,
+                    "average_buy_price": avg_buy,
+                    "commissions_ignored": True,
+                    "minutes_to_close": minutes_to_close,
+                    "configured_minutes": cutoff,
+                },
+            )
+            self._log("WARN", cycle.error_message, cycle)
+
+        protective_working = self._close_before_rth_order_is_working(
+            cycle.protective_sell_order_ref,
+            cycle.protective_sell_status,
+        )
+        if protective_working:
+            if bool(getattr(cycle, "close_before_rth_cancel_requested", False)):
+                return True
+            try:
+                self.adapter.cancel_order(cycle.protective_sell_order_ref or "", cycle.protective_sell_order_id)
+                cycle.protective_sell_status = "CancelRequested"
+                cycle.protective_sell_cancel_requested = True
+                cycle.close_before_rth_cancel_requested = True
+                cycle.touch()
+                self.active_cycle = cycle
+                self.storage.upsert_cycle(cycle)
+                self.storage.update_order_status(
+                    cycle.protective_sell_order_ref or "",
+                    "CancelRequested",
+                    cycle.protective_sell_order_id,
+                    cycle.protective_sell_perm_id,
+                )
+                self._log(
+                    "WARN",
+                    "Stage-3 close-before-RTH liquidation requested cancellation of the protective SELL "
+                    "and will not submit a market SELL until IBKR confirms a terminal status.",
+                    cycle,
+                )
+            except BrokerAdapterError as exc:
+                self._handle_broker_connection_problem(exc)
+                self._log("WARN", f"Could not confirm protective SELL cancellation before close: {exc}", cycle)
+            except Exception as exc:
+                self._log("WARN", f"Could not request protective SELL cancellation before close: {exc}", cycle)
+            return True
+
+        self._submit_close_before_rth_market_sell(cycle)
+        return True
 
     def _cancel_sell_and_liquidate_before_close_if_needed(self, cycle: CycleState) -> None:
         """Supervise the optional Stage-4 cancel-confirm-market-close workflow."""
@@ -4308,10 +4706,25 @@ class TradingController:
                             self.active_cycle.protective_sell_cancel_requested = True
                             self.active_cycle.touch()
                             self.storage.upsert_cycle(self.active_cycle)
+                        elif action.payload.get("role") == "buy_remainder" and self.active_cycle:
+                            self.active_cycle.buy_status = "CancelRequested"
+                            self.active_cycle.buy_remainder_cancel_requested = True
+                            self.active_cycle.touch()
+                            self.storage.upsert_cycle(self.active_cycle)
                         self._log("INFO", action.payload.get("reason", "Cancel requested."), cycle)
                     except BrokerAdapterError as exc:
+                        if action.payload.get("role") == "buy_remainder" and self.active_cycle:
+                            self.active_cycle.buy_remainder_cancel_requested = False
+                            self.active_cycle.touch()
+                            self.storage.upsert_cycle(self.active_cycle)
                         self._handle_broker_connection_problem(exc)
                         self._log("WARN", f"Cancel request could not be confirmed because TWS connection is unavailable: {exc}", cycle)
+                    except Exception as exc:
+                        if action.payload.get("role") == "buy_remainder" and self.active_cycle:
+                            self.active_cycle.buy_remainder_cancel_requested = False
+                            self.active_cycle.touch()
+                            self.storage.upsert_cycle(self.active_cycle)
+                        self._log("WARN", f"Cancel request could not be confirmed: {exc}", cycle)
             except BrokerAdapterError as exc:
                 side = (
                     "BUY" if action.action_type in {"PLACE_BUY_TRAIL", "PLACE_BUY_MARKET"}
@@ -5187,12 +5600,30 @@ class TradingController:
         raw_value = diag.get("raw_last_value")
         selected = diag.get("selected_price")
         details = f"Status={status or '-'}; selected={selected}; rawLast={raw_value}; displayedInitialStop={stop}. {message}"
-        self._log_price_warning_throttled(cycle, f"Stage {cycle.stage.value} {side} trailing wait diagnostic: {details}", interval_seconds=60.0)
+        side_key = side.upper().strip()
+        if side_key == "BUY":
+            diagnostic_order_ref = cycle.buy_order_ref
+        elif side_key == "PROTECTIVE_SELL":
+            diagnostic_order_ref = cycle.protective_sell_order_ref
+        else:
+            diagnostic_order_ref = cycle.sell_order_ref
+        self._log_price_warning_throttled(
+            cycle,
+            f"Stage {cycle.stage.value} {side} trailing wait diagnostic: {details}",
+            interval_seconds=60.0,
+            throttle_key=f"native_trailing_wait|{cycle.id}|{side_key}|{diagnostic_order_ref or ''}",
+        )
 
     def _handle_buy_order_poll(self, cycle: CycleState, polled: PolledOrderState) -> None:
+        """Reconcile a BUY until the original broker order is terminal."""
         self.storage.update_order_status(polled.order_ref, polled.status, polled.order_id, polled.perm_id)
         self._update_recovery_probe_from_order_poll(polled)
-        if polled.filled <= 0:
+        existing_buy_totals = self.storage.get_execution_totals(cycle.id, "BUY")
+        known_buy_quantity = max(
+            int(cycle.buy_filled_qty or 0),
+            int(round(float(existing_buy_totals.get("shares", 0.0) or 0.0))),
+        )
+        if polled.filled <= 0 and known_buy_quantity <= 0:
             if self._order_terminal_without_fill(polled.status):
                 if self._polled_order_rejection(polled) is not None:
                     self._move_no_fill_order_to_stopped_error(cycle, polled, "BUY")
@@ -5204,11 +5635,7 @@ class TradingController:
                 )
                 reset_cycle = StrategyEngine.rollback_unsubmitted_order(cycle, "BUY", message)
                 try:
-                    latest = float(
-                        (self.price_snapshot or {}).get("price")
-                        or reset_cycle.last_price
-                        or 0.0
-                    )
+                    latest = float((self.price_snapshot or {}).get("price") or reset_cycle.last_price or 0.0)
                     if latest > 0:
                         reset_cycle.last_price = latest
                         reset_cycle.anchor_price = latest
@@ -5218,6 +5645,7 @@ class TradingController:
                 except Exception:
                     pass
                 reset_cycle.buy_status = polled.status
+                reset_cycle.buy_remainder_cancel_requested = False
                 reset_cycle.touch()
                 self.active_cycle = reset_cycle
                 self.storage.add_decision_event(
@@ -5238,18 +5666,96 @@ class TradingController:
             self.storage.upsert_cycle(cycle)
             self._log_native_order_wait_diagnostic(cycle, polled.status)
             return
-        # Record fill only once for this order state transition.
+
+        previous_qty = int(cycle.buy_filled_qty or 0)
         self._record_polled_executions(cycle, polled, "BUY")
-        next_cycle, actions = StrategyEngine.on_buy_fill(cycle, polled.filled, polled.avg_fill_price, polled.status, polled.commission)
+        totals = self.storage.get_execution_totals(cycle.id, "BUY")
+        persisted_qty = int(round(float(totals.get("shares", 0.0) or 0.0)))
+        cumulative_qty = max(int(polled.filled), persisted_qty, previous_qty)
+        persisted_avg = float(totals.get("avg_price", 0.0) or 0.0)
+        cumulative_avg = (
+            persisted_avg
+            if persisted_qty >= cumulative_qty and persisted_avg > 0
+            else float(polled.avg_fill_price or persisted_avg or cycle.avg_buy_price or 0.0)
+        )
+        cumulative_commission = max(
+            float(polled.commission or 0.0),
+            float(totals.get("commission", 0.0) or 0.0),
+            float(cycle.buy_commission or 0.0),
+        )
+        next_cycle, actions = StrategyEngine.on_buy_fill(
+            cycle,
+            cumulative_qty,
+            cumulative_avg,
+            polled.status,
+            cumulative_commission,
+        )
+        next_cycle.buy_order_id = polled.order_id or next_cycle.buy_order_id
+        next_cycle.buy_perm_id = polled.perm_id or next_cycle.buy_perm_id
         self.active_cycle = next_cycle
         self.storage.upsert_cycle(next_cycle)
-        self.storage.add_decision_event(event_type="BUY_FILL", message="BUY fill detected.", cycle=next_cycle, stage_before=cycle.stage.value, stage_after=next_cycle.stage.value, decision_result="fill", raw=polled.raw)
-        self._start_trade_market_data_capture("BUY_FILL", next_cycle, polled)
+
+        first_observed_buy_fill = previous_qty <= 0 and cumulative_qty > 0
+        if first_observed_buy_fill:
+            self._start_trade_market_data_capture("BUY_FILL", next_cycle, polled)
+
+        terminal = str(polled.status or "").strip() in {
+            "Filled",
+            "Cancelled",
+            "ApiCancelled",
+            "Inactive",
+            "Rejected",
+        }
+        if not terminal:
+            if cumulative_qty != previous_qty:
+                self.storage.add_decision_event(
+                    event_type="BUY_PARTIAL_FILL",
+                    message=(
+                        f"BUY cumulative fill is {cumulative_qty}; the original order remains active until "
+                        "IBKR confirms a terminal status."
+                    ),
+                    cycle=next_cycle,
+                    stage_before=cycle.stage.value,
+                    stage_after=next_cycle.stage.value,
+                    decision_result="awaiting_terminal_buy",
+                    broker_order_id=polled.order_id,
+                    perm_id=polled.perm_id,
+                    raw=polled.raw,
+                )
+                self._log(
+                    "INFO",
+                    f"Partial BUY fill reconciled: {cumulative_qty} filled, {max(0, polled.remaining)} remaining. "
+                    "Waiting for the original BUY order to become terminal.",
+                    next_cycle,
+                )
+            if first_observed_buy_fill:
+                try:
+                    self.storage.backup_database("after_buy_partial_fill")
+                except Exception:
+                    pass
+            self._execute_actions(actions, next_cycle)
+            return
+
+        self.storage.add_decision_event(
+            event_type="BUY_FILL",
+            message="BUY order reached a terminal state and all cumulative fills were reconciled.",
+            cycle=next_cycle,
+            stage_before=cycle.stage.value,
+            stage_after=next_cycle.stage.value,
+            decision_result="fill_settled",
+            broker_order_id=polled.order_id,
+            perm_id=polled.perm_id,
+            raw={**dict(polled.raw or {}), "cumulative_buy_quantity": cumulative_qty},
+        )
         try:
             self.storage.backup_database("after_buy_fill")
         except Exception:
             pass
-        self._log("INFO", f"BUY fill detected: {polled.filled} @ {polled.avg_fill_price:.4f}. Moving to minimum-profit stage.", next_cycle)
+        self._log(
+            "INFO",
+            f"BUY settlement complete: {cumulative_qty} @ {cumulative_avg:.4f}. Moving to minimum-profit stage.",
+            next_cycle,
+        )
         self._execute_actions(actions, next_cycle)
 
     def _handle_protective_sell_order_poll(self, cycle: CycleState, polled: PolledOrderState) -> bool:
@@ -5264,6 +5770,58 @@ class TradingController:
         cycle.protective_sell_status = polled.status
         cycle.protective_sell_order_id = polled.order_id or cycle.protective_sell_order_id
         cycle.protective_sell_perm_id = polled.perm_id or cycle.protective_sell_perm_id
+        if bool(getattr(cycle, "close_before_rth_liquidation_requested", False)):
+            if polled.filled > 0:
+                self._record_polled_executions(cycle, polled, "PROTECTIVE_SELL")
+            sold_qty, avg_price, commission = self._close_before_rth_sell_totals(cycle)
+            target_qty = max(0, int(cycle.buy_filled_qty or 0))
+            if sold_qty > target_qty > 0:
+                self._move_close_before_rth_to_error(
+                    cycle,
+                    f"protective and replacement executions report {sold_qty} SELL shares for "
+                    f"an app-owned quantity of {target_qty}",
+                )
+                return True
+            if sold_qty == target_qty and target_qty > 0 and avg_price > 0:
+                self._complete_close_before_rth_sell(cycle, polled, sold_qty, avg_price, commission)
+                return True
+            terminal = str(polled.status or "").strip() in {
+                "Filled",
+                "Cancelled",
+                "ApiCancelled",
+                "Inactive",
+                "Rejected",
+            }
+            cycle.protective_sell_filled_qty = int(
+                round(
+                    float(
+                        self.storage.get_execution_totals(cycle.id, "PROTECTIVE_SELL").get(
+                            "shares",
+                            0.0,
+                        )
+                        or 0.0
+                    )
+                )
+            )
+            cycle.touch()
+            self.active_cycle = cycle
+            self.storage.upsert_cycle(cycle)
+            if terminal:
+                cycle.protective_sell_cancel_requested = False
+                cycle.close_before_rth_cancel_requested = False
+                cycle.touch()
+                self.active_cycle = cycle
+                self.storage.upsert_cycle(cycle)
+                if str(polled.status or "").strip() == "Filled" and sold_qty < target_qty:
+                    self._move_close_before_rth_to_error(
+                        cycle,
+                        f"the protective SELL reported Filled but only {sold_qty} of {target_qty} "
+                        "app-owned shares were confirmed sold",
+                    )
+                    return True
+                self._submit_close_before_rth_market_sell(cycle)
+                return True
+            return True
         if polled.filled <= 0:
             if self._order_terminal_without_fill(polled.status):
                 if bool(getattr(cycle, "close_position_market_requested", False)):
@@ -5329,100 +5887,21 @@ class TradingController:
         )
         self._log("ERROR", cycle.error_message, cycle)
 
-    def _record_close_before_rth_polled_executions(self, cycle: CycleState, polled: PolledOrderState) -> None:
-        """Persist only the newly observed part of a close-workflow SELL fill."""
-        cumulative = max(0.0, float(polled.filled or 0.0))
-        if cumulative <= 0:
-            return
-        existing = self.storage.get_execution_totals(cycle.id, "SELL", order_ref=polled.order_ref)
-        persisted = max(0.0, float(existing.get("shares", 0.0) or 0.0))
-        missing = cumulative - persisted
-        if missing <= 1e-9:
-            return
-
-        candidates: list[tuple[int, dict[str, Any], str, float, float]] = []
-        for index, execution in enumerate(polled.executions or []):
-            exec_id = str(
-                execution.get("execId")
-                or execution.get("execution_id")
-                or (
-                    f"{polled.order_ref}|SELL|{index}|{execution.get('shares')}|"
-                    f"{execution.get('price')}|{execution.get('time')}"
-                )
-            )
-            if self.storage.execution_exists(exec_id):
-                continue
-            try:
-                shares = abs(float(execution.get("shares") or 0.0))
-                price = float(execution.get("price") or polled.avg_fill_price or 0.0)
-            except Exception:
-                continue
-            if shares <= 0 or price <= 0:
-                continue
-            candidates.append((index, execution, exec_id, shares, price))
-
-        selected: list[tuple[int, dict[str, Any], str, float, float]] = []
-        selected_shares = 0.0
-        for candidate in reversed(candidates):
-            selected.append(candidate)
-            selected_shares += candidate[3]
-            if selected_shares + 1e-9 >= missing:
-                break
-
-        if selected and abs(selected_shares - missing) <= 1e-9:
-            for _, execution, exec_id, shares, price in reversed(selected):
-                self.storage.add_execution(
-                    cycle=cycle,
-                    ticker=cycle.ticker,
-                    side="SELL",
-                    shares=shares,
-                    price=price,
-                    avg_price=float(execution.get("avgPrice") or execution.get("avg_price") or price),
-                    commission=float(execution.get("commission") or 0.0),
-                    currency=str(execution.get("currency") or cycle.currency),
-                    order_ref=polled.order_ref,
-                    order_id=polled.order_id,
-                    perm_id=polled.perm_id,
-                    execution_id=exec_id,
-                    executed_at=str(execution.get("time") or execution.get("executed_at") or utc_now_iso()),
-                    raw=execution,
-                )
-            return
-
-        cumulative_avg = float(polled.avg_fill_price or 0.0)
-        if cumulative_avg <= 0:
-            return
-        existing_notional = persisted * float(existing.get("avg_price", 0.0) or 0.0)
-        cumulative_notional = cumulative * cumulative_avg
-        delta_price = (cumulative_notional - existing_notional) / missing
-        if delta_price <= 0 or not isfinite(delta_price):
-            delta_price = cumulative_avg
-        delta_commission = float(polled.commission or 0.0) - float(existing.get("commission", 0.0) or 0.0)
-        synthetic_id = f"{polled.order_ref}|SELL|CUMULATIVE|{cumulative:.8f}|{cumulative_avg:.8f}"
-        if self.storage.execution_exists(synthetic_id):
-            return
-        self.storage.add_execution(
-            cycle=cycle,
-            ticker=cycle.ticker,
-            side="SELL",
-            shares=missing,
-            price=delta_price,
-            avg_price=cumulative_avg,
-            commission=delta_commission,
-            currency=cycle.currency,
-            order_ref=polled.order_ref,
-            order_id=polled.order_id,
-            perm_id=polled.perm_id,
-            execution_id=synthetic_id,
-            raw={**dict(polled.raw or {}), "source": "cumulative_order_state_delta"},
-        )
-
     def _close_before_rth_sell_totals(self, cycle: CycleState) -> tuple[int, float, float]:
-        totals = self.storage.get_execution_totals(cycle.id, "SELL")
+        normal = self.storage.get_execution_totals(cycle.id, "SELL")
+        protective = self.storage.get_execution_totals(cycle.id, "PROTECTIVE_SELL")
+        normal_qty = float(normal.get("shares", 0.0) or 0.0)
+        protective_qty = float(protective.get("shares", 0.0) or 0.0)
+        total_qty = normal_qty + protective_qty
+        total_notional = (
+            normal_qty * float(normal.get("avg_price", 0.0) or 0.0)
+            + protective_qty * float(protective.get("avg_price", 0.0) or 0.0)
+        )
         return (
-            int(round(float(totals.get("shares", 0.0) or 0.0))),
-            float(totals.get("avg_price", 0.0) or 0.0),
-            float(totals.get("commission", 0.0) or 0.0),
+            int(round(total_qty)),
+            (total_notional / total_qty) if total_qty > 0 else 0.0,
+            float(normal.get("commission", 0.0) or 0.0)
+            + float(protective.get("commission", 0.0) or 0.0),
         )
 
     def _complete_close_before_rth_sell(
@@ -5463,7 +5942,28 @@ class TradingController:
         self._maybe_start_next_cycle()
 
     def _submit_close_before_rth_market_sell(self, cycle: CycleState) -> bool:
-        """Submit an RTH-only DAY market SELL after trail cancellation is terminal."""
+        """Submit an RTH-only DAY market SELL after any prior exit is terminal."""
+        stage3_profit_exit = cycle.stage == Stage.WAIT_RISE_TRIGGER
+        reference_price = float((self.price_snapshot or {}).get("price") or cycle.last_price or 0.0)
+        avg_buy = float(cycle.avg_buy_price or 0.0)
+        if stage3_profit_exit and (reference_price <= 0 or avg_buy <= 0 or reference_price <= avg_buy):
+            protective_was_cancelled = bool(cycle.protective_sell_order_ref) and str(
+                cycle.protective_sell_status or ""
+            ) in {"Cancelled", "ApiCancelled", "Inactive", "Rejected"}
+            if protective_was_cancelled:
+                self._move_close_before_rth_to_error(
+                    cycle,
+                    "the Stage-3 protective SELL became terminal, but the selected current price is no longer "
+                    f"strictly above the average BUY price ({reference_price:.4f} versus {avg_buy:.4f})",
+                )
+            else:
+                cycle.close_before_rth_liquidation_requested = False
+                cycle.close_before_rth_cancel_requested = False
+                cycle.error_message = None
+                cycle.touch()
+                self.active_cycle = cycle
+                self.storage.upsert_cycle(cycle)
+            return False
         if self.contract is None or self.contract.ticker != cycle.ticker:
             try:
                 self.contract = self._adapter_qualify_stock(
@@ -5476,7 +5976,7 @@ class TradingController:
             except Exception as exc:
                 self._move_close_before_rth_to_error(
                     cycle,
-                    f"the original SELL trail was terminal, but the contract could not be qualified for the replacement market SELL ({exc})",
+                    f"the prior exit order was terminal, but the contract could not be qualified for the market SELL ({exc})",
                 )
                 return False
 
@@ -5487,7 +5987,7 @@ class TradingController:
         if minutes_to_close is None or not rth_open or float(minutes_to_close) <= 0:
             self._move_close_before_rth_to_error(
                 cycle,
-                "the original SELL trail was terminal, but an open regular session with time remaining before the close could not be confirmed",
+                "an open regular session with time remaining before the close could not be confirmed",
             )
             return False
 
@@ -5495,7 +5995,7 @@ class TradingController:
         if connectivity_message:
             self._move_close_before_rth_to_error(
                 cycle,
-                f"the original SELL trail was terminal, but the replacement market SELL could not be submitted ({connectivity_message})",
+                f"the market SELL could not be submitted ({connectivity_message})",
             )
             return False
 
@@ -5528,7 +6028,7 @@ class TradingController:
             "order_type": "MKT",
             "trailing_percent": 0.0,
             "initial_stop_price": None,
-            "reference_price": float((self.price_snapshot or {}).get("price") or cycle.last_price or 0.0),
+            "reference_price": reference_price,
             "order_ref": order_ref,
             "tif": "DAY",
             "outside_rth": False,
@@ -5584,14 +6084,25 @@ class TradingController:
         )
         self.storage.add_decision_event(
             event_type="RTH_CLOSE_MARKET_SUBMITTED",
-            message="Submitted the close-before-RTH DAY market SELL after final SELL-trail cancellation confirmation.",
+            message=(
+                "Submitted the profitable Stage-3 close-before-RTH DAY market SELL."
+                if stage3_profit_exit
+                else "Submitted the close-before-RTH DAY market SELL after final SELL-trail cancellation confirmation."
+            ),
             cycle=updated,
             stage_before=stage_before,
             stage_after=updated.stage.value,
             decision_result="submitted",
             broker_order_id=handle.order_id,
             perm_id=handle.perm_id,
-            raw={**dict(handle.raw or {}), "configured_minutes": int(cycle.liquidate_before_close_minutes)},
+            raw={
+                **dict(handle.raw or {}),
+                "configured_minutes": int(cycle.liquidate_before_close_minutes),
+                "stage3_profit_condition": stage3_profit_exit,
+                "reference_price": reference_price,
+                "average_buy_price": avg_buy,
+                "commissions_ignored": stage3_profit_exit,
+            },
         )
         self._log(
             "WARN",
@@ -5609,7 +6120,7 @@ class TradingController:
         cycle.sell_order_id = polled.order_id or cycle.sell_order_id
         cycle.sell_perm_id = polled.perm_id or cycle.sell_perm_id
         if polled.filled > 0:
-            self._record_close_before_rth_polled_executions(cycle, polled)
+            self._record_polled_executions(cycle, polled, "SELL")
 
         total_qty, avg_price, commission = self._close_before_rth_sell_totals(cycle)
         target_qty = max(0, int(getattr(cycle, "buy_filled_qty", 0) or 0))
@@ -5729,48 +6240,63 @@ class TradingController:
         self._maybe_start_next_cycle()
 
     def _record_polled_executions(self, cycle: CycleState, polled: PolledOrderState, side: str) -> None:
+        """Persist broker executions without double-counting late callbacks.
+
+        A stable residual placeholder represents only the portion of the
+        cumulative order-status fill not yet backed by individual execution
+        identifiers.  Late execDetails callbacks shrink or remove it.
+        """
+        side_value = str(side or "").upper()
         if polled.executions:
-            for execution in polled.executions:
-                exec_id = execution.get("execId") or f"{polled.order_ref}|{side}|{execution.get('shares')}|{execution.get('price')}"
-                if exec_id in self._executions_recorded:
-                    continue
+            for index, execution in enumerate(polled.executions):
+                exec_id = str(
+                    execution.get("execId")
+                    or execution.get("execution_id")
+                    or (
+                        f"{polled.order_ref}|{side_value}|DETAIL|{index}|{execution.get('shares')}|"
+                        f"{execution.get('price')}|{execution.get('time')}"
+                    )
+                )
                 self._executions_recorded.add(exec_id)
-                self.storage.add_execution(
+                self.storage.upsert_execution(
                     cycle=cycle,
                     ticker=cycle.ticker,
-                    side=side,
-                    shares=float(execution.get("shares") or polled.filled),
-                    price=float(execution.get("price") or polled.avg_fill_price),
-                    avg_price=float(execution.get("avgPrice") or polled.avg_fill_price),
-                    commission=float(execution.get("commission") or 0.0),
+                    side=side_value,
+                    shares=float(execution.get("shares") or 0.0),
+                    price=float(execution.get("price") or polled.avg_fill_price or 0.0),
+                    avg_price=float(execution.get("avgPrice") or execution.get("avg_price") or polled.avg_fill_price or 0.0),
+                    commission=(
+                        float(execution.get("commission"))
+                        if execution.get("commission") not in (None, "")
+                        else None
+                    ),
                     currency=str(execution.get("currency") or cycle.currency),
                     order_ref=polled.order_ref,
                     order_id=polled.order_id,
                     perm_id=polled.perm_id,
-                    execution_id=execution.get("execId"),
-                    executed_at=str(execution.get("time") or utc_now_iso()),
+                    execution_id=exec_id,
+                    executed_at=str(execution.get("executed_at") or execution.get("time") or utc_now_iso()),
                     raw=execution,
                 )
-            return
-        synthetic_id = f"{polled.order_ref}|{side}|{polled.filled}|{polled.avg_fill_price}"
-        if synthetic_id in self._executions_recorded:
-            return
-        self._executions_recorded.add(synthetic_id)
-        self.storage.add_execution(
-            cycle=cycle,
-            ticker=cycle.ticker,
-            side=side,
-            shares=polled.filled,
-            price=polled.avg_fill_price,
-            avg_price=polled.avg_fill_price,
-            commission=polled.commission,
-            currency=cycle.currency,
-            order_ref=polled.order_ref,
-            order_id=polled.order_id,
-            perm_id=polled.perm_id,
-            execution_id=synthetic_id,
-            raw=polled.raw,
-        )
+
+        if polled.filled > 0:
+            self.storage.reconcile_cumulative_execution_placeholder(
+                cycle=cycle,
+                side=side_value,
+                order_ref=polled.order_ref,
+                cumulative_shares=float(polled.filled),
+                cumulative_avg_price=float(polled.avg_fill_price or 0.0),
+                cumulative_commission=float(polled.commission or 0.0),
+                order_id=polled.order_id,
+                perm_id=polled.perm_id,
+                currency=cycle.currency,
+                executed_at=utc_now_iso(),
+                raw={
+                    "source": "broker_order_status_cumulative",
+                    "status": polled.status,
+                    "order_raw": dict(polled.raw or {}),
+                },
+            )
 
     def _maybe_start_next_cycle(self) -> None:
         cycle = self.active_cycle

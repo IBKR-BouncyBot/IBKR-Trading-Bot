@@ -114,6 +114,10 @@ def test_generated_full_cycle_preserves_cross_module_invariants(
         terminal=not partial,
     )
     controller._handle_buy_order_poll(buy_cycle, buy_state)
+    if partial:
+        terminal_buy = broker.poll_order(str(buy_cycle.buy_order_ref))
+        assert terminal_buy is not None and terminal_buy.status == "Cancelled"
+        controller._handle_buy_order_poll(controller.active_cycle, terminal_buy)
 
     position_cycle = controller.active_cycle
     assert position_cycle is not None

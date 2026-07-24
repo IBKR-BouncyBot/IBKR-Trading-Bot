@@ -1,6 +1,6 @@
 # BouncyBot - an IBKR Portable Trading Bot 
 
-**Current release: v3.1.1**
+**Current release: v3.1.2**
 
 ![Simple-view](Images/Trading-Simple-view.png)
 
@@ -47,7 +47,7 @@ The bot implements a five-stage strategy for one confirmed IBKR stock contract:
 4. Exit with a native SELL trailing stop, or a market SELL when the SELL trail is configured as zero.
 5. Record the completed cycle and optionally start another cycle.
 
-The strategy is long-only. It buys whole shares and then sells only the quantity attributed to the application’s recorded fills. Orders created by the application use an `OrderRef` beginning with `IBKRBOT|` so recovery and cancellation logic can distinguish them from unrelated orders.
+The strategy is long-only. It buys whole shares and then sells only the quantity attributed to the application’s recorded fills. Orders created by the application use an `OrderRef` beginning with `IBKRBOT|`. Because multiple portable instances can share a Master API feed, ownership is accepted only when the complete `OrderRef` exactly matches a reference already persisted by that installation; a shared prefix alone is not sufficient.
 
 The application is portable: its SQLite database, logs, exports, backups, audit reports, and completed market-data captures are stored beside the source tree or packaged executable.
 
@@ -74,7 +74,7 @@ quantity = floor(budget / sizing price)
 
 The sizing price is the projected BUY stop, optionally increased by the configured planning-only slippage buffer. A positive BUY trail creates a native IBKR `TRAIL` order. A zero BUY trail creates a market BUY immediately after the drop condition.
 
-When any positive BUY quantity fills, the application attempts to cancel the unfilled remainder and continues with the filled quantity.
+When a positive BUY quantity fills, the application requests cancellation of any unfilled remainder but keeps Stage 2 active until the original BUY order reaches a terminal broker status. It continuously reconciles cumulative fills during the cancellation race, so a second partial fill cannot be omitted from the app-owned quantity, average price, commissions, later SELL sizing, or P/L. Execution and commission callbacks are applied idempotently by IBKR execution ID, including callbacks that arrive after order polling or reconnect.
 
 ### Stage 3 — wait for minimum profit
 
@@ -87,11 +87,13 @@ required last price = minimum initial SELL stop / (1 - SELL trail % / 100)
 
 The final SELL is not submitted until the selected strategy price reaches the required level. This is a gross planning threshold before commissions and actual market-order slippage; it is not a profit guarantee.
 
+When **Cancel SELL trail and liquidate before close** is enabled, Stage 3 also evaluates the configured cutoff. It submits an RTH-only `DAY` market SELL only when the selected current price is strictly above the actual average BUY fill price; commissions are intentionally ignored for this comparison. If a protective SELL is still working, the app cancels it and waits for a terminal broker status before submitting the market order. The price test occurs before submission and cannot guarantee that the eventual market fill remains profitable.
+
 ### Stage 4 — manage the exit
 
 A positive SELL trail creates a native SELL `TRAIL` order. A zero SELL trail creates a market SELL after the minimum-profit condition is reached. The broker controls the native trail after order submission.
 
-The optional **Cancel SELL trail and liquidate before close** policy is off by default. When enabled before Stage 4, the app uses the contract's date-specific RTH close and starts the workflow at the configured number of minutes before that close. It requests cancellation of the final native SELL trail, waits for IBKR to report a terminal order state, recalculates the remaining app-owned quantity from persisted SELL executions, and submits one `DAY` market SELL with `outsideRth=False`. A fill during the cancellation race is recorded normally; a partial trail fill reduces the replacement quantity. The market exit can fill below the trailing stop and can realize a loss. If cancellation is not confirmed before close, no second SELL is submitted. If cancellation succeeds but the replacement cannot be submitted or completed before close, the cycle moves to an error/manual-review state rather than submitting outside RTH.
+The optional **Cancel SELL trail and liquidate before close** policy is off by default and uses the contract's date-specific RTH close. In Stage 4, the app starts the workflow at the configured number of minutes before close, requests cancellation of the final native SELL trail, waits for a terminal broker state, recalculates the remaining app-owned quantity from the idempotent execution ledger, and submits one `DAY` market SELL with `outsideRth=False`. A fill during the cancellation race is recorded normally; a partial trail fill reduces the replacement quantity. The market exit can fill below the trailing stop and can realize a loss. If cancellation is not confirmed before close, no second SELL is submitted. If cancellation succeeds but the replacement cannot be submitted or completed before close, the cycle moves to an error/manual-review state rather than submitting outside RTH.
 
 An optional protective SELL trail can be submitted immediately after a BUY fill. When the normal minimum-profit exit becomes eligible, the application first requests cancellation of the protective order and waits for confirmation before submitting the final SELL. This prevents two application-created SELL orders from intentionally working for the same shares at once.
 
@@ -112,13 +114,13 @@ The application records fills, commissions received from IBKR, gross and net P/L
 - Contract search and qualification through the IBKR API, including route-specific market-rule price increments.
 - Whole-share budget sizing.
 - Native IBKR BUY and SELL trailing-stop orders with side-aware broker-price normalization.
-- Optional Stage-4 cancel-confirm-market liquidation before the contract-specific RTH close.
+- Optional Stage-3 profitable market liquidation and Stage-4 cancel-confirm-market liquidation before the contract-specific RTH close.
 - Market-order alternatives when a trail percentage is exactly zero.
 - Optional automatic cycle repetition and reinvestment of positive completed application P/L.
 - Portable SQLite persistence and additive schema migration.
 - Atomic resume checkpoints for normal exits and controlled Windows update/sign-out/shutdown requests.
 - Single-instance lock to reduce the risk of two copies using the same database and API client configuration.
-- UTC audit timestamps throughout the application.
+- UTC audit timestamps throughout the application, with live receipt time and broker-decoded execution time preserved separately.
 - CSV trade-history export and diagnostic audit bundles.
 
 <img width="1800" height="1880" alt="BouncyBot_extended_GitHub_style_layout_fixed" src="https://github.com/user-attachments/assets/8f964ac5-f5be-4cdf-b425-7955ce2ce1c3" />
@@ -443,7 +445,7 @@ dist\IBKRTradingBot\IBKRTradingBot.exe
 and creates the versioned release folder and final ZIP using the same naming pattern as IBKR Market Replay Lab:
 
 ```text
-release\IBKRTradingBot_3.1.1_Windows\
+release\IBKRTradingBot_3.1.2_Windows\
   GUI\IBKRTradingBot.exe
   docs\
   README.md
@@ -452,7 +454,7 @@ release\IBKRTradingBot_3.1.1_Windows\
   SECURITY.md
   QUICK_START.txt
 
-release\IBKRTradingBot_3.1.1_Windows.zip
+release\IBKRTradingBot_3.1.2_Windows.zip
 release\SHA256SUMS.txt
 ```
 
@@ -521,7 +523,8 @@ Superseded release-specific documents are indexed under [docs/legacy](docs/legac
 
 ## Release history
 
-- [v3.1.1 release note](docs/V3_1_1_IBKR_ORDER_VALIDATION.md) — market-rule order-price normalization, strict what-if validation, broker rejection diagnostics, and no-fill rejection circuit breaker.
+- [v3.1.2 release note](docs/V3_1_2_FILL_RECONCILIATION_AND_STAGE3_CLOSE.md) — terminal BUY settlement, idempotent late fills/commissions, strict full-OrderRef isolation, stable diagnostics, corrected execution timestamps, and profitable Stage-3 pre-close liquidation.
+- [v3.1.1 release note](docs/legacy/V3_1_1_IBKR_ORDER_VALIDATION.md) — market-rule order-price normalization, strict what-if validation, broker rejection diagnostics, and no-fill rejection circuit breaker.
 - [v3.1.0 release note](docs/legacy/V3_1_0_CLOSE_BEFORE_RTH_LIQUIDATION.md) — optional Stage-4 cancel-confirm-market liquidation before the contract-specific RTH close.
 - [v3.0.19 release note](docs/V3_0_19_TRADE_HISTORY_AUDIT_PERFORMANCE.md) — faster Trade History audits, unrestricted audit zoom, realistic sample data, the BouncyBot product name, and an explicit potential-loss market-SELL confirmation.
 - [CHANGELOG.md](CHANGELOG.md) — consolidated release history.

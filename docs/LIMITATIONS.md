@@ -1,6 +1,6 @@
 # Limitations and non-goals
 
-This document states the boundaries of v3.1.1. Treat each limitation as an operational constraint, not as a future guarantee.
+This document states the boundaries of v3.1.2. Treat each limitation as an operational constraint, not as a future guarantee.
 
 ## Strategy scope
 
@@ -85,3 +85,8 @@ Use separate accounts or deliberate operating procedures when strict position se
 - The project is licensed under the PolyForm Noncommercial License 1.0.0. Noncommercial use, modification, and redistribution are permitted only under those terms; commercial use is not granted.
 - The project license does not replace the separate licenses of PySide6, `ib_async`, Python packages, TWS/IB Gateway, or other third-party components.
 - Public source availability does not imply operational support, suitability for live trading, regulatory approval, or a warranty.
+
+
+## Multi-instance ownership boundary
+
+Multiple BouncyBot copies can share a Master API feed. v3.1.2 rejects attribution of any order or callback whose complete `OrderRef` is not already persisted locally. This prevents one installation from acting on another installation's app-prefixed order, but it also means a lost or replaced local database can require manual recovery instead of broad prefix-based discovery.

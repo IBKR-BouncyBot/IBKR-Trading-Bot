@@ -274,6 +274,7 @@ def test_reconstructed_legacy_schema_is_migrated_in_place_and_is_idempotent(tmp_
         "recovery_required",
         "protective_sell_order_ref",
         "protective_sell_filled_qty",
+        "buy_remainder_cancel_requested",
     }
     with storage.connect() as con:
         first_columns = {str(row[1]) for row in con.execute("PRAGMA table_info(cycles)")}

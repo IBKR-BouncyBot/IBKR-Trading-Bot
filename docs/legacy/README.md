@@ -2,10 +2,11 @@
 
 These files document superseded releases and implementation history. They are retained for traceability, but they may describe old labels, defaults, layouts, tests, or limitations.
 
-For current behavior, use the [project README](../../README.md), the [current documentation index](../README.md), the [changelog](../../CHANGELOG.md), and the current [`v3.1.1 release note`](../V3_1_1_IBKR_ORDER_VALIDATION.md).
+For current behavior, use the [project README](../../README.md), the [current documentation index](../README.md), the [changelog](../../CHANGELOG.md), and the current [`v3.1.2 release note`](../V3_1_2_FILL_RECONCILIATION_AND_STAGE3_CLOSE.md).
 
 ## Version 3 release notes
 
+- [`V3_1_1_IBKR_ORDER_VALIDATION.md`](V3_1_1_IBKR_ORDER_VALIDATION.md) — v3.1.1 IBKR market-rule price validation, strict what-if checks, broker rejection diagnostics, and rejection circuit breaker
 - [`V3_1_0_CLOSE_BEFORE_RTH_LIQUIDATION.md`](V3_1_0_CLOSE_BEFORE_RTH_LIQUIDATION.md) — v3.1.0 optional Stage-4 cancel-confirm-market liquidation before RTH close
 - [`V3_0_18_EVENT_DRIVEN_CADENCES.md`](V3_0_18_EVENT_DRIVEN_CADENCES.md) — v3.0.18 event-driven controller cadences and nonblocking scheduled reads
 - [`V3_0_18_IMPLEMENTATION_TEST_REPORT.txt`](V3_0_18_IMPLEMENTATION_TEST_REPORT.txt) — retained v3.0.18 implementation and verification report

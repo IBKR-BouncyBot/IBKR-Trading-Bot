@@ -182,17 +182,17 @@ def test_recovery_resume_command_recovers_matching_open_buy_order(tmp_path, monk
 
 
 
-def test_recovery_cancel_app_order_cancels_orphan_app_owned_order(tmp_path, monkeypatch):
+def test_recovery_rejects_unmatched_prefixed_order_from_shared_master_feed(tmp_path, monkeypatch):
     adapter = RecoveryAdapter(open_sequences=[[_order(APP_REF_SELL, order_id=202)], []])
     controller = _controller(tmp_path, monkeypatch, adapter=adapter)
     controller.active_cycle = None
 
     controller._handle_command("CANCEL_RECOVERY_APP_ORDER", {})
 
-    assert adapter.cancel_calls == [(APP_REF_SELL, 202)]
+    assert adapter.cancel_calls == []
     assert controller._last_recovery_probe["open_app_orders"] == []
     assert controller._recovery_required is False
-    assert "Cancel requested for 1 app-owned order" in controller.status
+    assert controller.status == "No app-owned open order is visible to cancel."
 
 
 

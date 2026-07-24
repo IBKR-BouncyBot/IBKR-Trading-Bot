@@ -1,6 +1,6 @@
 # Strategy rules
 
-This document is the current functional description of the five-stage strategy in v3.1.1. It describes application decisions; IBKR remains authoritative for accepted order state and execution.
+This document is the current functional description of the five-stage strategy in v3.1.2. It describes application decisions; IBKR remains authoritative for accepted order state and execution.
 
 ## Scope and invariants
 
@@ -76,7 +76,7 @@ A quantity below one blocks order submission.
 - `buy_rebound_trail_pct > 0`: submit a native BUY `TRAIL` order.
 - `buy_rebound_trail_pct == 0`: submit a market BUY immediately after the initial-drop condition.
 
-After any positive BUY fill, the controller attempts to cancel the unfilled remainder. The cycle proceeds with the recorded filled quantity and actual average fill.
+After the first positive BUY fill, the controller requests cancellation of any unfilled remainder once, but the cycle remains in Stage 2 until the original BUY order is terminal. While cancellation is pending, every later cumulative fill and execution callback is reconciled. Stage 3 begins only after IBKR reports `Filled`, `Cancelled`, `ApiCancelled`, `Inactive`, or `Rejected`, using the final app-owned quantity, weighted average BUY price, and all commissions received so far. A substantive rejection still activates the rejection circuit breaker.
 
 An unfilled BUY that becomes `Inactive` or `Rejected`, or reaches a terminal state with a substantive broker rejection, stops the cycle in `ERROR` for manual review. It is not automatically retried. An ordinary confirmed cancellation without a substantive rejection still resets Stage 2 to Stage 1.
 
@@ -129,18 +129,26 @@ After submission, IBKR controls trailing behavior. The application polls and rec
 
 ### Optional close-before-RTH liquidation
 
-The policy is disabled by default and applies only when Stage 4 contains the normal final native `SELL_TRAIL` order. It does not alter Stage 2, Stage 3, a protective SELL, or a zero-trail/other market SELL.
+The policy is disabled by default and uses the contract's confirmed, date-specific RTH close. It applies to positions in both Stage 3 and Stage 4.
 
-At the configured number of minutes before the contract-specific RTH close, the controller:
+In Stage 3, at the configured cutoff:
 
-1. marks the close workflow active and requests cancellation of the final SELL trail once;
-2. continues polling the original order and accepts full or partial fills during the cancellation race;
-3. waits for a terminal broker status before creating another SELL;
-4. calculates remaining app-owned shares from persisted SELL executions;
-5. submits one `DAY` market SELL with `outsideRth=False` for only that remainder;
-6. completes Stage 5 only after cumulative SELL fills equal the recorded BUY quantity.
+1. the selected current price must be strictly greater than the weighted average BUY fill price;
+2. commissions are deliberately ignored for this eligibility comparison;
+3. if no protective SELL is working, one RTH-only `DAY` market SELL is submitted for the app-owned unsold quantity;
+4. if a protective SELL is working, BouncyBot requests cancellation once, waits for a terminal broker status, includes any fills received during that race, rechecks the selected price, and submits only the remaining quantity;
+5. if the selected price is no longer strictly above the average BUY price after cancellation, the cycle enters `ERROR` for manual review rather than transmitting the replacement.
 
-If the original trail fills completely during cancellation, no replacement is sent. If cancellation is not confirmed before RTH closes, the original order remains the only app exit order. If cancellation is terminal but no open RTH session remains, or if the replacement fails or remains incomplete at the close, the cycle stops in `ERROR` for manual review. No outside-RTH replacement is submitted. The market order can realize a loss and has no price guarantee.
+In Stage 4, the established cancel-confirm-replace workflow remains:
+
+1. request cancellation of the normal final native SELL trail once;
+2. continue polling the original order and accept full or partial fills during the cancellation race;
+3. wait for a terminal broker status;
+4. calculate remaining app-owned shares from persisted SELL executions;
+5. submit one `DAY`, `outsideRth=False` market SELL for only that remainder;
+6. complete Stage 5 only after cumulative app-owned SELL fills equal cumulative app-owned BUY fills.
+
+The Stage-3 quote test is not a fill-price guarantee. A market order can execute below the checked quote, below the average BUY price, or at a loss. No outside-RTH fallback is submitted. Unknown session timing, unresolved cancellation, rejected or incomplete replacement orders, late BUY fills after an exit was created, and quantity conflicts fail closed into manual review.
 
 ## Stage 5 — `CYCLE_COMPLETE`
 

@@ -2,6 +2,29 @@
 
 This file summarizes behavior-changing and maintenance releases represented by the repository. Historical implementation notes remain in `docs/legacy/` for traceability. Current behavior is documented in `README.md` and the current guides linked from `docs/README.md`.
 
+## v3.1.2
+
+### Fixed
+
+- Kept the original Stage-2 BUY order under supervision until IBKR reports a terminal state. A partial fill now remains in Stage 2, requests cancellation of only the unfilled remainder once, and continues reconciling cumulative fills received during the cancellation race before Stage 3 begins.
+- Made execution and commission callback processing idempotent by exact IBKR execution ID. Execution details and commission reports may arrive in either order or be replayed after reconnect without duplicating quantity or commission. A stable residual cumulative-fill placeholder bridges order-status totals until individual execution IDs arrive, then shrinks or disappears as those callbacks are applied.
+- Replaced shared-prefix ownership fallback with strict full-`OrderRef` ownership. Broker callbacks and Master-client open-order feeds are attached to a cycle only when the complete reference already exists in that portable installation's SQLite data. Unmatched `IBKRBOT|...` events remain unowned diagnostics and cannot change the active cycle or trigger cancellation.
+- Corrected native trailing-order diagnostic throttling so changing market prices no longer create a new throttle identity every strategy tick. The stable key is cycle, side, and exact order reference.
+- Corrected execution-time persistence. Live callbacks use ib_async's receipt timestamp as the canonical UTC execution timeline while preserving the broker-decoded execution time separately; recovered fills use the decoded broker time. This avoids the host-timezone double-offset seen in earlier audit exports.
+- Extended **Cancel SELL trail and liquidate before close** to Stage 3. At the configured cutoff, BouncyBot submits an RTH-only `DAY` market SELL for the app-owned unsold quantity only when the selected current price is strictly above the average BUY fill price. Commissions are intentionally ignored for this eligibility comparison. If a protective SELL is working, it is cancelled and confirmed terminal before the remaining quantity is submitted.
+
+### Safety and compatibility
+
+- A Stage-3 profitability check is not an execution-price guarantee. The market fill may be below both the checked quote and the average BUY price. If the quote is no longer strictly profitable after a protective-order cancellation, the cycle stops in `ERROR` rather than transmitting a replacement SELL.
+- Late BUY fills that arrive after an exit order has already been created, or execution-ledger SELL quantity above app-owned BUY quantity, stop the cycle in `ERROR` for manual review rather than silently understating or overselling the position.
+- Existing Stage-4 cancel-confirm-replace behavior remains unchanged. No outside-RTH replacement is submitted.
+- SQLite migration is additive and idempotent. v3.1.2 adds `cycles.buy_remainder_cancel_requested` with a default of false; existing v3.1.1, v3.1.0, and v3.0.19 databases remain forward-compatible.
+
+### Documentation and tests
+
+- Added focused deterministic coverage for partial-fill cancellation races, terminal cumulative fills followed by late callbacks, callback replay and ordering, late completed-cycle commissions, strict foreign-reference rejection, stable throttling, execution-time normalization, Stage-3 profitable-close boundaries, protective-order cancel/replace, restart recovery, and overfill safeguards.
+- Added [`docs/V3_1_2_FILL_RECONCILIATION_AND_STAGE3_CLOSE.md`](docs/V3_1_2_FILL_RECONCILIATION_AND_STAGE3_CLOSE.md) and archived the v3.1.1 release note under `docs/legacy/`.
+
 ## v3.1.1
 
 ### Fixed
@@ -20,7 +43,7 @@ This file summarizes behavior-changing and maintenance releases represented by t
 ### Documentation and tests
 
 - Added focused deterministic coverage for IREN-style price bands, exchange/rule mapping, band-boundary rounding, rule caching and failure, strict what-if results, callback-order races, bounded error retention, manual-order isolation, broker-event persistence, cancellation distinction, and rejection stopping.
-- Added [`docs/V3_1_1_IBKR_ORDER_VALIDATION.md`](docs/V3_1_1_IBKR_ORDER_VALIDATION.md) and archived the v3.1.0 release note under `docs/legacy/`.
+- Added [`docs/V3_1_1_IBKR_ORDER_VALIDATION.md`](docs/legacy/V3_1_1_IBKR_ORDER_VALIDATION.md) and archived the v3.1.0 release note under `docs/legacy/`.
 
 ## v3.1.0
 

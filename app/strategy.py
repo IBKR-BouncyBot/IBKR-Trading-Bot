@@ -25,7 +25,7 @@ from .models import (
     utc_now_iso,
 )
 
-TERMINAL_ORDER_STATUSES = {"Filled", "Cancelled", "Inactive", "ApiCancelled"}
+TERMINAL_ORDER_STATUSES = {"Filled", "Cancelled", "Inactive", "ApiCancelled", "Rejected"}
 WORKING_ORDER_STATUSES = {"PendingSubmit", "PreSubmitted", "Submitted", "ApiPending"}
 
 
@@ -100,6 +100,11 @@ def _protective_sell_stop_price(cycle: CycleState) -> float:
 
 class StrategyEngine:
     """Pure strategy-state logic. Broker calls are represented as returned actions."""
+
+    @staticmethod
+    def recalculate_rise_trigger_price(cycle: CycleState) -> float:
+        """Return the minimum-profit activation price for current BUY facts."""
+        return _safe_rise_trigger_price(cycle)
 
     @staticmethod
     def start_cycle(settings: StrategySettings, cycle_number: int, account: str, last_price: float, realized_net_profit: float) -> CycleState:
@@ -383,10 +388,12 @@ class StrategyEngine:
 
     @staticmethod
     def on_buy_fill(cycle: CycleState, filled_qty: int, avg_fill_price: float, status: str, commission: float = 0.0) -> tuple[CycleState, list[StrategyAction]]:
-        """Handle any positive BUY fill.
+        """Reconcile cumulative BUY fills and settle only after terminal status.
 
-        Per requirement, the strategy works with whatever quantity filled and
-        asks the controller to cancel any still-open remainder.
+        A partial fill can be followed by another fill while IBKR is processing
+        the cancellation request.  The cycle therefore remains in Stage 2 until
+        the original BUY order reaches a terminal state.  Only then is the final
+        app-owned quantity used to enter Stage 3 and size any protective SELL.
         """
         next_cycle = copy(cycle)
         actions: list[StrategyAction] = []
@@ -402,7 +409,14 @@ class StrategyEngine:
         next_cycle.buy_filled_at = next_cycle.buy_filled_at or utc_now_iso()
         next_cycle.rise_trigger_price = _safe_rise_trigger_price(next_cycle)
 
-        if next_cycle.buy_order_ref and next_cycle.quantity > filled_qty and status not in TERMINAL_ORDER_STATUSES:
+        terminal = str(status or "").strip() in TERMINAL_ORDER_STATUSES
+        if (
+            next_cycle.buy_order_ref
+            and next_cycle.quantity > filled_qty
+            and not terminal
+            and not bool(getattr(next_cycle, "buy_remainder_cancel_requested", False))
+        ):
+            next_cycle.buy_remainder_cancel_requested = True
             actions.append(
                 StrategyAction(
                     "CANCEL_ORDER",
@@ -414,8 +428,14 @@ class StrategyEngine:
                     },
                 )
             )
+        if not terminal:
+            next_cycle.stage = Stage.BUY_TRAIL_ACTIVE
+            next_cycle.touch()
+            return next_cycle, actions
+
+        next_cycle.buy_remainder_cancel_requested = False
         next_cycle.stage = Stage.WAIT_RISE_TRIGGER
-        if bool(getattr(next_cycle, "protective_sell_enabled", False)):
+        if bool(getattr(next_cycle, "protective_sell_enabled", False)) and not next_cycle.protective_sell_order_ref:
             stop_price = _protective_sell_stop_price(next_cycle)
             if stop_price > 0:
                 next_cycle.protective_sell_initial_stop_price = stop_price
@@ -677,6 +697,7 @@ class StrategyEngine:
             next_cycle.buy_order_id = None
             next_cycle.buy_perm_id = None
             next_cycle.buy_status = "SubmitFailed"
+            next_cycle.buy_remainder_cancel_requested = False
             next_cycle.quantity = 0
             next_cycle.buy_initial_trail_stop_price = None
         elif side == "PROTECTIVE_SELL":

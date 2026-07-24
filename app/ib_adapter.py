@@ -13,17 +13,20 @@ UTC so broker diagnostics align with SQLite and market captures.
 
 from __future__ import annotations
 
+import datetime as dt
+import decimal
 import time
 from collections import deque
 from dataclasses import asdict, dataclass
-from datetime import datetime, timedelta, timezone
-from datetime import time as datetime_time
-from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP, Decimal, InvalidOperation
 from math import isfinite
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
 from .models import APP_ORDER_PREFIX, utc_now_iso
+
+# Preserve the historical module-level datetime seam used by deterministic
+# RTH tests while keeping Ruff-safe module imports.
+datetime = dt.datetime
 
 
 class BrokerAdapterError(RuntimeError):
@@ -243,18 +246,18 @@ def _round_decimal_increment(price: float, increment: float, direction: str) -> 
     """Round exactly to an increment without binary floating-point drift."""
     round_direction = _normalize_round_direction(direction)
     try:
-        decimal_price = Decimal(str(price))
-        decimal_increment = Decimal(str(increment))
-    except (InvalidOperation, ValueError) as exc:
+        decimal_price = decimal.Decimal(str(price))
+        decimal_increment = decimal.Decimal(str(increment))
+    except (decimal.InvalidOperation, ValueError) as exc:
         raise BrokerAdapterError("Order price and increment must be finite numeric values.") from exc
     if not decimal_price.is_finite() or decimal_price <= 0:
         raise BrokerAdapterError("Order price must be a finite value greater than zero.")
     if not decimal_increment.is_finite() or decimal_increment <= 0:
         raise BrokerAdapterError("Order-price increment must be a finite value greater than zero.")
     rounding = {
-        "up": ROUND_CEILING,
-        "down": ROUND_FLOOR,
-        "nearest": ROUND_HALF_UP,
+        "up": decimal.ROUND_CEILING,
+        "down": decimal.ROUND_FLOOR,
+        "nearest": decimal.ROUND_HALF_UP,
     }[round_direction]
     units = (decimal_price / decimal_increment).to_integral_value(rounding=rounding)
     normalized = units * decimal_increment
@@ -446,8 +449,9 @@ class IbAsyncTwsAdapter(BrokerAdapter):
     """Concrete BrokerAdapter backed by ib_async and the TWS socket API.
 
     The adapter caches live market-data subscriptions and open trades. It does
-    not create, modify, or cancel manual TWS orders because every recovery and
-    cancel path filters on the IBKRBOT| OrderRef prefix.
+    not create, modify, or cancel manual TWS orders. The adapter filters the
+    application family by prefix, while the controller requires an exact full
+    OrderRef already persisted by the local installation before acting on it.
     """
 
     _GENERIC_TICK_LIST = "232"
@@ -954,6 +958,43 @@ class IbAsyncTwsAdapter(BrokerAdapter):
                 return value
         return None
 
+    @staticmethod
+    def _utc_iso_timestamp(value: Any) -> str:
+        """Normalize an ib_async datetime-like value to an aware UTC ISO time."""
+        if value in (None, ""):
+            return ""
+        if isinstance(value, dt.datetime):
+            current = value
+            if current.tzinfo is None:
+                current = current.replace(tzinfo=dt.timezone.utc)
+            return current.astimezone(dt.timezone.utc).isoformat()
+        text = str(value).strip()
+        if not text:
+            return ""
+        try:
+            parsed = dt.datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except Exception:
+            return text
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=dt.timezone.utc)
+        return parsed.astimezone(dt.timezone.utc).isoformat()
+
+    @classmethod
+    def _fill_execution_times(cls, fill: Any) -> tuple[str, str, str]:
+        """Return canonical, broker-decoded, and live-receipt timestamps.
+
+        For live ``execDetails`` callbacks, ib_async stamps ``Fill.time`` from
+        the wrapper's current UTC time.  That receipt timestamp avoids a host
+        timezone offset being applied twice to ``Execution.time``.  Recovery
+        fills use the decoded execution time for both values, so the same helper
+        remains deterministic after reconnect.
+        """
+        execution = getattr(fill, "execution", None)
+        broker_time = cls._utc_iso_timestamp(getattr(execution, "time", None))
+        receipt_time = cls._utc_iso_timestamp(getattr(fill, "time", None))
+        canonical = receipt_time or broker_time or utc_now_iso()
+        return canonical, broker_time, receipt_time
+
     def _record_broker_event(self, event_type: str, *args: Any, **kwargs: Any) -> None:
         trade = self._first_with_attr(args, "order")
         fill = self._first_with_attr(args, "execution")
@@ -973,6 +1014,11 @@ class IbAsyncTwsAdapter(BrokerAdapter):
         if trade is not None and order_ref:
             self._trades_by_ref[str(order_ref)] = trade
             self._bind_pending_order_errors(trade)
+        executed_at, broker_execution_time, fill_received_at = self._fill_execution_times(fill)
+        if fill is None:
+            executed_at = ""
+            broker_execution_time = ""
+            fill_received_at = ""
         item = {
             "event_type": event_type,
             "created_at": utc_now_iso(),
@@ -990,6 +1036,9 @@ class IbAsyncTwsAdapter(BrokerAdapter):
             "commission": getattr(commission_report, "commission", None),
             "currency": getattr(commission_report, "currency", None) or getattr(contract, "currency", None),
             "ticker": str(getattr(contract, "symbol", "") or "").upper(),
+            "executed_at": executed_at,
+            "broker_execution_time": broker_execution_time,
+            "fill_received_at": fill_received_at,
             "raw_args": [repr(arg) for arg in args],
             "raw_kwargs": {str(k): repr(v) for k, v in kwargs.items()},
         }
@@ -1971,13 +2020,13 @@ class IbAsyncTwsAdapter(BrokerAdapter):
         return self.price_snapshot(contract, timeout=timeout).price
 
     @staticmethod
-    def _fallback_us_equity_rth(now_utc: Optional[datetime] = None) -> RthStatus:
-        now_utc = now_utc or datetime.now(timezone.utc)
+    def _fallback_us_equity_rth(now_utc: Optional[dt.datetime] = None) -> RthStatus:
+        now_utc = now_utc or datetime.now(dt.timezone.utc)
         try:
             eastern = ZoneInfo("America/New_York")
             local = now_utc.astimezone(eastern)
-            open_time = datetime_time(9, 30)
-            close_time = datetime_time(16, 0)
+            open_time = dt.time(9, 30)
+            close_time = dt.time(16, 0)
             is_trading_day = local.weekday() < 5
             is_open = is_trading_day and open_time <= local.time() < close_time
             session_open = local.replace(hour=9, minute=30, second=0, microsecond=0)
@@ -1997,10 +2046,14 @@ class IbAsyncTwsAdapter(BrokerAdapter):
             return RthStatus(False, "fallback_failed", "Could not determine regular trading hours; failing closed.", now_utc.isoformat())
 
     @staticmethod
-    def _parse_liquid_hours_window(liquid_hours: str, time_zone: str, now_utc: Optional[datetime] = None) -> Optional[RthStatus]:
+    def _parse_liquid_hours_window(
+        liquid_hours: str,
+        time_zone: str,
+        now_utc: Optional[dt.datetime] = None,
+    ) -> Optional[RthStatus]:
         if not liquid_hours:
             return None
-        now_utc = now_utc or datetime.now(timezone.utc)
+        now_utc = now_utc or datetime.now(dt.timezone.utc)
         try:
             tz = ZoneInfo(time_zone or "America/New_York")
         except Exception:
@@ -2027,14 +2080,14 @@ class IbAsyncTwsAdapter(BrokerAdapter):
                     time_zone,
                     session_date=today,
                 )
-            windows: list[tuple[datetime, datetime, str, str]] = []
+            windows: list[tuple[dt.datetime, dt.datetime, str, str]] = []
             for raw_span in ranges.split(","):
                 span = raw_span.strip()
                 if "-" not in span:
                     continue
                 start_text, end_text = span.split("-", 1)
 
-                def parse_endpoint(text: str) -> datetime:
+                def parse_endpoint(text: str) -> dt.datetime:
                     text = text.strip()
                     if len(text) == 4:
                         date_part = today
@@ -2053,7 +2106,7 @@ class IbAsyncTwsAdapter(BrokerAdapter):
                 except Exception:
                     continue
                 if end <= start and len(end_text.strip()) == 4:
-                    end += timedelta(days=1)
+                    end += dt.timedelta(days=1)
                 if end <= start:
                     continue
                 windows.append((start, end, start_text.strip(), end_text.strip()))
@@ -2107,7 +2160,12 @@ class IbAsyncTwsAdapter(BrokerAdapter):
 
     def regular_trading_hours_status(self, contract: QualifiedContract) -> RthStatus:
         if not self.is_connected():
-            return RthStatus(False, "not_connected", "Not connected to TWS; trading is blocked.", datetime.now(timezone.utc).isoformat())
+            return RthStatus(
+                False,
+                "not_connected",
+                "Not connected to TWS; trading is blocked.",
+                datetime.now(dt.timezone.utc).isoformat(),
+            )
         con_id = int(contract.con_id or getattr(contract.raw, "conId", 0) or 0)
         cache_key = con_id or hash((contract.ticker, getattr(contract.raw, "exchange", "")))
         cached = self._rth_cache.get(cache_key)
@@ -2549,13 +2607,17 @@ class IbAsyncTwsAdapter(BrokerAdapter):
                     execution_value += shares * price
                     execution_shares += shares
                 total_commission += commission
+                executed_at, broker_execution_time, fill_received_at = self._fill_execution_times(fill)
                 executions.append({
                     "execId": getattr(execution, "execId", None),
                     "shares": shares or getattr(execution, "shares", None),
                     "price": price or getattr(execution, "price", None),
                     "avgPrice": getattr(execution, "avgPrice", None),
                     "side": getattr(execution, "side", None),
-                    "time": getattr(execution, "time", None),
+                    "time": executed_at,
+                    "executed_at": executed_at,
+                    "brokerExecutionTime": broker_execution_time,
+                    "fillReceivedAt": fill_received_at,
                     "commission": commission,
                     "currency": getattr(commission_report, "currency", None),
                 })
@@ -2640,8 +2702,9 @@ class IbAsyncTwsAdapter(BrokerAdapter):
             getattr(fill, "orderRef", ""),
             getattr(order, "orderRef", ""),
         ]
-        if order_ref and any(str(ref or "") == order_ref for ref in ref_candidates):
-            return True
+        nonempty_refs = [str(ref or "").strip() for ref in ref_candidates if str(ref or "").strip()]
+        if order_ref and nonempty_refs:
+            return any(ref == order_ref for ref in nonempty_refs)
         exec_order_id = self._as_optional_int(getattr(execution, "orderId", None))
         exec_perm_id = self._as_optional_int(getattr(execution, "permId", None))
         if perm_id and exec_perm_id == int(perm_id):
@@ -2674,13 +2737,17 @@ class IbAsyncTwsAdapter(BrokerAdapter):
             total_shares += shares
             total_value += shares * price
             total_commission += commission
+            executed_at, broker_execution_time, fill_received_at = self._fill_execution_times(fill)
             executions.append({
                 "execId": getattr(execution, "execId", None),
                 "shares": shares,
                 "price": price,
                 "avgPrice": getattr(execution, "avgPrice", None),
                 "side": getattr(execution, "side", action),
-                "time": getattr(execution, "time", None),
+                "time": executed_at,
+                "executed_at": executed_at,
+                "brokerExecutionTime": broker_execution_time,
+                "fillReceivedAt": fill_received_at,
                 "commission": commission,
                 "currency": getattr(commission_report, "currency", None),
             })
@@ -2836,6 +2903,7 @@ class IbAsyncTwsAdapter(BrokerAdapter):
             return None
         if shares <= 0 or price <= 0:
             return None
+        executed_at, broker_execution_time, fill_received_at = self._fill_execution_times(fill)
         return {
             "ticker": str(getattr(contract, "symbol", "") or "").upper(),
             "con_id": getattr(contract, "conId", None),
@@ -2851,7 +2919,10 @@ class IbAsyncTwsAdapter(BrokerAdapter):
             "order_id": getattr(execution, "orderId", None),
             "perm_id": getattr(execution, "permId", None),
             "execution_id": getattr(execution, "execId", None),
-            "time": str(getattr(execution, "time", "") or ""),
+            "time": executed_at,
+            "executed_at": executed_at,
+            "broker_execution_time": broker_execution_time,
+            "fill_received_at": fill_received_at,
             "account": str(getattr(execution, "acctNumber", "") or ""),
             "exchange": str(getattr(execution, "exchange", "") or ""),
             "raw": {

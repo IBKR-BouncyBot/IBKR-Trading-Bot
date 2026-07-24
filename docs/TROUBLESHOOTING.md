@@ -57,7 +57,7 @@ A blocker is usually intentional. Do not disable it solely to make the status gr
 
 ## A BUY becomes Inactive or Rejected
 
-Open the Live Strategy event list or the Cycle Audit broker/decision events and locate the retained IBKR error code and message. In v3.1.1 a definitive no-fill rejection moves the cycle to `ERROR` and does not automatically retry. This is intentional; restarting the same invalid request can produce repeated broker rejections.
+Open the Live Strategy event list or the Cycle Audit broker/decision events and locate the retained IBKR error code and message. In v3.1.2 a definitive no-fill rejection moves the cycle to `ERROR` and does not automatically retry. This is intentional; restarting the same invalid request can produce repeated broker rejections.
 
 For `Invalid Price`, minimum-variation, or invalid-stop errors:
 
@@ -200,3 +200,16 @@ Audit bundles and databases may contain sensitive account/trading information. S
 This message means the optional Stage-4 workflow could not prove a safe cancel-confirm-replace sequence before the regular-session boundary. Common causes are an unconfirmed trailing-order cancellation, unavailable contract-hours metadata, a replacement rejection, or a replacement that remained incomplete at the close.
 
 Check TWS/Gateway first. Confirm whether the original trailing SELL or replacement market SELL is still open, cancelled, partially filled, or filled. Do not submit another SELL until the app-owned unsold quantity and every app-created SELL order are reconciled. BouncyBot deliberately does not send an outside-RTH fallback or silently recreate the cancelled trail. Use the Reconciliation tab and export an audit bundle before marking the situation manually handled.
+
+
+## A partial BUY was followed by more fills during cancellation
+
+This is a normal broker race. v3.1.2 keeps the cycle in Stage 2 until the original BUY order is terminal. Compare IBKR cumulative filled quantity with the cycle BUY quantity and execution table. Duplicate execution IDs should appear only once; late commission reports should enrich the existing row. If a late BUY arrives after an exit order already exists, BouncyBot stops in `ERROR` for manual quantity reconciliation.
+
+## Another BouncyBot instance appears in the Master feed
+
+The common `IBKRBOT|` prefix is not sufficient ownership proof. This installation applies, cancels, and attributes an order only when the complete `OrderRef` already exists in its local SQLite data. Unmatched events can remain in raw broker diagnostics with no cycle link but must not alter the active cycle.
+
+## Stage 3 did not liquidate at the pre-close cutoff
+
+The option acts in Stage 3 only when a fresh selected current price is strictly above the weighted average BUY fill price. Commissions are ignored for that eligibility comparison. If the price is equal or lower, no SELL is submitted at that observation. Even when eligible, the resulting market fill is not guaranteed to remain profitable.

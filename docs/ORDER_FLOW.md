@@ -10,7 +10,7 @@ All strategy orders receive an `OrderRef` beginning with:
 IBKRBOT|
 ```
 
-The suffix identifies cycle/side intent. Recovery and cancellation operate only on orders with this prefix. Manual orders must not reuse it.
+The suffix identifies cycle/side intent. The prefix alone is not ownership proof when several portable installations share a Master API feed. Recovery, cancellation, and callback attribution require the complete `OrderRef` to exactly match a reference already persisted by that installation. Unmatched prefixed orders are left unowned and are never assigned to the active cycle. Manual orders must not reuse an app reference.
 
 ## Before any new BUY
 
@@ -80,20 +80,21 @@ For app-owned orders, the adapter retains order-specific IBKR error callbacks an
 
 If a Stage-2 BUY has no fill and becomes `Inactive` or `Rejected`, or reaches a terminal no-fill state with a substantive broker rejection, the cycle moves to `ERROR` for manual review. BouncyBot does not create a replacement or automatically return to Stage 1. A normal `Cancelled` or `ApiCancelled` result without a substantive rejection still resets the entry setup; code 202 by itself is treated as the ordinary cancellation notification.
 
-## BUY fills and partial fills
+## BUY fills, cancellation races, and late callbacks
 
-Order polling and recent-execution recovery can both report fills. Execution IDs are deduplicated in SQLite.
+Order-status polling, execution callbacks, commission callbacks, and recent-execution recovery can report the same economic fill in different orders. SQLite uses the exact IBKR execution ID as the idempotency key. A duplicate callback enriches the existing row rather than adding quantity again. Commission-before-execution callbacks are held briefly and applied when the matching execution arrives; commission-after-execution callbacks update that same row and cycle P/L.
 
-After any positive BUY fill:
+Order status can expose cumulative filled quantity before individual execution IDs arrive. BouncyBot stores a stable residual cumulative placeholder for only the unrepresented quantity and commission. As real execution callbacks arrive, the placeholder shrinks and is deleted when the callback ledger fully represents the broker cumulative total. This prevents both lost fills and double counting.
 
-- the filled quantity and weighted average price are recorded;
-- the app captures the commission when reported;
-- remaining BUY quantity is cancelled when possible;
-- strategy state proceeds using only the filled quantity;
-- a post-fill database backup and RAM market-data capture session are initiated;
-- optional protective SELL submission is evaluated.
+After the first positive BUY fill:
 
-A partial fill is a real position. The app does not wait indefinitely for the full original quantity before managing the exit.
+1. the cycle remains in Stage 2;
+2. cancellation of the unfilled remainder is requested once;
+3. the original BUY continues to be polled until terminal;
+4. additional fills received during the cancellation race update quantity, weighted average price, and commission;
+5. Stage 3 begins only after terminal settlement, using the final cumulative app-owned BUY quantity.
+
+If cancellation submission itself fails, the one-shot flag is cleared so a later poll can retry. A late BUY execution after an exit order already exists, or any SELL ledger above the app-owned BUY quantity, stops the cycle in `ERROR` for manual review.
 
 ## Protective SELL flow
 
@@ -130,17 +131,19 @@ The configured minimum profit is not a limit price. Both native-stop-triggered a
 
 ### Optional pre-close cancel-and-liquidate path
 
-When enabled for a cycle before Stage 4, the controller supervises a narrow cancel/replace workflow for the normal final `SELL_TRAIL`:
+When enabled, the controller supervises two related workflows at the contract-specific RTH cutoff.
 
-- the date-specific cutoff comes from the current contract's RTH boundary;
-- cancellation is requested before any replacement is created;
-- broker polling continues during the cancellation race;
-- original-trail partial fills are persisted and deducted from the replacement quantity;
-- the replacement is one SELL `MKT`, `TIF=DAY`, `outsideRth=False` order with an `RTH_CLOSE_SELL_MARKET` app reference;
-- cumulative original and replacement executions determine completion and P/L;
-- a full original fill suppresses the replacement;
-- an unconfirmed cancellation suppresses the replacement;
-- a failed or incomplete replacement moves the cycle to `ERROR` instead of starting a second order or using extended hours.
+**Stage 3:** the selected current price must be strictly above the average BUY fill price; commissions are ignored for that eligibility test. With no protective SELL, one RTH-only `DAY` market SELL is submitted for the app-owned unsold quantity. With a working protective SELL, BouncyBot cancels it once, waits for a terminal broker status, accounts for fills during cancellation, rechecks the price condition, and then submits only the remainder.
+
+**Stage 4:** BouncyBot cancels the normal final SELL trail once, waits for a terminal broker status, accounts for full or partial fills during cancellation, and submits a `DAY`, `outsideRth=False` market SELL for only the remaining app-owned quantity.
+
+For both stages:
+
+- no replacement is submitted while another app-created SELL may still execute;
+- cumulative protective, final-trail, and replacement executions determine completion and P/L;
+- no outside-RTH fallback is sent;
+- missing timing, cancellation uncertainty, rejection, incomplete close, or quantity conflict stops in `ERROR`;
+- the Stage-3 price test does not guarantee a profitable market fill.
 
 The operator-requested Stop-screen market close remains a separate workflow. While automatic close-before-RTH liquidation is active, a second manual market-close request is refused to avoid duplicate SELL exposure.
 
@@ -172,7 +175,7 @@ After a local reconnect, 1101/1102 restoration, or startup recovery, the control
 - current contract/account facts;
 - local fill ledger and unsold quantity.
 
-It may attach to a known app order, import missing executions, complete a cycle, or require manual review. The cached broker probe is point-in-time: a newer normal terminal poll updates or removes its matching order row, while a later explicit probe that still reports the order remains visible. It does not recreate an order when ownership/state is uncertain.
+It may attach to a locally known exact `OrderRef`, import missing executions idempotently, complete a cycle, or require manual review. The cached broker probe is point-in-time: a newer normal terminal poll updates or removes its matching order row, while a later explicit probe that still reports the order remains visible. It does not recreate or cancel an order when exact ownership/state is uncertain.
 
 ## Manual intervention boundary
 
