@@ -4,21 +4,27 @@ Risk controls are layered. Some are always part of safe order submission, some a
 
 These controls reduce specific risks; none guarantees safety or profitability.
 
-## Optional Stage-4 liquidation before RTH close
+## Optional Stage-3/Stage-4 liquidation before RTH close
 
-**Cancel SELL trail and liquidate before close** is off by default. It is an exit policy, not a profit guard. The configured minute value uses the contract's date-specific regular-session close and may therefore start earlier on an early-close day.
+**Cancel SELL trail and liquidate before close** is off by default. The configured minute value uses the contract's date-specific regular-session close and may therefore start earlier on an early-close day.
 
-The safety invariant is cancel-confirm-replace: no replacement market SELL is transmitted while the original final SELL trail may still execute. Any fills reported during cancellation reduce the remaining quantity. The replacement is RTH-only, `DAY`, and market-priced, so it prioritizes exiting over price certainty and can realize a loss.
+In Stage 3, the policy is conditional: the selected current price must be strictly above the average BUY fill price at the cutoff, with commissions intentionally ignored. If a protective SELL is working, the safety invariant is cancel-confirm-replace; its fills reduce the remaining quantity, and the price condition is checked again before replacement. With no protective SELL, the app can submit the market SELL directly.
+
+In Stage 4, the established invariant remains cancel-confirm-replace: no replacement market SELL is transmitted while the original final SELL trail may still execute. Any fills reported during cancellation reduce the remaining quantity.
+
+The replacement is RTH-only, `DAY`, and market-priced. The Stage-3 quote comparison is not a price guarantee: the fill can be below the checked quote, below the average BUY price, and can realize a loss.
 
 Failure behavior is conservative:
 
 - unknown session boundary: do not start the automatic workflow;
+- Stage-3 quote not strictly above average BUY: do not sell at that observation; a later fresh profitable quote before close may still qualify;
 - cancellation not terminal by close: do not submit a second SELL;
 - cancellation terminal after RTH: do not submit outside RTH;
+- Stage-3 quote falls back to or below average BUY after a protective cancellation: stop in `ERROR`;
 - replacement rejected, failed, or incomplete at close: stop in `ERROR` for manual review;
 - conflicting manual market-close request while the workflow is active: refuse the second request.
 
-This policy does not protect Stage 3, overnight holdings before Stage 4, broker/exchange halts, connection outages, or execution price.
+This policy does not guarantee protection against gaps, broker/exchange halts, connection outages, or execution slippage.
 
 ## Control layers
 
@@ -146,9 +152,9 @@ A new app cycle is blocked when local persisted fills show unsold shares created
 
 An account-wide external long position does not block a new app BUY. This prevents unrelated manual holdings from stopping the strategy, but it does not create broker-side lot separation.
 
-### Order prefix
+### Exact order-reference ownership
 
-Cancel and recovery operations filter `OrderRef` by `IBKRBOT|`. This reduces the risk of touching manual or third-party orders. Reusing the prefix manually defeats the boundary.
+The `IBKRBOT|` prefix identifies the application family but is not sufficient ownership proof when multiple installations share one account or Master API feed. Cancel, recovery, callback, and error attribution require the complete `OrderRef` to exactly match a value already persisted by this installation. Unmatched prefixed orders remain unowned diagnostics and cannot change the active cycle. Losing the local database can therefore require manual recovery rather than broad prefix-based cancellation.
 
 ### One app SELL at a time
 

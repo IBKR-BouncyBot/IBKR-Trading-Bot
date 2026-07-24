@@ -245,6 +245,26 @@ def run_one_cycle(
                         events.append(SimulatedEvent("protective_sell_submitted", fill_price, "Protective SELL trail submitted", cycle.stage.value, dict(action.payload)))
                     elif action.action_type == "CANCEL_ORDER":
                         events.append(SimulatedEvent("cancel_remainder", price, "Cancel remaining BUY quantity", cycle.stage.value, dict(action.payload)))
+                if fill_qty < buy_trail.quantity:
+                    cycle, terminal_actions = StrategyEngine.on_buy_fill(
+                        cycle,
+                        filled_qty=fill_qty,
+                        avg_fill_price=fill_price,
+                        status="Cancelled",
+                    )
+                    for action in terminal_actions:
+                        if action.action_type == "PLACE_PROTECTIVE_SELL_TRAIL":
+                            sell_trail = _new_trail_order(action, fill_price, "SELL")
+                            sell_trail_role = "protective"
+                            events.append(
+                                SimulatedEvent(
+                                    "protective_sell_submitted",
+                                    fill_price,
+                                    "Protective SELL trail submitted",
+                                    cycle.stage.value,
+                                    dict(action.payload),
+                                )
+                            )
                 buy_trail = None
 
         elif cycle.stage == Stage.SELL_TRAIL_ACTIVE and sell_trail is not None:

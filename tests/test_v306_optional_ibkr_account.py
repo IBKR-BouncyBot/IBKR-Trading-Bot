@@ -24,8 +24,8 @@ def test_blank_account_is_described_as_ibkr_default():
 
 
 def test_v306_version_and_documentation():
-    assert "BouncyBot - IBKR Portable Trading Bot v3.1.1" in GUI
+    assert "BouncyBot - IBKR Portable Trading Bot v3.1.2" in GUI
     assert "# BouncyBot - an IBKR Portable Trading Bot " in README
-    assert 'version = "3.1.1"' in PYPROJECT
+    assert 'version = "3.1.2"' in PYPROJECT
     assert "v3.0.6 optional IBKR account routing" in ARCHIVE
     assert "v3.0.6 optional IBKR account routing" in DOC

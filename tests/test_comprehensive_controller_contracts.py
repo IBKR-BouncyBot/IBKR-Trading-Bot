@@ -363,10 +363,10 @@ def test_execution_identity_aggregation_and_recording(controller_module: Any, tm
     assert controller._execution_matches_order(cycle, {"side": "BUY", "perm_id": "bad"}, "BUY") is False
 
     quantity, average, commission, rows = controller._aggregate_recovered_executions(cycle, "BUY")
-    assert quantity == 5
-    assert average == pytest.approx((2 * 99.0 + 3 * 101.0) / 5)
-    assert commission == pytest.approx(1.25)
-    assert len(rows) == 3
+    assert quantity == 2
+    assert average == pytest.approx(99.0)
+    assert commission == pytest.approx(0.5)
+    assert len(rows) == 2
 
     controller._record_recovered_executions(cycle, [first, second], "BUY")
     controller._record_recovered_executions(cycle, [first], "BUY")

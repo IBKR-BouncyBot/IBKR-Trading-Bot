@@ -11,19 +11,19 @@ PYPROJECT = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 BUILD_SCRIPT = (ROOT / "scripts" / "build_windows.ps1").read_text(encoding="utf-8")
 DOCS_INDEX = (ROOT / "docs" / "README.md").read_text(encoding="utf-8")
 LEGACY_INDEX = (ROOT / "docs" / "legacy" / "README.md").read_text(encoding="utf-8")
-CURRENT_RELEASE_NOTE = ROOT / "docs" / "V3_1_1_IBKR_ORDER_VALIDATION.md"
+CURRENT_RELEASE_NOTE = ROOT / "docs" / "V3_1_2_FILL_RECONCILIATION_AND_STAGE3_CLOSE.md"
 V310_RELEASE_NOTE = ROOT / "docs" / "legacy" / "V3_1_0_CLOSE_BEFORE_RTH_LIQUIDATION.md"
 
 
 def test_current_release_metadata_is_consistent_and_v310_note_is_archived() -> None:
-    assert "BouncyBot - IBKR Portable Trading Bot v3.1.1" in GUI
-    assert "This is synthetic v3.1.1 paper-trading example data." in GUI
+    assert "BouncyBot - IBKR Portable Trading Bot v3.1.2" in GUI
+    assert "This is synthetic v3.1.2 paper-trading example data." in GUI
     assert README.startswith("# BouncyBot - an IBKR Portable Trading Bot \n")
-    assert "**Current release: v3.1.1**" in README
-    assert 'version = "3.1.1"' in PYPROJECT
-    assert '$version = "3.1.1"' in BUILD_SCRIPT
-    assert "## v3.1.1" in CHANGELOG
-    assert "current v3.1.1 behavior" in DOCS_INDEX
+    assert "**Current release: v3.1.2**" in README
+    assert 'version = "3.1.2"' in PYPROJECT
+    assert '$version = "3.1.2"' in BUILD_SCRIPT
+    assert "## v3.1.2" in CHANGELOG
+    assert "current v3.1.2 behavior" in DOCS_INDEX
     assert CURRENT_RELEASE_NOTE.is_file()
     assert V310_RELEASE_NOTE.is_file()
     assert not (ROOT / "docs" / "V3_1_0_CLOSE_BEFORE_RTH_LIQUIDATION.md").exists()
@@ -39,14 +39,16 @@ def test_v310_live_strategy_dashboard_scrolls_horizontally_only_when_needed() ->
     assert "scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)" not in dashboard_block
 
 
-def test_v310_gui_exposes_default_off_stage4_liquidation_controls_and_tooltips() -> None:
+def test_v310_gui_exposes_default_off_preclose_liquidation_controls_and_tooltips() -> None:
     assert 'QCheckBox("Cancel SELL trail and liquidate before close")' in GUI
     assert "self.cancel_sell_and_liquidate_before_close_check.setChecked(False)" in GUI
     assert "self.liquidate_before_close_spin.setRange(1, 240)" in GUI
     assert "self.liquidate_before_close_spin.setValue(5)" in GUI
     assert 'self.liquidate_before_close_spin.setSuffix(" min")' in GUI
-    assert "Default OFF. Stage 4 only." in GUI
-    assert "The market fill can be below the trailing stop and can realize a loss." in GUI
+    assert "Default OFF. In Stage 3" in GUI
+    assert "commissions are ignored for that comparison" in GUI
+    assert "In Stage 4, the app cancels the final SELL trailing-stop" in GUI
+    assert "A market fill can be below the checked price or trailing stop" in GUI
     assert "No outside-RTH replacement is submitted." in GUI
 
 

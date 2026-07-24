@@ -57,7 +57,7 @@ A blank `account` is valid and means no explicit IBKR order account override.
 - protective SELL settings;
 - slippage planning settings;
 - hard risk, delayed-data, what-if, freshness, volatility, and session-timing settings;
-- Stage-4 close policy: `cancel_sell_and_liquidate_before_close_enabled` and `liquidate_before_close_minutes`.
+- Stage-3/Stage-4 close policy: `cancel_sell_and_liquidate_before_close_enabled` and `liquidate_before_close_minutes`.
 
 `rise_trigger_pct` is the historical persisted name for user-facing **Minimum profit %**. `max_cycles_per_ticker_day` is also retained as a compatibility name; current guard behavior treats it as a total completed-cycle cap for the selected ticker.
 
@@ -73,7 +73,8 @@ During blocked ATR warmup, `drop_trigger_price` can remain `NULL` by design.
 
 - `quantity`;
 - `buy_order_id`, `buy_perm_id`, `buy_order_ref`, `buy_status`;
-- `buy_filled_qty`, `avg_buy_price`, `buy_commission`, `buy_filled_at`.
+- `buy_filled_qty`, `avg_buy_price`, `buy_commission`, `buy_filled_at`;
+- `buy_remainder_cancel_requested`, which persists the one-shot partial-fill remainder-cancellation state until the original BUY becomes terminal.
 
 ### Protective SELL state
 
@@ -86,7 +87,7 @@ During blocked ATR warmup, `drop_trigger_price` can remain `NULL` by design.
 - `sell_order_id`, `sell_perm_id`, `sell_order_ref`, `sell_status`;
 - `sell_filled_qty`, `avg_sell_price`, `sell_commission`, `sell_filled_at`;
 - `gross_pnl`, `net_pnl`;
-- close-before-RTH runtime state: `close_before_rth_liquidation_requested` and `close_before_rth_cancel_requested`.
+- Stage-3/Stage-4 close-before-RTH runtime state: `close_before_rth_liquidation_requested` and `close_before_rth_cancel_requested`.
 
 Indexes support stage/ticker/history/recovery lookups by `ticker`, `stage`, `updated_at`, and `sell_filled_at`.
 
@@ -116,7 +117,7 @@ Recorded fills from live polling or recovery.
 | Fill | `side`, `shares`, `price`, `avg_price`, `commission`, `currency`, `executed_at` |
 | Diagnostics | `raw_json` |
 
-Execution IDs are indexed and checked to prevent duplicate insertion when the same fill is observed through more than one IBKR path. A recovered execution can exist without a cycle link when local ownership cannot be resolved safely. During the optional Stage-4 close workflow, persisted final-SELL executions from the original trail and replacement market order are aggregated to calculate the remaining app-owned quantity and weighted average exit price.
+Exact IBKR execution IDs are idempotency keys. Duplicate execution or commission callbacks enrich the same row rather than adding quantity again. A stable `__CUMULATIVE__|...` residual row temporarily represents only broker cumulative quantity/commission not yet backed by individual execution IDs; it shrinks or disappears as those callbacks arrive. A recovered execution can exist without a cycle link when exact local ownership cannot be resolved safely. During Stage-3 or Stage-4 close workflows, protective, final-trail, and replacement-market executions are aggregated to calculate remaining app-owned quantity and weighted average exit price.
 
 ## `events`
 
@@ -153,7 +154,7 @@ Raw broker/recovery event records.
 - `order_ref`, `order_id`, `perm_id`, `execution_id`;
 - required `raw_json`.
 
-This table preserves broker facts used for diagnostics. In v3.1.1, app-owned `ORDER_ERROR` rows retain IBKR error code/message, request/order identity, app `OrderRef`, ticker/currency, and advanced rejection JSON when supplied. The corresponding controller interpretation is also written to `decision_events` as `BROKER_ORDER_ERROR`. The table is indexed by time, order reference, and execution ID.
+This table preserves broker facts used for diagnostics. App-owned `ORDER_ERROR` rows retain IBKR error code/message, request/order identity, app `OrderRef`, ticker/currency, and advanced rejection JSON when supplied. The corresponding controller interpretation is also written to `decision_events` as `BROKER_ORDER_ERROR`. In v3.1.2, the full reference must match local persisted ownership before a cycle is attached; unmatched Master-feed events remain with `cycle_id=NULL`. The table is indexed by time, order reference, and execution ID.
 
 ## Foreign-key behavior
 
@@ -173,7 +174,7 @@ Normal application operation does not delete completed cycle history as part of 
 
 The migration path does not drop tables or rewrite trading history.
 
-v3.1.1 adds no tables or columns. Existing v3.1.0 and v3.0.19 databases open without a schema-format conversion; the new diagnostics use the existing JSON audit fields.
+v3.1.2 adds one defaulted cycle-state column: `buy_remainder_cancel_requested INTEGER NOT NULL DEFAULT 0`. No table is removed or rewritten. Existing v3.1.1, v3.1.0, and v3.0.19 databases migrate in place through the normal additive path.
 
 ## Backups
 

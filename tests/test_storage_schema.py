@@ -75,6 +75,7 @@ def test_schema_upgrade_adds_missing_recent_columns(tmp_path):
     assert "liquidate_before_close_minutes" in columns
     assert "close_before_rth_liquidation_requested" in columns
     assert "close_before_rth_cancel_requested" in columns
+    assert "buy_remainder_cancel_requested" in columns
 
 
 def test_execution_exists_treats_empty_id_as_missing(tmp_path):

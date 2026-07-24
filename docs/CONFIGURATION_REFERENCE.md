@@ -1,6 +1,6 @@
 # Configuration reference
 
-This document describes the persisted connection and strategy settings in v3.1.1. Values shown as defaults are the dataclass defaults used for a new configuration. Saved SQLite settings override them after the first run.
+This document describes the persisted connection and strategy settings in v3.1.2. Values shown as defaults are the dataclass defaults used for a new configuration. Saved SQLite settings override them after the first run.
 
 ## Connection settings
 
@@ -141,7 +141,7 @@ The reinvestment calculation uses completed cycles stored by this application, n
 | No new BUY first | `5 min` | Entry block after the regular-session open. Zero disables this sub-window. |
 | No new BUY last | `15 min` | Entry block before the regular-session close. Zero disables this sub-window. |
 | Cancel BUY before close | `5 min` | Requests cancellation of an unfilled app BUY trail before the contract's date-specific regular-session close. Zero disables this sub-window. |
-| Cancel SELL trail and liquidate before close | off | Stage 4 only. Requests cancellation of the final native SELL trail at the configured pre-close cutoff, waits for a terminal broker status, then submits one RTH-only `DAY` market SELL for the remaining app-owned shares. |
+| Cancel SELL trail and liquidate before close | off | Stage 3: at the cutoff, submits an RTH-only `DAY` market SELL only when selected current price is strictly above average BUY price; commissions are ignored. A working protective SELL is cancelled and confirmed terminal first. Stage 4: cancels the final native SELL trail, waits for terminal status, then sells the remaining app-owned shares. Market execution can still realize a loss. |
 | Liquidate before close | `5 min` | Cutoff before the contract-specific RTH close. Valid range `1-240 min`. The field is active only when the optional policy is enabled. |
 
 The first/last-minute entry windows, BUY cancellation window, and optional Stage-4 liquidation cutoff use the current contract's IBKR `liquidHours` boundaries and contract timezone. This includes date-specific early closes. If IBKR does not provide usable contract hours, the adapter exposes its existing conservative US-equity fallback; if no usable boundary is available at all, a new BUY fails closed and automatic pre-close cancellation is not guessed.

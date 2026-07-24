@@ -33,20 +33,31 @@ def test_anchor_resets_upward_and_then_places_buy_trail_action():
     assert round(actions[0].payload["initial_stop_price"], 2) == 106.08
 
 
-def test_partial_buy_fill_cancels_remaining_and_waits_for_minimum_profit_trigger():
+def test_partial_buy_fill_cancels_remaining_and_waits_for_terminal_buy_status():
     cycle = StrategyEngine.start_cycle(settings(), 1, "", 100.0, 0.0)
     cycle, _ = StrategyEngine.on_price_update(cycle, 94.0)
     cycle = StrategyEngine.on_order_submitted(cycle, cycle.buy_order_ref or "", 101, 1001, "Submitted")
 
     cycle, actions = StrategyEngine.on_buy_fill(cycle, filled_qty=3, avg_fill_price=95.0, status="Submitted")
 
-    assert cycle.stage == Stage.WAIT_RISE_TRIGGER
+    assert cycle.stage == Stage.BUY_TRAIL_ACTIVE
     assert cycle.buy_filled_qty == 3
     # Minimum profit is protected versus the actual average buy fill.
     # Avg buy 95, min profit 3%, sell trail 1% => trigger 95 * 1.03 / 0.99.
     assert round(cycle.rise_trigger_price, 2) == 98.84
     assert len(actions) == 1
     assert actions[0].action_type == "CANCEL_ORDER"
+    assert cycle.buy_remainder_cancel_requested is True
+
+    cycle, actions = StrategyEngine.on_buy_fill(
+        cycle,
+        filled_qty=3,
+        avg_fill_price=95.0,
+        status="Cancelled",
+    )
+    assert cycle.stage == Stage.WAIT_RISE_TRIGGER
+    assert cycle.buy_remainder_cancel_requested is False
+    assert actions == []
 
 
 def test_minimum_profit_trigger_places_sell_trail_action():

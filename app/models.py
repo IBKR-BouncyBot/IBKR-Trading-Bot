@@ -696,11 +696,11 @@ class StrategySettings:
     no_new_buy_last_minutes: int = 15
     cancel_buy_before_close_minutes: int = 5
 
-    # Optional Stage-4 close policy. When enabled, the controller requests
-    # cancellation of the active final SELL trail before the contract's RTH
-    # close, waits for broker confirmation, then submits a DAY market SELL for
-    # only the remaining app-owned quantity. It is independent of the BUY
-    # session-timing guard and is disabled by default.
+    # Optional close-before-RTH policy. In Stage 4 the controller cancels the
+    # active final SELL trail and replaces it with a DAY market SELL. In Stage 3
+    # it may submit the DAY market SELL directly, but only while the selected
+    # current price is strictly above the average BUY fill price. The policy is
+    # independent of the BUY session-timing guard and is disabled by default.
     cancel_sell_and_liquidate_before_close_enabled: bool = False
     liquidate_before_close_minutes: int = 5
 
@@ -1001,6 +1001,7 @@ class CycleState:
     buy_perm_id: Optional[int] = None
     buy_order_ref: Optional[str] = None
     buy_status: Optional[str] = None
+    buy_remainder_cancel_requested: bool = False
     buy_filled_qty: int = 0
     avg_buy_price: Optional[float] = None
     buy_commission: float = 0.0
@@ -1147,6 +1148,7 @@ def recovery_cycle_signature(cycle: Any) -> dict[str, Any]:
         "buy_order_id",
         "buy_perm_id",
         "buy_status",
+        "buy_remainder_cancel_requested",
         "buy_filled_qty",
         "avg_buy_price",
         "buy_filled_at",

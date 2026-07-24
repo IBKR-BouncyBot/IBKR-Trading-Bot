@@ -171,17 +171,10 @@ def test_external_master_style_event_is_audited_without_mutating_other_cycle(
     events = controller_b.storage.recent_broker_events(10)
     assert len(events) == 1
     assert events[0]["order_ref"] == cycle_a.buy_order_ref
-    # The current controller associates unmatched IBKRBOT-prefixed events with
-    # the active cycle for audit visibility.  The event still cannot create an
-    # order record or change strategy state in the other installation.
-    assert events[0]["cycle_id"] == cycle_b.id
+    assert events[0]["cycle_id"] is None
     assert controller_b.storage.get_cycle_audit_bundle(cycle_b.id)["orders"] == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Master-client feeds share the IBKRBOT prefix; installation-specific ownership is not encoded.",
-)
 def test_master_style_foreign_event_is_not_attributed_to_the_active_cycle(
     controller_module: Any,
     tmp_path: Path,

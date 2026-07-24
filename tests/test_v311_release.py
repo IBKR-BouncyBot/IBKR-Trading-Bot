@@ -1,37 +1,22 @@
-"""v3.1.1 release metadata, documentation, and broker-boundary regressions."""
+"""Historical v3.1.1 release-note and broker-boundary regressions."""
 
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ADAPTER = (ROOT / "app" / "ib_adapter.py").read_text(encoding="utf-8")
 CONTROLLER = (ROOT / "app" / "controller.py").read_text(encoding="utf-8")
-GUI = (ROOT / "app" / "gui.py").read_text(encoding="utf-8")
-README = (ROOT / "README.md").read_text(encoding="utf-8")
 CHANGELOG = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-PYPROJECT = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-BUILD = (ROOT / "scripts" / "build_windows.ps1").read_text(encoding="utf-8")
-DOCS_INDEX = (ROOT / "docs" / "README.md").read_text(encoding="utf-8")
 LEGACY_INDEX = (ROOT / "docs" / "legacy" / "README.md").read_text(encoding="utf-8")
-RELEASE_NOTE = ROOT / "docs" / "V3_1_1_IBKR_ORDER_VALIDATION.md"
+RELEASE_NOTE = ROOT / "docs" / "legacy" / "V3_1_1_IBKR_ORDER_VALIDATION.md"
 ARCHIVED_V310_NOTE = ROOT / "docs" / "legacy" / "V3_1_0_CLOSE_BEFORE_RTH_LIQUIDATION.md"
 
 
-def test_v311_release_metadata_is_consistent() -> None:
-    assert "BouncyBot - IBKR Portable Trading Bot v3.1.1" in GUI
-    assert "This is synthetic v3.1.1 paper-trading example data." in GUI
-    assert "**Current release: v3.1.1**" in README
-    assert 'version = "3.1.1"' in PYPROJECT
-    assert '$version = "3.1.1"' in BUILD
+def test_v311_release_history_remains_archived_and_linked() -> None:
     assert "## v3.1.1" in CHANGELOG
-    assert "current v3.1.1 behavior" in DOCS_INDEX
-
-
-def test_v311_current_and_archived_release_notes_are_in_the_correct_locations() -> None:
     assert RELEASE_NOTE.is_file()
     assert ARCHIVED_V310_NOTE.is_file()
-    assert not (ROOT / "docs" / "V3_1_0_CLOSE_BEFORE_RTH_LIQUIDATION.md").exists()
-    assert "V3_1_1_IBKR_ORDER_VALIDATION.md" in README
-    assert "V3_1_1_IBKR_ORDER_VALIDATION.md" in DOCS_INDEX
+    assert not (ROOT / "docs" / "V3_1_1_IBKR_ORDER_VALIDATION.md").exists()
+    assert "V3_1_1_IBKR_ORDER_VALIDATION.md" in LEGACY_INDEX
     assert "V3_1_0_CLOSE_BEFORE_RTH_LIQUIDATION.md" in LEGACY_INDEX
 
 
@@ -40,8 +25,8 @@ def test_v311_adapter_source_keeps_market_rule_and_strict_what_if_contracts() ->
     assert "marketRuleIds" in ADAPTER
     assert "reqMarketRule" in ADAPTER
     assert 'source="market_rule"' in ADAPTER
-    assert 'transmit=True' in ADAPTER
-    assert 'whatIf=True' in ADAPTER
+    assert "transmit=True" in ADAPTER
+    assert "whatIf=True" in ADAPTER
     assert 'getattr(self.ib, "whatIfOrder", None)' in ADAPTER
     assert '"validationerror"' in ADAPTER
     assert "No usable margin or equity impact" in ADAPTER

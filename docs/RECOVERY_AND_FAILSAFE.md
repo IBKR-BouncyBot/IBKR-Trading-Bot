@@ -5,7 +5,7 @@ Recovery reconciles local application state with app-owned broker facts after st
 ## Core recovery principles
 
 1. **No automatic startup resumption.** A stored active cycle remains visible, but the operator must connect and explicitly Start/resume monitoring.
-2. **App-owned orders only.** Broker order recovery filters `OrderRef` by `IBKRBOT|`.
+2. **App-owned orders only.** Broker order recovery requires a complete `OrderRef` already persisted by this installation; the shared `IBKRBOT|` prefix alone is not ownership proof.
 3. **Executions outrank assumptions.** A recent app-owned execution can update local fill state even when an expected callback was missed.
 4. **Unknown state fails closed.** The application enters recovery-required/manual-review rather than inventing an order or fill.
 5. **One app SELL transition at a time.** A replacement/final/market SELL waits for a potentially working app SELL to be confirmed nonworking.
@@ -49,6 +49,7 @@ Depending on stage and availability, recovery examines:
 - open orders with `IBKRBOT|` references;
 - order IDs, permanent IDs, action, quantity, and status;
 - recent executions and execution IDs;
+- duplicate/replayed execution callbacks and commission-before-execution ordering;
 - locally recorded orders/executions;
 - stored BUY/protective/final SELL quantities and timestamps;
 - current account/contract identity;

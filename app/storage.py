@@ -314,6 +314,7 @@ class BotStorage:
                 "close_position_market_requested": "INTEGER NOT NULL DEFAULT 0",
                 "close_before_rth_liquidation_requested": "INTEGER NOT NULL DEFAULT 0",
                 "close_before_rth_cancel_requested": "INTEGER NOT NULL DEFAULT 0",
+                "buy_remainder_cancel_requested": "INTEGER NOT NULL DEFAULT 0",
                 "protective_sell_order_id": "INTEGER",
                 "protective_sell_perm_id": "INTEGER",
                 "protective_sell_order_ref": "TEXT",
@@ -662,6 +663,7 @@ class BotStorage:
             "close_position_market_requested",
             "close_before_rth_liquidation_requested",
             "close_before_rth_cancel_requested",
+            "buy_remainder_cancel_requested",
         ]:
             data[_bool_name] = int(bool(getattr(cycle, _bool_name, False)))
         data["protective_sell_cancel_requested"] = int(bool(getattr(cycle, "protective_sell_cancel_requested", False)))
@@ -708,6 +710,7 @@ class BotStorage:
             "close_position_market_requested",
             "close_before_rth_liquidation_requested",
             "close_before_rth_cancel_requested",
+            "buy_remainder_cancel_requested",
         ]:
             if key in data:
                 data[key] = bool(data[key])
@@ -718,6 +721,65 @@ class BotStorage:
         with self.connect() as con:
             row = con.execute("SELECT * FROM cycles WHERE id=?", (cycle_id,)).fetchone()
         return self._row_to_cycle(row) if row else None
+
+    def get_cycle_for_order_ref(self, order_ref: str) -> Optional[CycleState]:
+        """Return the local cycle that owns an exact OrderRef.
+
+        Several portable bot copies can share one IBKR account and Master API
+        feed.  The common ``IBKRBOT|`` prefix is therefore not sufficient proof
+        of ownership.  Only an OrderRef already persisted by this installation
+        may be associated with one of its cycles.
+        """
+        ref = str(order_ref or "").strip()
+        if not ref:
+            return None
+        with self.connect() as con:
+            row = con.execute(
+                """
+                SELECT *
+                FROM cycles
+                WHERE buy_order_ref=?
+                   OR protective_sell_order_ref=?
+                   OR sell_order_ref=?
+                ORDER BY updated_at DESC
+                LIMIT 1
+                """,
+                (ref, ref, ref),
+            ).fetchone()
+            if row is None:
+                row = con.execute(
+                    """
+                    SELECT c.*
+                    FROM orders AS o
+                    JOIN cycles AS c ON c.id=o.cycle_id
+                    WHERE o.order_ref=?
+                    ORDER BY o.id DESC
+                    LIMIT 1
+                    """,
+                    (ref,),
+                ).fetchone()
+        return self._row_to_cycle(row) if row else None
+
+    def known_order_refs(self) -> set[str]:
+        """Return exact OrderRefs persisted by this portable installation."""
+        refs: set[str] = set()
+        with self.connect() as con:
+            rows = con.execute(
+                """
+                SELECT buy_order_ref AS order_ref FROM cycles WHERE buy_order_ref IS NOT NULL AND buy_order_ref<>''
+                UNION
+                SELECT protective_sell_order_ref FROM cycles WHERE protective_sell_order_ref IS NOT NULL AND protective_sell_order_ref<>''
+                UNION
+                SELECT sell_order_ref FROM cycles WHERE sell_order_ref IS NOT NULL AND sell_order_ref<>''
+                UNION
+                SELECT order_ref FROM orders WHERE order_ref IS NOT NULL AND order_ref<>''
+                """
+            ).fetchall()
+        for row in rows:
+            value = str(row["order_ref"] or "").strip()
+            if value:
+                refs.add(value)
+        return refs
 
     def get_latest_active_cycle(self, ticker: Optional[str] = None) -> Optional[CycleState]:
         """Return the newest cycle that still needs attention.
@@ -1088,7 +1150,7 @@ class BotStorage:
         shares: float,
         price: float,
         avg_price: Optional[float] = None,
-        commission: float = 0.0,
+        commission: Optional[float] = None,
         currency: str = "USD",
         order_ref: Optional[str] = None,
         order_id: Optional[int] = None,
@@ -1097,32 +1159,373 @@ class BotStorage:
         executed_at: Optional[str] = None,
         raw: Optional[dict[str, Any]] = None,
     ) -> None:
+        self.upsert_execution(
+            cycle=cycle,
+            ticker=ticker,
+            side=side,
+            shares=shares,
+            price=price,
+            avg_price=avg_price,
+            commission=commission,
+            currency=currency,
+            order_ref=order_ref,
+            order_id=order_id,
+            perm_id=perm_id,
+            execution_id=execution_id,
+            executed_at=executed_at,
+            raw=raw,
+        )
+
+    def get_execution(self, execution_id: str) -> Optional[dict[str, Any]]:
+        """Return one execution row by exact IBKR execution identifier."""
+        key = str(execution_id or "").strip()
+        if not key:
+            return None
         with self.connect() as con:
+            row = con.execute(
+                "SELECT * FROM executions WHERE execution_id=? ORDER BY id ASC LIMIT 1",
+                (key,),
+            ).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        try:
+            result["raw"] = json.loads(result.pop("raw_json") or "{}")
+        except Exception:
+            result["raw"] = result.pop("raw_json", "")
+        return result
+
+    def upsert_execution(
+        self,
+        *,
+        cycle: Optional[CycleState],
+        ticker: str,
+        side: str,
+        shares: float,
+        price: float,
+        avg_price: Optional[float] = None,
+        commission: Optional[float] = None,
+        currency: str = "USD",
+        order_ref: Optional[str] = None,
+        order_id: Optional[int] = None,
+        perm_id: Optional[int] = None,
+        execution_id: Optional[str] = None,
+        executed_at: Optional[str] = None,
+        raw: Optional[dict[str, Any]] = None,
+    ) -> str:
+        """Insert or enrich one execution idempotently.
+
+        IBKR commonly reports execution details first and commission later.  A
+        replay after reconnect can then deliver the same execution again.  The
+        execution identifier is treated as the idempotency key, while missing
+        commission and identity fields are enriched without adding another row.
+        """
+        execution_key = str(execution_id or "").strip()
+        incoming_raw = dict(raw or {})
+        ticker_value = str(ticker or "").strip().upper()
+        side_value = str(side or "").strip().upper()
+        currency_value = str(currency or "USD").strip().upper() or "USD"
+        shares_value = float(shares or 0.0)
+        price_value = float(price or 0.0)
+        avg_value = float(avg_price) if avg_price not in (None, "") else None
+        commission_value = float(commission) if commission not in (None, "") else None
+        executed_value = str(executed_at or "").strip()
+
+        with self.connect() as con:
+            existing = None
+            if execution_key:
+                existing = con.execute(
+                    "SELECT * FROM executions WHERE execution_id=? ORDER BY id ASC LIMIT 1",
+                    (execution_key,),
+                ).fetchone()
+            if existing is None:
+                if shares_value <= 0 or price_value <= 0:
+                    return "deferred"
+                con.execute(
+                    """
+                    INSERT INTO executions(
+                        cycle_id, ticker, order_ref, order_id, perm_id, execution_id,
+                        side, shares, price, avg_price, commission, currency, executed_at, raw_json
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        cycle.id if cycle else None,
+                        ticker_value,
+                        order_ref,
+                        order_id,
+                        perm_id,
+                        execution_key or None,
+                        side_value,
+                        shares_value,
+                        price_value,
+                        avg_value,
+                        float(commission_value or 0.0),
+                        currency_value,
+                        executed_value or utc_now_iso(),
+                        json.dumps(incoming_raw, default=self._json_default),
+                    ),
+                )
+                return "inserted"
+
+            current = dict(existing)
+            try:
+                merged_raw = json.loads(current.get("raw_json") or "{}")
+                if not isinstance(merged_raw, dict):
+                    merged_raw = {"previous_raw": merged_raw}
+            except Exception:
+                merged_raw = {"previous_raw": current.get("raw_json")}
+            merged_raw.update(incoming_raw)
+            values = {
+                "cycle_id": current.get("cycle_id") or (cycle.id if cycle else None),
+                "ticker": ticker_value or str(current.get("ticker") or "").upper(),
+                "order_ref": str(order_ref or "").strip() or current.get("order_ref"),
+                "order_id": order_id or current.get("order_id"),
+                "perm_id": perm_id or current.get("perm_id"),
+                "side": side_value or str(current.get("side") or "").upper(),
+                "shares": shares_value if shares_value > 0 else float(current.get("shares") or 0.0),
+                "price": price_value if price_value > 0 else float(current.get("price") or 0.0),
+                "avg_price": avg_value if avg_value is not None and avg_value > 0 else current.get("avg_price"),
+                "commission": (
+                    float(current.get("commission") or 0.0)
+                    if commission_value is None
+                    or (commission_value == 0.0 and float(current.get("commission") or 0.0) != 0.0)
+                    else commission_value
+                ),
+                "currency": currency_value or str(current.get("currency") or "USD"),
+                "executed_at": executed_value or str(current.get("executed_at") or utc_now_iso()),
+                "raw_json": json.dumps(merged_raw, default=self._json_default),
+            }
+            changed = any(values[key] != current.get(key) for key in values)
+            if not changed:
+                return "unchanged"
             con.execute(
                 """
-                INSERT INTO executions(
-                    cycle_id, ticker, order_ref, order_id, perm_id, execution_id,
-                    side, shares, price, avg_price, commission, currency, executed_at, raw_json
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                UPDATE executions
+                SET cycle_id=?, ticker=?, order_ref=?, order_id=?, perm_id=?, side=?,
+                    shares=?, price=?, avg_price=?, commission=?, currency=?, executed_at=?, raw_json=?
+                WHERE id=?
                 """,
                 (
-                    cycle.id if cycle else None,
-                    ticker.upper(),
-                    order_ref,
-                    order_id,
-                    perm_id,
-                    execution_id,
-                    side,
-                    float(shares),
-                    float(price),
-                    avg_price,
-                    float(commission or 0.0),
-                    currency,
-                    executed_at or utc_now_iso(),
-                    json.dumps(raw or {}, default=self._json_default),
+                    values["cycle_id"],
+                    values["ticker"],
+                    values["order_ref"],
+                    values["order_id"],
+                    values["perm_id"],
+                    values["side"],
+                    values["shares"],
+                    values["price"],
+                    values["avg_price"],
+                    values["commission"],
+                    values["currency"],
+                    values["executed_at"],
+                    values["raw_json"],
+                    current["id"],
                 ),
             )
+        return "updated"
 
+
+    @staticmethod
+    def cumulative_execution_id(order_ref: str, side: str) -> str:
+        """Return the stable identifier for one broker cumulative-fill placeholder."""
+        return f"__CUMULATIVE__|{str(order_ref or '').strip()}|{str(side or '').strip().upper()}"
+
+    def reconcile_cumulative_execution_placeholder(
+        self,
+        *,
+        cycle: CycleState,
+        side: str,
+        order_ref: str,
+        cumulative_shares: float,
+        cumulative_avg_price: float,
+        cumulative_commission: Optional[float],
+        order_id: Optional[int] = None,
+        perm_id: Optional[int] = None,
+        currency: str = "USD",
+        executed_at: Optional[str] = None,
+        raw: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """Keep one residual placeholder without double-counting later execDetails.
+
+        Order-status polling can expose a cumulative fill before IBKR has
+        delivered the individual execution callbacks.  The placeholder stores
+        only the portion of that cumulative state not yet represented by real
+        execution IDs.  As callbacks arrive, the same row shrinks and is
+        removed once quantity and commission are fully represented.
+        """
+        ref = str(order_ref or "").strip()
+        side_value = str(side or "").strip().upper()
+        if not ref or not side_value:
+            return
+        placeholder_id = self.cumulative_execution_id(ref, side_value)
+        target_shares = max(0.0, float(cumulative_shares or 0.0))
+        target_avg = max(0.0, float(cumulative_avg_price or 0.0))
+        target_commission = (
+            max(0.0, float(cumulative_commission))
+            if cumulative_commission not in (None, "")
+            else 0.0
+        )
+        incoming_raw = dict(raw or {})
+        with self.connect() as con:
+            rows = con.execute(
+                """
+                SELECT id, execution_id, shares, price, commission, raw_json
+                FROM executions
+                WHERE cycle_id=? AND UPPER(side)=? AND order_ref=?
+                """,
+                (cycle.id, side_value, ref),
+            ).fetchall()
+            placeholder = None
+            real_shares = 0.0
+            real_notional = 0.0
+            real_commission = 0.0
+            previous_targets: dict[str, Any] = {}
+            for row in rows:
+                if str(row["execution_id"] or "") == placeholder_id:
+                    placeholder = row
+                    try:
+                        decoded = json.loads(row["raw_json"] or "{}")
+                        if isinstance(decoded, dict):
+                            previous_targets = decoded
+                    except Exception:
+                        previous_targets = {}
+                    continue
+                shares = abs(float(row["shares"] or 0.0))
+                price = float(row["price"] or 0.0)
+                real_shares += shares
+                real_notional += shares * price
+                real_commission += float(row["commission"] or 0.0)
+
+            target_shares = max(
+                target_shares,
+                real_shares,
+                float(previous_targets.get("broker_cumulative_shares") or 0.0),
+            )
+            if target_avg <= 0:
+                target_avg = float(previous_targets.get("broker_cumulative_avg_price") or 0.0)
+            target_commission = max(
+                target_commission,
+                real_commission,
+                float(previous_targets.get("broker_cumulative_commission") or 0.0),
+            )
+            residual_shares = max(0.0, target_shares - real_shares)
+            target_notional = target_shares * target_avg if target_avg > 0 else real_notional
+            residual_notional = target_notional - real_notional
+            if residual_shares > 0:
+                residual_price = (
+                    residual_notional / residual_shares
+                    if residual_notional > 0
+                    else target_avg
+                )
+                if residual_price <= 0:
+                    residual_price = float(placeholder["price"] or 0.0) if placeholder is not None else 0.0
+            else:
+                residual_price = float(placeholder["price"] or target_avg or 0.0) if placeholder is not None else target_avg
+            residual_commission = max(0.0, target_commission - real_commission)
+            placeholder_raw = {
+                **previous_targets,
+                **incoming_raw,
+                "synthetic_cumulative_placeholder": True,
+                "broker_cumulative_shares": target_shares,
+                "broker_cumulative_avg_price": target_avg,
+                "broker_cumulative_commission": target_commission,
+                "represented_real_shares": real_shares,
+                "represented_real_commission": real_commission,
+            }
+
+            if residual_shares <= 0 and residual_commission <= 0:
+                if placeholder is not None:
+                    con.execute("DELETE FROM executions WHERE id=?", (placeholder["id"],))
+                return
+            if residual_shares <= 0:
+                # Preserve a late aggregate commission without inventing shares.
+                residual_price = max(residual_price, target_avg, 0.00000001)
+            timestamp = str(executed_at or "").strip() or utc_now_iso()
+            if placeholder is None:
+                con.execute(
+                    """
+                    INSERT INTO executions(
+                        cycle_id, ticker, order_ref, order_id, perm_id, execution_id,
+                        side, shares, price, avg_price, commission, currency, executed_at, raw_json
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        cycle.id,
+                        cycle.ticker.upper(),
+                        ref,
+                        order_id,
+                        perm_id,
+                        placeholder_id,
+                        side_value,
+                        residual_shares,
+                        residual_price,
+                        target_avg or residual_price,
+                        residual_commission,
+                        str(currency or cycle.currency or "USD").upper(),
+                        timestamp,
+                        json.dumps(placeholder_raw, default=self._json_default),
+                    ),
+                )
+            else:
+                con.execute(
+                    """
+                    UPDATE executions
+                    SET order_id=COALESCE(?, order_id), perm_id=COALESCE(?, perm_id),
+                        shares=?, price=?, avg_price=?, commission=?, currency=?, raw_json=?
+                    WHERE id=?
+                    """,
+                    (
+                        order_id,
+                        perm_id,
+                        residual_shares,
+                        residual_price,
+                        target_avg or residual_price,
+                        residual_commission,
+                        str(currency or cycle.currency or "USD").upper(),
+                        json.dumps(placeholder_raw, default=self._json_default),
+                        placeholder["id"],
+                    ),
+                )
+
+    def rebalance_cumulative_execution_placeholder(
+        self,
+        *,
+        cycle: CycleState,
+        side: str,
+        order_ref: str,
+    ) -> None:
+        """Shrink an existing cumulative placeholder after a late callback."""
+        ref = str(order_ref or "").strip()
+        side_value = str(side or "").strip().upper()
+        if not ref or not side_value:
+            return
+        placeholder_id = self.cumulative_execution_id(ref, side_value)
+        with self.connect() as con:
+            row = con.execute(
+                "SELECT * FROM executions WHERE cycle_id=? AND execution_id=? LIMIT 1",
+                (cycle.id, placeholder_id),
+            ).fetchone()
+        if row is None:
+            return
+        try:
+            payload = json.loads(row["raw_json"] or "{}")
+            if not isinstance(payload, dict):
+                payload = {}
+        except Exception:
+            payload = {}
+        self.reconcile_cumulative_execution_placeholder(
+            cycle=cycle,
+            side=side_value,
+            order_ref=ref,
+            cumulative_shares=float(payload.get("broker_cumulative_shares") or 0.0),
+            cumulative_avg_price=float(payload.get("broker_cumulative_avg_price") or row["avg_price"] or row["price"] or 0.0),
+            cumulative_commission=float(payload.get("broker_cumulative_commission") or 0.0),
+            order_id=row["order_id"],
+            perm_id=row["perm_id"],
+            currency=str(row["currency"] or cycle.currency),
+            executed_at=str(row["executed_at"] or ""),
+            raw=payload,
+        )
 
     def execution_exists(self, execution_id: str) -> bool:
         if not execution_id:

@@ -76,10 +76,18 @@ def test_buy_fill_and_sell_trigger_properties_preserve_minimum_profit_floor():
         cycle.buy_order_ref = f"IBKRBOT|AAPL|CYCLE-{case:06d}|TEST|BUY_TRAIL"
         before_fill = copy(cycle)
 
-        filled, actions = StrategyEngine.on_buy_fill(cycle, filled_qty, buy_price, "Submitted", commission=rng.uniform(0.0, 10.0))
+        initial_status = "Filled" if cycle.quantity == filled_qty else "Submitted"
+        filled, actions = StrategyEngine.on_buy_fill(
+            cycle,
+            filled_qty,
+            buy_price,
+            initial_status,
+            commission=rng.uniform(0.0, 10.0),
+        )
 
         assert cycle.to_dict() == before_fill.to_dict()
-        assert filled.stage == Stage.WAIT_RISE_TRIGGER
+        expected_terminal = cycle.quantity == filled_qty
+        assert filled.stage == (Stage.WAIT_RISE_TRIGGER if expected_terminal else Stage.BUY_TRAIL_ACTIVE)
         assert filled.buy_filled_qty == filled_qty
         assert filled.avg_buy_price == buy_price
         minimum_stop = minimum_sell_stop_price_for_profit(
@@ -92,6 +100,15 @@ def test_buy_fill_and_sell_trigger_properties_preserve_minimum_profit_floor():
         assert filled.rise_trigger_price >= minimum_stop
         if cycle.quantity > filled_qty:
             assert any(action.action_type == "CANCEL_ORDER" for action in actions)
+            filled, terminal_actions = StrategyEngine.on_buy_fill(
+                filled,
+                filled_qty,
+                buy_price,
+                "Cancelled",
+                commission=filled.buy_commission,
+            )
+            assert terminal_actions == []
+            assert filled.stage == Stage.WAIT_RISE_TRIGGER
 
         triggered, sell_actions = StrategyEngine.on_price_update(filled, filled.rise_trigger_price * 1.0001)
         assert triggered.stage == Stage.SELL_TRAIL_ACTIVE

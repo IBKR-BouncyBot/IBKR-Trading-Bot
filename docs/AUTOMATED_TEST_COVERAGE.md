@@ -1,8 +1,8 @@
 # Automated test coverage specification
 
-This document defines the automated verification scope for v3.1.1. It is the maintainer-facing map between the application modules, test layers, and repository quality gates.
+This document defines the automated verification scope for v3.1.2. It is the maintainer-facing map between the application modules, test layers, and repository quality gates.
 
-The v3.1.1 offline test architecture includes focused coverage for shutdown checkpoints, event-driven worker scheduling, independent cadences, nonblocking broker reads, GUI responsiveness, broker connectivity, reconciliation, flowchart history selection, the optional Stage-4 close-before-RTH cancel-confirm-market workflow, market-rule price normalization, strict what-if interpretation, broker error retention, and rejection circuit breaking. Tests use temporary databases, deterministic clocks and data, protocol-shaped broker doubles, and headless Qt doubles. They do not connect to IBKR, launch TWS/Gateway, or transmit orders.
+The v3.1.2 offline test architecture includes focused coverage for shutdown checkpoints, event-driven worker scheduling, independent cadences, nonblocking broker reads, GUI responsiveness, broker connectivity, reconciliation, flowchart history selection, the optional Stage-3/Stage-4 close-before-RTH workflows, market-rule price normalization, strict what-if interpretation, broker error retention, and rejection circuit breaking. Tests use temporary databases, deterministic clocks and data, protocol-shaped broker doubles, and headless Qt doubles. They do not connect to IBKR, launch TWS/Gateway, or transmit orders.
 
 ## Test objectives
 
@@ -23,10 +23,10 @@ The callable gate is derived from the effective function map in `coverage.json`.
 
 | Application module | Executable callables entered | Primary automated focus |
 |---|---:|---|
-| `app/controller.py` | 192 / 192 | Event-driven command queue, independent broker/strategy/database/GUI/maintenance cadences, lifecycle, connectivity, guards, recovery, execution reconstruction, order-side effects, snapshots |
+| `app/controller.py` | 197 / 197 | Event-driven command queue, independent broker/strategy/database/GUI/maintenance cadences, lifecycle, connectivity, guards, recovery, execution reconstruction, order-side effects, snapshots |
 | `app/flowchart_model.py` | 9 / 9 | Stage-card construction, labels, details, filtering |
 | `app/gui.py` | 338 / 338 | Formatting, blocker/recovery classification, widget state, command gating, timelines, panels, dialogs, layout helpers |
-| `app/ib_adapter.py` | 122 / 122 | Data normalization, event ownership, connectivity, market data, contracts, orders, executions, positions |
+| `app/ib_adapter.py` | 124 / 124 | Data normalization, event ownership, connectivity, market data, contracts, orders, executions, positions |
 | `app/ib_platform.py` | 11 / 11 | Profiles, path discovery, socket probing, process-launch outcomes |
 | `app/lockfile.py` | 8 / 8 | Acquisition, stale-lock handling, release, context-manager behavior |
 | `app/market_data_capture.py` | 22 / 22 | Bounded buffers, capture lifecycle, serialization, asynchronous write behavior |
@@ -34,13 +34,13 @@ The callable gate is derived from the effective function map in `coverage.json`.
 | `app/order_diagnostics.py` | 3 / 3 | Native trailing-order diagnostics and trigger interpretation |
 | `app/paths.py` | 7 / 7 | Source/packaged runtime paths and generated directories |
 | `app/simulation.py` | 5 / 5 | Simulation state, fill assumptions, result serialization |
-| `app/storage.py` | 63 / 63 | Schema migration, CRUD, ledger queries, exports, backup/restore validation |
-| `app/strategy.py` | 21 / 21 | Five-stage transitions, fills, partial fills, editable settings, error states |
+| `app/storage.py` | 70 / 70 | Schema migration, CRUD, ledger queries, exports, backup/restore validation |
+| `app/strategy.py` | 22 / 22 | Five-stage transitions, fills, partial fills, editable settings, error states |
 | `app/timeline_scaling.py` | 28 / 28 | Parsing, filtering, robust bounds, downsampling, marker/time-axis placement |
 | `main.py` | 3 / 3 | Stable palette setup, single-instance startup, window lifecycle, cleanup |
-| **Total** | **876 / 876** | All effective executable application callables |
+| **Total** | **891 / 891** | All effective executable application callables |
 
-The counts are a snapshot of v3.1.1. The gate recalculates them from the current source and coverage report on every full test run. Adding a callable without a test causes the callable-coverage step to fail.
+The counts are a snapshot of v3.1.2. The gate recalculates them from the current source and coverage report on every full test run. Adding a callable without a test causes the callable-coverage step to fail.
 
 ## Test layers
 
@@ -80,6 +80,10 @@ The expanded deterministic layers cover callback permutation, generated controll
 ### Test-infrastructure self-tests
 
 `tests/test_test_infrastructure.py` verifies the callable gate itself, requires the Windows launcher to run one unfiltered pytest invocation, and confirms that the Unix launcher retains its explicit coverage/soak stages. This prevents a future script edit from silently bypassing a test category.
+
+### v3.1.2 fill reconciliation and Stage-3 close layer
+
+Focused tests cover terminal BUY settlement after partial fills, cancellation-race cumulative fills, residual cumulative placeholders, duplicate/reordered execution and commission callbacks, completed-cycle commission enrichment, exact foreign-reference rejection, stable native-trail throttling, live/recovery execution timestamps, Stage-3 strict-profit cutoff checks, protective-order cancel-confirm-replace, restart continuity, and quantity-conflict fail-closed behavior.
 
 ## Full validation sequence
 

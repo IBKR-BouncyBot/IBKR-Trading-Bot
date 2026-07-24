@@ -6,9 +6,9 @@ PYPROJECT = Path("pyproject.toml").read_text(encoding="utf-8")
 
 
 def test_v219_version_package_metadata_are_current():
-    assert "BouncyBot - IBKR Portable Trading Bot v3.1.1" in GUI
+    assert "BouncyBot - IBKR Portable Trading Bot v3.1.2" in GUI
     assert "# BouncyBot - an IBKR Portable Trading Bot " in README
-    assert 'version = "3.1.1"' in PYPROJECT
+    assert 'version = "3.1.2"' in PYPROJECT
     assert Path("docs/legacy/V2_20_RECOVERY_GRAPH_RECOVERY_UI.md").exists()
 
 

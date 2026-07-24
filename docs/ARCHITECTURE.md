@@ -165,7 +165,7 @@ Every application-created order receives an `OrderRef` beginning with:
 IBKRBOT|
 ```
 
-Open-order recovery and cancellation filter by this prefix. Manual orders and orders from other software are outside the management boundary unless they incorrectly reuse the prefix.
+The prefix identifies the application family but is not the ownership boundary. Open-order recovery, cancellation, error attribution, and execution application require the full reference to match a value already persisted in the local database. An unmatched prefixed Master-feed order is left unowned rather than assigned to the active cycle.
 
 The position boundary is different: IBKR exposes an account-level stock position, but does not label individual shares by originating application. The application therefore reconstructs its own unsold quantity from persisted BUY and SELL fills. External/manual long positions do not block a new application BUY.
 
