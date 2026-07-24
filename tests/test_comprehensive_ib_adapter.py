@@ -377,7 +377,15 @@ def test_qualify_stock_sets_identity_and_minimum_tick(live_adapter: tuple[IbAsyn
     qualified.localSymbol = "AAPL"
     qualified.tradingClass = "NMS"
     ib.qualified_contracts = [qualified]
-    ib.contract_details = [SimpleNamespace(minTick=0.005)]
+    ib.contract_details = [
+        SimpleNamespace(
+            minTick=0.005,
+            validExchanges="SMART,NASDAQ",
+            orderTypes="MKT,TRAIL",
+            liquidHours="20260724:0930-20260724:1600",
+            timeZoneId="US/Eastern",
+        )
+    ]
     contract = adapter.qualify_stock("aapl", "smart", "usd", "nasdaq", 987)
     assert contract.ticker == "AAPL"
     assert contract.con_id == 987
@@ -386,7 +394,7 @@ def test_qualify_stock_sets_identity_and_minimum_tick(live_adapter: tuple[IbAsyn
 
     ib.qualified_contracts = []
     with pytest.raises(BrokerAdapterError, match="did not resolve"):
-        adapter.qualify_stock("MSFT", "SMART", "USD")
+        adapter.qualify_stock("MSFT", "SMART", "USD", "NASDAQ", 654)
 
 
 def test_market_data_variant_and_active_mode_pipeline(live_adapter: tuple[IbAsyncTwsAdapter, FakeIB], monkeypatch: pytest.MonkeyPatch) -> None:

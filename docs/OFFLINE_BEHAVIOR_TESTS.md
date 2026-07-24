@@ -1,6 +1,6 @@
 # Deterministic offline behavior tests
 
-This document describes the current non-GUI, non-Windows, non-network test layer in v3.1.2. It covers strategy behavior, controller state transitions, broker-event handling, persistence and recovery, shutdown checkpoints, GUI contracts, and bounded performance behavior.
+This document describes the current non-GUI, non-Windows, non-network test layer in v3.2.0. It covers strategy behavior, controller state transitions, broker-event handling, persistence and recovery, shutdown checkpoints, GUI contracts, and bounded performance behavior.
 
 The suite deliberately avoids:
 
@@ -16,7 +16,7 @@ The tests use temporary SQLite databases, deterministic clocks and prices, proto
 
 ### Broker callback replay and permutation
 
-v3.1.2 retains the broker-validation coverage and adds focused tests for terminal BUY settlement, cancellation-race fills, idempotent execution/commission replay, strict full-OrderRef isolation, stable diagnostic throttling, execution timestamp semantics, and profitable Stage-3 pre-close liquidation.
+v3.2.0 retains the broker-validation and v3.1.2 reconciliation coverage and adds focused tests for exact USD/EUR SMART contract selection, one-currency database enforcement, capability and market-session validation, commission-currency mismatch handling, and fixed ten-second indefinite reconnect behavior.
 
 `tests/test_broker_event_replay_permutations.py` replays equivalent order histories with callbacks in different orders. It covers open-order, order-status, execution, and commission events; duplicate execution identifiers; repeated terminal polls; persisted raw events; and idempotent replay.
 
@@ -57,7 +57,7 @@ The comparison is intended to detect drift between simulation implementations. I
 
 `tests/test_multi_instance_isolation.py` creates two controllers with separate roots, SQLite databases, client IDs, tickers, local ledgers, backups, and audit output while sharing one deterministic Gateway model.
 
-It verifies normal client-isolated operation and Master-client shared-feed behavior. v3.1.2 requires the complete persisted `OrderRef`, so an unmatched order from another installation remains unowned even when it shares the `IBKRBOT` prefix.
+It verifies normal client-isolated operation and Master-client shared-feed behavior. The current implementation requires the complete persisted `OrderRef`, so an unmatched order from another installation remains unowned even when it shares the `IBKRBOT` prefix.
 
 ### Crash, restart, migration, and restore
 
@@ -131,12 +131,12 @@ The complete Windows launcher runs the deterministic layers in this order:
 
 The Unix `scripts/run_tests.sh` helper still separates non-soak coverage from the soak subset to keep that development-host command practical.
 
-The current v3.1.2 validation inventory is:
+The current v3.2.0 validation inventory is:
 
-- 916 non-soak tests, all expected to pass;
+- 966 non-soak tests, all expected to pass;
 - 5 bounded soak tests;
-- 891/891 effective executable application callables entered;
-- 77.6% measured combined statement/branch coverage against the 75% minimum;
+- 917/917 effective executable application callables entered;
+- 77.5% measured combined statement/branch coverage against the 75% minimum;
 - 6/6 safety mutants killed;
 - 58 validated CSV scenario contracts across 54 price-path files.
 

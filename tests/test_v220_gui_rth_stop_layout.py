@@ -8,9 +8,9 @@ PYPROJECT = Path("pyproject.toml").read_text(encoding="utf-8")
 
 
 def test_v220_version_metadata_updated():
-    assert "BouncyBot - IBKR Portable Trading Bot v3.1.2" in GUI
+    assert "BouncyBot - IBKR Portable Trading Bot v3.2.0" in GUI
     assert "# BouncyBot - an IBKR Portable Trading Bot " in README
-    assert 'version = "3.1.2"' in PYPROJECT
+    assert 'version = "3.2.0"' in PYPROJECT
 
 
 def test_rth_status_is_human_readable_with_hours_and_countdown():

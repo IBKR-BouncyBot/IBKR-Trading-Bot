@@ -1,13 +1,13 @@
 # Strategy rules
 
-This document is the current functional description of the five-stage strategy in v3.1.2. It describes application decisions; IBKR remains authoritative for accepted order state and execution.
+This document is the current functional description of the five-stage strategy in v3.2.0. It describes application decisions; IBKR remains authoritative for accepted order state and execution.
 
 ## Scope and invariants
 
 - One active cycle is monitored at a time.
 - The cycle is long-only and uses whole shares.
-- Contract settings are `STK`, `USD`, and `SMART`, with optional primary exchange/conId qualification.
-- New strategy orders are submitted only when the controller’s local socket, upstream IBKR connectivity, post-reconnect reconciliation, RTH, actual-event market-data, guard, and recovery checks allow them.
+- The selected contract is an ordinary `STK`, denominated in USD or EUR, routed through `SMART`, and identified by an exact positive IBKR `conId` plus its returned primary exchange.
+- New strategy orders are submitted only when the controller’s local socket, upstream IBKR connectivity, post-reconnect reconciliation, exact-contract identity/capability checks, database currency boundary, RTH, actual-event market-data, guard, and recovery checks allow them.
 - Orders use `outsideRth=False` and app-owned `OrderRef` values.
 - A native trailing stop triggers a market-style order; displayed stops and profit levels are not guaranteed fills.
 
@@ -69,7 +69,7 @@ sizing price = projected BUY stop × (1 + slippage_buffer_pct / 100)
 quantity = floor(budget / sizing price)
 ```
 
-A quantity below one blocks order submission.
+A quantity below one blocks order submission. Before intent is stored, the live adapter applies the selected contract's whole-share minimum size and size increment. A BUY may be rounded down to a valid whole-share step. A SELL is never rounded down because doing so could leave an application-owned remainder untracked.
 
 ### Order type
 
@@ -156,7 +156,7 @@ A cycle completes when the application-owned BUY quantity has been sold accordin
 
 - order and execution identities;
 - average BUY/SELL prices and quantities;
-- commissions received from IBKR;
+- commissions received from IBKR when they are in the cycle/database currency; a non-zero commission in another currency remains a raw broker fact, is excluded from local net P/L, and disables Auto-repeat because BouncyBot does not perform FX conversion;
 - gross and net P/L;
 - stage timestamps and audit events.
 
@@ -207,7 +207,7 @@ Base cycle budget is the configured investment amount. When reinvestment is enab
 budget = base investment + max(completed app net P/L for ticker, 0)
 ```
 
-Stored completed losses do not reduce the configured base. This is local application P/L, not available cash, buying power, or account-wide P/L. IBKR preflight remains authoritative for order acceptance.
+Stored completed losses do not reduce the configured base. This is local application P/L in the portable database's single contract currency, not available cash, buying power, account-wide P/L, or an FX-converted total. IBKR preflight remains authoritative for order acceptance.
 
 ## External positions
 

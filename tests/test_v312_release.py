@@ -1,4 +1,4 @@
-"""v3.1.2 release metadata, documentation, and schema regressions."""
+"""v3.1.2 feature regressions under the current release."""
 
 from pathlib import Path
 
@@ -12,26 +12,31 @@ PYPROJECT = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 BUILD = (ROOT / "scripts" / "build_windows.ps1").read_text(encoding="utf-8")
 DOCS_INDEX = (ROOT / "docs" / "README.md").read_text(encoding="utf-8")
 LEGACY_INDEX = (ROOT / "docs" / "legacy" / "README.md").read_text(encoding="utf-8")
-RELEASE_NOTE = ROOT / "docs" / "V3_1_2_FILL_RECONCILIATION_AND_STAGE3_CLOSE.md"
+CURRENT_RELEASE_NOTE = ROOT / "docs" / "V3_2_0_EUR_SMART_AND_RECONNECT.md"
+RELEASE_NOTE = ROOT / "docs" / "legacy" / "V3_1_2_FILL_RECONCILIATION_AND_STAGE3_CLOSE.md"
 ARCHIVED_V311_NOTE = ROOT / "docs" / "legacy" / "V3_1_1_IBKR_ORDER_VALIDATION.md"
 
 
 def test_v312_release_metadata_is_consistent() -> None:
-    assert "BouncyBot - IBKR Portable Trading Bot v3.1.2" in GUI
-    assert "This is synthetic v3.1.2 paper-trading example data." in GUI
-    assert "**Current release: v3.1.2**" in README
-    assert 'version = "3.1.2"' in PYPROJECT
-    assert '$version = "3.1.2"' in BUILD
+    assert "BouncyBot - IBKR Portable Trading Bot v3.2.0" in GUI
+    assert "This is synthetic v3.2.0 paper-trading example data." in GUI
+    assert "**Current release: v3.2.0**" in README
+    assert 'version = "3.2.0"' in PYPROJECT
+    assert '$version = "3.2.0"' in BUILD
+    assert "## v3.2.0" in CHANGELOG
     assert "## v3.1.2" in CHANGELOG
-    assert "current v3.1.2 behavior" in DOCS_INDEX
+    assert "current v3.2.0 behavior" in DOCS_INDEX
 
 
 def test_v312_current_and_archived_release_notes_are_in_the_correct_locations() -> None:
+    assert CURRENT_RELEASE_NOTE.is_file()
     assert RELEASE_NOTE.is_file()
     assert ARCHIVED_V311_NOTE.is_file()
+    assert not (ROOT / "docs" / "V3_1_2_FILL_RECONCILIATION_AND_STAGE3_CLOSE.md").exists()
     assert not (ROOT / "docs" / "V3_1_1_IBKR_ORDER_VALIDATION.md").exists()
-    assert "V3_1_2_FILL_RECONCILIATION_AND_STAGE3_CLOSE.md" in README
-    assert "V3_1_2_FILL_RECONCILIATION_AND_STAGE3_CLOSE.md" in DOCS_INDEX
+    assert "V3_2_0_EUR_SMART_AND_RECONNECT.md" in README
+    assert "V3_2_0_EUR_SMART_AND_RECONNECT.md" in DOCS_INDEX
+    assert "V3_1_2_FILL_RECONCILIATION_AND_STAGE3_CLOSE.md" in LEGACY_INDEX
     assert "V3_1_1_IBKR_ORDER_VALIDATION.md" in LEGACY_INDEX
 
 

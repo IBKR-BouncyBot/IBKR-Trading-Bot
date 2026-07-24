@@ -14,6 +14,18 @@ Check, in order:
 
 Long connection errors wrap in the connection area. Preserve the full error text in an audit report when requesting help.
 
+## The app says an exact contract is required
+
+The live adapter no longer qualifies a stock from a symbol alone. Click **2. Search/select ticker** and choose an ordinary `STK` result in USD or EUR with a positive conId. The result supplies the read-only currency, primary exchange, and conId fields while order routing remains `SMART`. Manually editing the ticker or primary exchange clears the selection, so search and select again.
+
+If the selected result is still rejected, inspect the message for a conId/currency mismatch, missing SMART route, missing `MKT`/`TRAIL` capability, or missing ContractDetails. Do not substitute a different listing merely because its symbol is similar.
+
+## The database is locked to USD or EUR
+
+Each portable SQLite database can contain cycles in one contract currency only. A zero-cycle draft may switch between USD and EUR, but the first stored cycle locks the database. An upgraded v3.1.2 database is inferred from its historical cycles and will normally be USD.
+
+Use another portable folder/database for the other currency. Do not copy mixed-currency cycle rows into one database. BouncyBot performs no FX conversion for P/L, limits, reinvestment, or commissions.
+
 ## Connected, but no usable price appears
 
 Review the Price data monitor and event log:
@@ -37,6 +49,16 @@ These states intentionally distinguish the local API socket from the Gateway/TWS
 
 Inspect Gateway/TWS messages and Internet connectivity. After restoration, wait for the state to clear and confirm an actual update arrives. If it does not, disconnect/reconnect the app, reconfirm the ticker, refresh Reconciliation, and inspect market-data permissions. Do not rely solely on a populated cached quote.
 
+## An EUR contract reports RTH unavailable
+
+BouncyBot requires usable IBKR `liquidHours` and `timeZoneId` for a non-U.S. or unknown primary exchange. It deliberately does not apply the 09:30–16:00 New York fallback to an EUR listing. Re-select the exact contract, confirm Gateway/TWS returns ContractDetails, and inspect the contract's primary exchange, timezone, holiday, and session metadata. Leave trading blocked when those facts cannot be verified.
+
+## The bot keeps reconnecting every 10 seconds
+
+After an established local API socket is lost, v3.2.0 retries the saved TWS/Gateway endpoint every 10 seconds without a retry limit. This is expected. Start or log into the selected platform, correct the host/port/client ID, or click **Disconnect** to stop the attempts. Application shutdown also stops them.
+
+A local reconnect is not enough for trading: the upstream IBKR link, broker reconciliation, exact contract, and a new actual market-data event must recover before strategy processing resumes.
+
 ## Trading says BUY blocked
 
 Hover the **Trading** box. It lists all currently evaluated blockers, not only the first one. Common reasons include:
@@ -57,7 +79,7 @@ A blocker is usually intentional. Do not disable it solely to make the status gr
 
 ## A BUY becomes Inactive or Rejected
 
-Open the Live Strategy event list or the Cycle Audit broker/decision events and locate the retained IBKR error code and message. In v3.1.2 a definitive no-fill rejection moves the cycle to `ERROR` and does not automatically retry. This is intentional; restarting the same invalid request can produce repeated broker rejections.
+Open the Live Strategy event list or the Cycle Audit broker/decision events and locate the retained IBKR error code and message. In v3.2.0 a definitive no-fill rejection moves the cycle to `ERROR` and does not automatically retry. This is intentional; restarting the same invalid request can produce repeated broker rejections.
 
 For `Invalid Price`, minimum-variation, or invalid-stop errors:
 
@@ -74,6 +96,10 @@ A normal operator or session cancellation should report `Cancelled` or `ApiCance
 The check now requires a real IBKR `OrderState` with non-error status and at least one finite margin/equity result. `ValidationError`, missing state, rejection warnings, and IBKR unset sentinels fail closed. Review the retained message and Gateway/TWS API log. Do not treat an empty warning as approval when the status is a validation error.
 
 A successful what-if result is only a preflight. A later live order can still be rejected if price, account, permissions, market rules, or broker controls change.
+
+## A commission-currency mismatch appears
+
+The execution remains stored, but BouncyBot does not subtract a commission reported in a currency different from the cycle/database currency. It records `COMMISSION_CURRENCY_MISMATCH`, excludes that amount from local net P/L, and disables Auto-repeat for the cycle because no FX conversion is implemented. Compare the IBKR statement and resolve the currency/account configuration before relying on net P/L or reinvestment.
 
 ## Maximum spread appears to change by itself
 

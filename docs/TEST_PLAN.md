@@ -34,10 +34,14 @@ For Gateway paper/live and TWS paper/live as available:
 
 ## 4. Contract search and qualification
 
-- Search a unique US stock symbol.
-- Search an ambiguous symbol and select the intended primary exchange/conId.
-- Confirm the price and inspect bid, ask, last/market source, previous close, contract minimum tick, data type, and RTH status. At order preflight, inspect the selected route-specific market rule and increment in the order/audit diagnostics.
+- Search and select one exact USD ordinary stock result with a positive conId, such as a Nasdaq listing.
+- Search and select one exact EUR ordinary stock result on a European primary exchange.
+- Search an ambiguous symbol and verify that choosing the intended API result populates read-only currency, primary exchange, and conId while routing remains SMART.
+- Manually edit the ticker/primary exchange and verify the exact selection is cleared and Start remains blocked until a result is selected again.
+- Verify a GBP, CFD, missing-conId, or non-SMART/incompatible result is unavailable or fails closed.
+- Confirm the price and inspect bid, ask, last/market source, previous close, currency, exact conId, contract minimum tick, size rules, data type, and RTH status. At order preflight, inspect the selected route-specific market rule and increment in the order/audit diagnostics.
 - For a contract whose `minTick` is smaller than the valid increment at the current price, verify the submitted stop follows the applicable `reqMarketRule` band rather than the smallest contract-level tick.
+- For a non-U.S. listing, verify the session uses the contract's `liquidHours`/`timeZoneId`, including daylight-saving and early-close behavior where practical. Missing metadata must block rather than use U.S. hours.
 - Disconnect/reconnect and verify actual-update timestamps/counters resume with a fresh subscription; cached fields alone must not clear data-pending state.
 
 ## 5. Workflow lock
@@ -54,6 +58,7 @@ For Gateway paper/live and TWS paper/live as available:
 Induce or configure each practical blocker and verify the Trading label/tooltip:
 
 - disconnected local API state;
+- local Gateway socket lost and fixed 10-second reconnect attempts;
 - local Gateway socket alive but upstream IBKR link unavailable;
 - post-reconnect reconciliation and post-recovery fresh-event wait;
 - missing/stale/cached-only selected price;
@@ -123,12 +128,13 @@ Document the account-position implications; do not assume broker lots are segreg
 - Observe a gap/poor paper fill and verify the UI does not claim guaranteed profit.
 - Verify completed cycle metrics and history details.
 
-## 12. Optional Stage-4 liquidation before RTH close
+## 12. Optional Stage-3/Stage-4 liquidation before RTH close
 
 Use a paper account and a liquid U.S. stock with the option disabled first, then enabled with enough time for manual observation.
 
 - Verify the default is OFF and the minutes field defaults to 5, accepts only 1–240, and is disabled while the checkbox is clear.
-- Verify Stage 1, Stage 2, and Stage 3 behavior is unchanged and no cancellation occurs before the configured Stage-4 cutoff.
+- Verify Stage 1 and Stage 2 behavior is unchanged and no close action occurs before the configured cutoff.
+- In Stage 3, verify a fresh selected price strictly above average BUY submits the RTH-only market SELL (after protective cancel-confirm-replace when applicable), while equal/lower/stale prices do not. Confirm commissions are ignored only for eligibility and the fill is not guaranteed profitable.
 - With a normal final SELL trail working, verify exactly one cancellation request is sent at the contract-specific cutoff, including on an early-close fixture.
 - Verify no market SELL is submitted until TWS/IBKR shows the original trail in a terminal state.
 - Fill the trail during the cancellation race and confirm no replacement is sent after a full fill.
@@ -168,6 +174,17 @@ For each, export an audit bundle before final resolution:
 
 Verify the application reattaches/imports only when facts are clear and enters recovery/manual review when they are not. Capture a broker probe while an app SELL is working, then process a newer terminal fill poll and verify the old probe row is retired. Perform a later explicit refresh that still reports a working order and verify it remains visible as a real inconsistency.
 
+### Local API socket loss and indefinite reconnect
+
+After a successful connection, stop the local TWS/Gateway API endpoint or close the platform without clicking Disconnect:
+
+- verify strategy processing and order submission pause immediately;
+- record at least five failed reconnect attempts and verify their start times are no closer than 10 seconds;
+- verify retries continue beyond any former maximum and do not use exponential backoff;
+- restart/log in to the platform and verify reconnection, broker reconciliation, and a new actual market-data event are required before strategy processing resumes;
+- repeat, click **Disconnect**, and verify no further automatic attempts occur;
+- verify application shutdown also terminates the retry loop.
+
 ### Upstream-only Internet outage
 
 In paper mode, induce or simulate a Gateway/TWS upstream outage while keeping the local API socket connected:
@@ -183,6 +200,10 @@ In paper mode, induce or simulate a Gateway/TWS upstream outage while keeping th
 ## 15. Database and export
 
 - Verify `bot_state.sqlite` and expected generated folders appear beside the app.
+- In a new zero-cycle database, select USD then EUR and verify the draft currency can rebind. Create one cycle and verify the currency becomes locked.
+- Upgrade a representative v3.1.2 USD database and verify the currency lock is inferred as USD without changing tables, columns, rows, or cycle values.
+- Attempt to select/store the opposite currency after a cycle exists and verify it fails closed; use a separate database for the EUR run.
+- Inject or simulate a commission in the wrong currency and verify it remains in audit data, is excluded from local net P/L, emits `COMMISSION_CURRENCY_MISMATCH`, and disables Auto-repeat.
 - Run through multiple fills and confirm backups are created and `latest_restore_validation.json` reports success.
 - Open a backup read-only with SQLite tooling after shutdown and run `PRAGMA integrity_check`.
 - Export trade history and inspect columns/UTC timestamps.
@@ -198,7 +219,7 @@ In paper mode, induce or simulate a Gateway/TWS upstream outage while keeping th
 ## 17. Full validation and build
 
 - Run `run_all_tests.bat`; require compilation, pytest with `ResourceWarning` failures enabled, at least 75% combined statement/branch coverage, entry coverage for every effective executable application callable, all CSV simulations, Ruff, and Pyright to pass.
-- In a paper-account Gateway/TWS session, exercise a contract with a price-dependent market rule and confirm the normalized stop is accepted; verify a deliberately rejected app order records the exact broker reason and does not retry.
+- In a paper-account Gateway/TWS session, exercise one exact USD SMART stock and one exact EUR SMART stock. Confirm conId/currency/primary exchange, required order capabilities, RTH metadata, size rules, market data, what-if, BUY, SELL, and commissions. Exercise a price-dependent market rule and confirm the normalized stop is accepted; verify a deliberately rejected app order records the exact broker reason and does not retry.
 - Inspect `run_tests_coverage.log` and `run_tests_callable_coverage.log`; do not rely only on the final pass line.
 - Preserve `coverage.json` or `coverage.xml` as a release/CI artifact when traceable machine-readable coverage evidence is required.
 - Run `build_windows.bat`; verify the final output is not falsely red on success.

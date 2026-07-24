@@ -112,7 +112,7 @@ def test_gui_snapshots_do_not_repeat_database_reads_between_database_cadences(
         counts["history"] += 1
         return {"cycles": 0}
 
-    def app_position(_ticker: str) -> dict[str, Any]:
+    def app_position(_ticker: str, *, con_id: int | None = None) -> dict[str, Any]:
         counts["position"] += 1
         return {"quantity": 0}
 
@@ -151,7 +151,7 @@ def test_order_safety_reads_live_database_state_instead_of_gui_cache(
     monkeypatch.setattr(
         controller.storage,
         "get_app_owned_unsold_position",
-        lambda _ticker: {"quantity": quantity[0], "cycles": []},
+        lambda _ticker, *, con_id=None: {"quantity": quantity[0], "cycles": []},
     )
     controller._run_database_cycle(force=True)
     cached_facts = controller._snapshot_database_cache["guard_facts"]
@@ -184,7 +184,7 @@ def test_order_risk_limits_read_live_database_state_instead_of_gui_cache(
     monkeypatch.setattr(
         controller.storage,
         "get_daily_net_pnl_for_ticker",
-        lambda _ticker: pnl[0],
+        lambda _ticker, *, con_id=None: pnl[0],
     )
     controller._run_database_cycle(force=True)
     cached_facts = controller._snapshot_database_cache["guard_facts"]

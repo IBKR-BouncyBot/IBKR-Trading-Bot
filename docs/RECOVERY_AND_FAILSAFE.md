@@ -14,6 +14,7 @@ Recovery reconciles local application state with app-owned broker facts after st
 8. **Guards are not recovery faults.** ATR warmup, spread/session/data guards, and ordinary strategy waits do not expose broker-changing recovery actions unless an independent order, position, or state mismatch also exists.
 9. **Connectivity has two layers.** A live local API socket does not prove that Gateway/TWS is connected to IBKR servers. Upstream loss invalidates quote freshness and pauses broker/strategy activity.
 10. **Cached quote fields are evidence, not fresh events.** Only a newly delivered ticker event can refresh quote age or drive waiting stages/ATR.
+11. **Exact contract and currency identity are durable.** Recovery requires the stored positive conId to resolve to the same USD/EUR ordinary STK contract, and the active cycle must agree with the database's one-currency lock.
 
 ## Startup behavior
 
@@ -29,7 +30,7 @@ When the local socket disconnects:
 - cached market-data subscription handles are discarded;
 - current quote diagnostics are invalidated for a fresh session;
 - order state is not guessed from the disconnect alone;
-- the reconnect backoff is used.
+- the same endpoint is retried every 10 seconds indefinitely; manual **Disconnect** or application shutdown stops the retries.
 
 When Gateway/TWS remains locally reachable but reports code 1100 or 2110, the controller keeps the local connection fact separate, marks the upstream link unavailable, invalidates cached quote fields, and pauses strategy advancement, app-order polling, and new submissions.
 
@@ -40,7 +41,15 @@ When IBKR reports restoration:
 - app-owned open orders and recent executions are reconciled before normal processing resumes;
 - a post-recovery ticker event is required before prices become strategy-usable.
 
-The controller does not cancel a native order solely because connectivity was interrupted. Any status/fill that occurred during the gap is imported when the broker can report it.
+The controller does not cancel a native order solely because connectivity was interrupted. Any status/fill that occurred during the gap is imported when the broker can report it. A restored local socket does not resume strategy processing until upstream connectivity, exact-contract qualification, broker reconciliation, and a new actual market-data event are all confirmed.
+
+## Contract and currency recovery checks
+
+For the live adapter, an active cycle without a positive stored conId cannot be resumed automatically. Qualification must return the same conId, contract currency, ordinary `STK` type, and SMART route. A mismatch or a database currency-lock conflict moves the cycle to `MANUAL_REVIEW` or blocks recovery rather than searching by symbol or rewriting the stored identity.
+
+For a recognized U.S. primary exchange, the legacy New York RTH fallback remains available when IBKR session metadata cannot be read. A non-U.S. or unknown contract requires usable `liquidHours` and `timeZoneId`; missing metadata fails closed. BouncyBot does not assign U.S. hours to an EUR contract.
+
+The database contains only one contract currency. BouncyBot does not convert P/L, risk limits, reinvestment, or commissions through FX. A commission received in another currency is retained for audit, excluded from local net P/L, and disables Auto-repeat for that cycle.
 
 ## Broker facts used
 
@@ -52,7 +61,7 @@ Depending on stage and availability, recovery examines:
 - duplicate/replayed execution callbacks and commission-before-execution ordering;
 - locally recorded orders/executions;
 - stored BUY/protective/final SELL quantities and timestamps;
-- current account/contract identity;
+- current account, exact conId, contract currency, SMART route, ordinary STK type, required order capabilities, and database currency lock;
 - local API socket state and upstream IBKR system-message state;
 - market-data subscription/update identity and post-recovery freshness;
 - local recovery flags and requested stop/market-close state;
@@ -178,7 +187,7 @@ Manual review is required when facts are incomplete or conflicting, for example:
 - local unsold quantity conflicts with manual account activity;
 - broker recent-execution history is insufficient;
 - a cancellation status remains uncertain;
-- the contract/account identity changed;
+- the exact conId, contract currency, SMART capability, session metadata, database currency lock, or account identity changed;
 - a stale cycle cannot be matched to current broker facts;
 - connectivity returned but app-owned order/execution reconciliation still fails;
 - no fresh post-recovery ticker event is arriving after the broker reports connectivity restored.

@@ -40,7 +40,7 @@ The database and generated folders are derived from this location. The applicati
 `app/gui.py` is the operator interface. It:
 
 - collects connection and strategy settings;
-- provides contract search, confirmation, start, and stop commands;
+- provides exact IBKR contract search/selection, confirmation, start, and stop commands;
 - displays controller snapshots, price diagnostics, stages, blockers, and audit events;
 - renders the five-stage flowchart and cycle timeline;
 - provides trade history and Reconciliation actions;
@@ -56,7 +56,7 @@ The fixed five-button command bar is the dashboard workflow control surface. The
 
 `app/controller.py` owns the live worker loop and all broker side effects. Public GUI methods enqueue commands. Private worker methods:
 
-- connect/reconnect and qualify contracts;
+- connect/reconnect on a fixed ten-second local-socket cadence and qualify exact contracts;
 - refresh market-data and RTH diagnostics;
 - maintain current-session RTH ATR observations regardless of whether adaptation is enabled, aggregate bounded OHLC bars incrementally, and apply ready percentages only when adaptation is enabled;
 - evaluate BUY/SELL blockers;
@@ -77,7 +77,7 @@ The worker uses one serialized thread but schedules responsibilities from indepe
 | Database snapshot | 1 s | Refreshes read-heavy recent-event, history-summary, and GUI guard facts. |
 | Maintenance | 1 s | Updates stale-cycle housekeeping and owns the human-readable report; the report itself remains internally limited to once per 60 seconds unless forced. |
 
-The order within a due cycle is deliberate: broker callbacks and connectivity are processed first; strategy runs only if that broker cycle confirms readiness; database, GUI, and maintenance work then run on their own deadlines. No strategy advancement, order polling, or new transmission occurs while the upstream link is unavailable. New order submissions fail closed when required broker, RTH, recovery, or price facts are uncertain. Commands can bring broker, strategy, and GUI deadlines forward without resetting the database or maintenance clocks.
+The order within a due cycle is deliberate: broker callbacks and connectivity are processed first; strategy runs only if that broker cycle confirms readiness; database, GUI, and maintenance work then run on their own deadlines. No strategy advancement, order polling, or new transmission occurs while the upstream link is unavailable. New order submissions fail closed when required broker, exact-contract, database-currency, RTH, recovery, or price facts are uncertain. Commands can bring broker, strategy, and GUI deadlines forward without resetting the database or maintenance clocks. After an enabled local API socket is lost, reconnect attempts continue every ten seconds without an attempt limit; manual Disconnect and shutdown disable that loop.
 
 Cadence separation does not weaken durability. State transitions, order intent/submission facts, fills, recovery results, and resume checkpoints are persisted synchronously where they occur. Only read-heavy display facts are cached. Order preflight deliberately bypasses that cache and rereads the application-owned position ledger and configured hard-risk totals from SQLite.
 
@@ -98,12 +98,12 @@ It does not import Qt, connect to IBKR, or write SQLite. The controller validate
 
 - TWS/Gateway connection;
 - managed-account discovery for display/explicit routing validation;
-- contract search and qualification;
+- exact USD/EUR ordinary-`STK` contract search and SMART qualification by positive `conId`;
 - market-data subscription and price-source selection;
 - actual `pendingTickersEvent` sequencing, subscription identity, and callback timestamps so cached `Ticker` reads cannot impersonate fresh data;
 - separate local-socket and upstream IBKR connectivity state driven by broker system messages, including 1100, 1101, 1102, 1300, and 2110;
-- RTH/liquid-hours interpretation;
-- route-specific IBKR market-rule selection, price-band loading, and side-aware order-price normalization;
+- contract-specific RTH/liquid-hours interpretation with non-U.S. fail-closed behavior;
+- SMART/order-type capability checks, route-specific IBKR market-rule selection, price-band loading, side-aware order-price normalization, and whole-share minimum/step validation;
 - native trailing and market order construction;
 - strict dedicated what-if checks;
 - app-order filtering;
@@ -115,6 +115,8 @@ The adapter does not own strategy stages. It returns broker facts or raises a br
 Scheduled price reads are nonblocking: the adapter inspects the current subscription immediately and returns without sleeping when the timeout is zero. Bounded explicit reads first inspect the same snapshot and wait only if data is still absent, in slices no longer than 50 ms. Periodic order polling likewise consumes cached `Trade` state immediately; a missing cache entry can start a throttled `reqOpenOrders` refresh, with the response handled by a later broker callback cycle. Explicit connect/recovery/cancel paths retain their bounded waits.
 
 When `ContractDetails` advertises market rules, the live adapter does not treat its smallest `minTick` as universally valid. It maps `validExchanges` to `marketRuleIds`, requests the selected rule, chooses the increment at the proposed price, and fails closed if the advertised rule is unavailable. Successful rules are cached for the adapter session.
+
+Live qualification also requires an API-selected positive `conId` and verifies that the resolved symbol, currency, ordinary `STK` type, SMART route, and primary exchange are consistent with the selection. When supplied by IBKR, `validExchanges` must contain SMART and `orderTypes` must contain the `MKT` and `TRAIL` capabilities used by BouncyBot. Contract minimum-size and size-increment metadata constrain whole-share order quantities.
 
 IBKR order errors are filtered by application ownership before they enter the audit stream. A short-lived bounded pending cache bridges the placement callback race; once the app-owned `Trade` is known, errors are attached to both order polling and broker-event persistence.
 
@@ -131,6 +133,8 @@ IBKR order errors are filtered by application ownership before they enter the au
 - broker callback/recovery events.
 
 SQLite connections are short-lived and scoped to each storage operation. Schema changes are additive and idempotent so an older portable database can be opened without destructive migration.
+
+The existing `app_settings` key/value table also stores the portable database contract-currency claim. A new database can change its draft USD/EUR selection before the first cycle. The first persisted cycle makes the single-currency boundary final. Existing USD databases infer the claim from historical cycles, while mixed or conflicting currency evidence fails closed because the application does not convert P/L, risk totals, budgets, reinvestment, or commissions between currencies.
 
 The controller’s database snapshot cadence reduces repeated read-only connections used for recent events, history totals, and top-bar guard display. This cache is diagnostic only and can be up to one cadence old. Trading-state writes and order authorization checks are not deferred to it.
 
@@ -155,7 +159,7 @@ All app-generated timestamps are recorded and displayed in UTC. This includes cy
 
 The GUI can show workstation-local time alongside UTC for comparison. Imported timestamps without timezone information are interpreted as UTC for audit alignment rather than as the workstation’s local zone.
 
-The adapter parses the active contract's date-specific IBKR `liquidHours` and timezone into explicit regular-session open/close boundaries. The controller uses those same boundaries for the base RTH decision, first/last-minute BUY blockers, and active-BUY cancellation before close, so exchange half days are handled consistently. Only when IBKR contract metadata is unavailable does the adapter supply the existing conservative weekday 09:30–16:00 New York fallback.
+The adapter parses the active exact contract's date-specific IBKR `liquidHours` and `timeZoneId` into explicit regular-session open/close boundaries. The controller uses those same boundaries for the base RTH decision, first/last-minute BUY blockers, active-BUY cancellation, and optional pre-close liquidation, so exchange half days are handled consistently. The conservative weekday 09:30–16:00 New York fallback is available only for recognized U.S. equity primary exchanges. A non-U.S. contract with missing, invalid, or unparseable metadata fails closed.
 
 ## Order ownership boundary
 
@@ -187,7 +191,7 @@ Configured guards prevent new actions but do not rewrite broker history. The con
 
 Read-only broker refresh and audit export remain available in both cases. A recovery probe is a point-in-time snapshot; normal order polling updates or removes a matching cached row when a newer broker state arrives. A later explicit broker probe is not hidden.
 
-A local API socket and the Gateway/TWS upstream IBKR link are independent. An upstream outage invalidates quote freshness and pauses the worker without pretending the local socket closed. After 1101/1102 restoration, app-owned open orders and recent executions are reconciled before normal processing resumes. A fresh post-recovery ticker event is still required before cached quote fields become strategy-usable.
+A local API socket and the Gateway/TWS upstream IBKR link are independent. Loss of an enabled local socket starts fixed ten-second reconnect attempts that continue indefinitely until success, manual Disconnect, or shutdown. An upstream outage invalidates quote freshness and pauses the worker without pretending the local socket closed or repeatedly tearing it down. After 1101/1102 restoration, app-owned open orders and recent executions are reconciled before normal processing resumes. A fresh post-recovery ticker event is still required before cached quote fields become strategy-usable.
 
 A stored active cycle requires an explicit Start/resume after launch. The application does not automatically recreate missing orders when facts are uncertain.
 

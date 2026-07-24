@@ -105,6 +105,10 @@ Validate:
 
 The focused release suite verifies market-rule exchange mapping, positional rule IDs, price-band boundaries, exact BUY-up/SELL-down normalization, failure when advertised rules cannot be loaded, strict what-if behavior, callback-race association, manual-order isolation, audit persistence, and rejection-versus-cancellation state transitions. The tests reproduce the structural IREN invalid-price failure without connecting to IBKR.
 
+### v3.2.0 USD/EUR SMART and reconnect regressions
+
+The focused v3.2.0 suite verifies exact API-selected positive `conId` identity, USD/EUR ordinary-stock and SMART-only validation, required contract capability metadata, European exchange-session parsing and fail-closed missing schedules, one-currency database locking and legacy USD inference, exact-conId ledger/risk scoping, no-FX commission mismatch handling, quantity increments, currency-aware presentation, and fixed ten-second reconnect attempts that continue until connection, manual Disconnect, or shutdown.
+
 ### Controller tests
 
 Use test adapters/headless signals to validate:
@@ -153,7 +157,7 @@ The callable gate proves entry, not exhaustive path coverage. Assertions, branch
 
 The non-GUI offline expansion adds broker callback permutations, generated controller invariants, numerical/payload properties, recovery decision matrices, differential simulation, multi-instance isolation, subprocess crash/restart tests, schema migration and restore fixtures, storage fault injection, Gateway outage sequences, bounded soak tests, and a six-mutant safety gate. The complete scope and exclusions are in [`OFFLINE_BEHAVIOR_TESTS.md`](OFFLINE_BEHAVIOR_TESTS.md).
 
-The current v3.1.2 inventory contains 916 non-soak tests, five bounded soak tests, and 58 validated CSV scenario contracts across 54 price-path files. The complete collection contains 921 pytest cases. The final repository gate reports 77.6% combined statement/branch coverage, entry into all 891/891 effective executable application callables, 6/6 safety mutants killed, and all 58 simulation contracts passing.
+The corrected v3.2.0 inventory contains 966 non-soak tests, five bounded soak tests, and 58 validated CSV scenario contracts across 54 price-path files. The complete collection contains 971 pytest cases. The final repository gate reports 77.5% combined statement/branch coverage, entry into all 917/917 effective executable application callables, 6/6 safety mutants killed, and all 58 simulation contracts passing.
 
 ### Build-script tests
 

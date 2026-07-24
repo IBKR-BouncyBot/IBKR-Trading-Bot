@@ -1,6 +1,6 @@
 # BouncyBot - an IBKR Portable Trading Bot 
 
-**Current release: v3.1.2**
+**Current release: v3.2.0**
 
 ![Simple-view](Images/Trading-Simple-view.png)
 
@@ -48,6 +48,8 @@ The bot implements a five-stage strategy for one confirmed IBKR stock contract:
 5. Record the completed cycle and optionally start another cycle.
 
 The strategy is long-only. It buys whole shares and then sells only the quantity attributed to the application’s recorded fills. Orders created by the application use an `OrderRef` beginning with `IBKRBOT|`. Because multiple portable instances can share a Master API feed, ownership is accepted only when the complete `OrderRef` exactly matches a reference already persisted by that installation; a shared prefix alone is not sufficient.
+
+The supported trading contract is an ordinary `STK` routed through `SMART`, denominated in USD or EUR, and selected from an exact IBKR API result with a positive `conId`. The selected symbol, `conId`, currency, security type, SMART route, and primary exchange are rechecked during qualification. Each portable SQLite database uses one contract currency, so local budgets, P/L, risk limits, and reinvestment are never combined across USD and EUR without an FX conversion model.
 
 The application is portable: its SQLite database, logs, exports, backups, audit reports, and completed market-data captures are stored beside the source tree or packaged executable.
 
@@ -110,8 +112,8 @@ The application records fills, commissions received from IBKR, gross and net P/L
 ## Core features
 
 - PySide6 desktop GUI with connection, strategy, flowchart, history, and reconciliation views.
-- TWS and IB Gateway connection profiles for live and paper endpoints.
-- Contract search and qualification through the IBKR API, including route-specific market-rule price increments.
+- TWS and IB Gateway connection profiles for live and paper endpoints, with a fixed ten-second local API reconnect cadence that continues indefinitely until reconnection, manual Disconnect, or shutdown.
+- Exact USD/EUR ordinary-stock contract selection through the IBKR API, with SMART routing, positive `conId` verification, route-specific market-rule price increments, order-capability checks, and one contract currency per portable database.
 - Whole-share budget sizing.
 - Native IBKR BUY and SELL trailing-stop orders with side-aware broker-price normalization.
 - Optional Stage-3 profitable market liquidation and Stage-4 cancel-confirm-market liquidation before the contract-specific RTH close.
@@ -187,7 +189,7 @@ After upstream restoration, normal processing remains paused until the applicati
 
 The controller evaluates configured blockers before a BUY is transmitted. The top-right **Trading** status shows a compact blocker summary; its tooltip lists all currently evaluated blockers. Depending on configuration and runtime state, blockers include:
 
-The regular-session open/close window comes from the qualified IBKR contract's date-specific `liquidHours` when available. The same parsed boundaries drive the first-minutes, last-minutes, and cancel-before-close controls, so early closes are respected. The adapter's existing weekday 09:30–16:00 New York fallback is used only when IBKR supplies no usable contract hours.
+The regular-session open/close window comes from the exact qualified IBKR contract's date-specific `liquidHours` and `timeZoneId`. The same parsed boundaries drive the first-minutes, last-minutes, and cancel-before-close controls, so early closes are respected. The weekday 09:30–16:00 New York fallback is retained only for recognized U.S. equity primary exchanges. A non-U.S. contract with missing or invalid session metadata fails closed instead of inheriting U.S. hours.
 
 - a disconnected local API socket, lost Gateway-to-IBKR server link, or incomplete post-reconnect reconciliation;
 - no actual post-connect/post-recovery ticker event, or missing, invalid, cached-only, or stale selected price;
@@ -252,7 +254,8 @@ This project is intentionally limited. It does not:
 - trade multiple tickers or independent cycles concurrently;
 - open short positions;
 - trade options, futures, forex, bonds, crypto, funds, or non-`STK` contracts;
-- support non-USD contracts or non-SMART routing through the strategy settings;
+- support contract currencies other than USD and EUR, direct/non-SMART routing, or mixed-currency cycles in one portable database;
+- convert commissions, P/L, budgets, risk limits, or reinvestment between currencies;
 - manage arbitrary manual orders or orders from other software;
 - treat an account-wide IBKR position as wholly owned by the application;
 - provide broker-side lot identification for application-created versus external shares;
@@ -340,15 +343,15 @@ Host and port remain editable. The optional Start helper can launch a configured
 
 ### 1. Connect
 
-Select the TWS/Gateway profile, host, port, client ID, market-data mode, and optional account override. Click **1. Connect**. A blank account means IBKR default routing. The Connection indicator distinguishes a local socket connection from the Gateway/TWS upstream IBKR link; **Gateway only** means the local process is reachable but trading is paused because upstream connectivity is not confirmed. Contract search, ticker confirmation, and strategy start stay disabled until the upstream link is ready and any post-restoration reconciliation has completed.
+Select the TWS/Gateway profile, host, port, client ID, market-data mode, and optional account override. Click **1. Connect**. A blank account means IBKR default routing. The Connection indicator distinguishes a local socket connection from the Gateway/TWS upstream IBKR link; **Gateway only** means the local process is reachable but trading is paused because upstream connectivity is not confirmed. Contract search, ticker confirmation, and strategy start stay disabled until the upstream link is ready and any post-restoration reconciliation has completed. After an enabled local API connection is lost, BouncyBot retries every ten seconds without an attempt limit. Manual **Disconnect** and application shutdown stop those retries.
 
 ### 2. Search for a contract
 
-Enter a stock symbol and use **2. Search/select ticker**. Review the API matches and select the intended contract, especially when a symbol exists on multiple venues.
+Enter a stock symbol and use **2. Search/select ticker**. Choose the exact ordinary `STK` result with the intended positive `conId`, USD or EUR currency, and primary exchange. Routing remains `SMART`. Editing the ticker invalidates the prior exact selection, and a database with completed or active cycles rejects results in the other contract currency.
 
 ### 3. Confirm the ticker and price
 
-Use **3. Confirm ticker + get price**. The application qualifies the contract and starts/refreshes market-data diagnostics. Review the selected price source, bid/ask, **actual update age**, update sequence/subscription identity, market-data type, contract minimum tick, and RTH state. The applicable market rule is resolved at order-preflight time and recorded in order diagnostics. A cached value can remain visible after an outage, but it is labelled cached-only and does not count as a fresh update.
+Use **3. Confirm ticker + get price**. The application rechecks the selected symbol, `conId`, currency, ordinary `STK` type, SMART route, primary exchange, supported order types, and contract session metadata before starting or refreshing market-data diagnostics. Review the selected price source, bid/ask, **actual update age**, update sequence/subscription identity, market-data type, contract minimum tick, and RTH state. The applicable market rule is resolved at order-preflight time and recorded in order diagnostics. A cached value can remain visible after an outage, but it is labelled cached-only and does not count as a fresh update.
 
 ### 4. Configure and start
 
@@ -445,7 +448,7 @@ dist\IBKRTradingBot\IBKRTradingBot.exe
 and creates the versioned release folder and final ZIP using the same naming pattern as IBKR Market Replay Lab:
 
 ```text
-release\IBKRTradingBot_3.1.2_Windows\
+release\IBKRTradingBot_3.2.0_Windows\
   GUI\IBKRTradingBot.exe
   docs\
   README.md
@@ -454,7 +457,7 @@ release\IBKRTradingBot_3.1.2_Windows\
   SECURITY.md
   QUICK_START.txt
 
-release\IBKRTradingBot_3.1.2_Windows.zip
+release\IBKRTradingBot_3.2.0_Windows.zip
 release\SHA256SUMS.txt
 ```
 
@@ -523,7 +526,8 @@ Superseded release-specific documents are indexed under [docs/legacy](docs/legac
 
 ## Release history
 
-- [v3.1.2 release note](docs/V3_1_2_FILL_RECONCILIATION_AND_STAGE3_CLOSE.md) — terminal BUY settlement, idempotent late fills/commissions, strict full-OrderRef isolation, stable diagnostics, corrected execution timestamps, and profitable Stage-3 pre-close liquidation.
+- [v3.2.0 release note](docs/V3_2_0_EUR_SMART_AND_RECONNECT.md) — exact USD/EUR ordinary-stock SMART contracts, one contract currency per portable database, contract capability/session checks, and fixed ten-second indefinite local reconnect.
+- [v3.1.2 release note](docs/legacy/V3_1_2_FILL_RECONCILIATION_AND_STAGE3_CLOSE.md) — terminal BUY settlement, idempotent late fills/commissions, strict full-OrderRef isolation, stable diagnostics, corrected execution timestamps, and profitable Stage-3 pre-close liquidation.
 - [v3.1.1 release note](docs/legacy/V3_1_1_IBKR_ORDER_VALIDATION.md) — market-rule order-price normalization, strict what-if validation, broker rejection diagnostics, and no-fill rejection circuit breaker.
 - [v3.1.0 release note](docs/legacy/V3_1_0_CLOSE_BEFORE_RTH_LIQUIDATION.md) — optional Stage-4 cancel-confirm-market liquidation before the contract-specific RTH close.
 - [v3.0.19 release note](docs/V3_0_19_TRADE_HISTORY_AUDIT_PERFORMANCE.md) — faster Trade History audits, unrestricted audit zoom, realistic sample data, the BouncyBot product name, and an explicit potential-loss market-SELL confirmation.

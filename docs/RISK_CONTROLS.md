@@ -35,7 +35,7 @@ A new order is not submitted when required state is unknown or inconsistent. Exa
 - disconnected local API socket;
 - unavailable or unconfirmed Gateway/TWS-to-IBKR server connection;
 - unfinished post-reconnect broker reconciliation;
-- unqualified contract;
+- missing, unqualified, identity-mismatched, or capability-incompatible exact contract;
 - unresolved recovery-required state;
 - invalid/missing selected price;
 - app-created SELL cancellation still pending;
@@ -48,7 +48,7 @@ These are not disabled by the optional hard-risk master.
 
 Strategy orders use `outsideRth=False`. New order placement requires the controller’s current RTH evaluation to permit it. Unknown or stale RTH status fails closed where the corresponding check applies.
 
-The production adapter obtains date-specific regular-session ranges from the qualified contract's IBKR `liquidHours` and `timeZoneId`. Those parsed boundaries also drive the first-minutes, last-minutes, and pre-close BUY-cancellation controls, including early-close days. The adapter retains a weekday 09:30–16:00 New York fallback only when IBKR returns no usable contract hours; if no usable boundaries are available to the controller, new BUY entry fails closed and an active BUY is not cancelled at a guessed time.
+The production adapter obtains date-specific regular-session ranges from the exact qualified contract's IBKR `liquidHours` and `timeZoneId`. Those parsed boundaries also drive the first-minutes, last-minutes, and pre-close BUY-cancellation controls, including early-close days. The weekday 09:30–16:00 New York fallback is permitted only for a recognized U.S. primary exchange. A non-U.S. or unknown contract with missing or unusable session metadata fails closed; BouncyBot does not guess U.S. hours for an EUR listing.
 
 Native orders accepted by IBKR can remain working according to broker rules. The application’s RTH guard controls its own submissions/activation decisions, not the broker’s entire account.
 
@@ -78,6 +78,18 @@ What-if success is not an execution guarantee. Buying power, prices, account sta
 ### Market-rule price validation
 
 IBKR contract `minTick` can be the smallest increment seen anywhere for a contract rather than the valid increment for the selected route and current price. When a contract advertises `marketRuleIds`, BouncyBot maps the selected exchange to its rule, requests the rule's price bands, and applies the increment for the proposed order price. BUY prices round upward and SELL prices round downward. If an advertised rule cannot be resolved, the order is blocked before transmission.
+
+### Exact contract, database currency, and quantity validation
+
+The live adapter accepts only an exact IBKR API selection with a positive `conId`, ordinary `STK` security type, `SMART` routing, and contract currency `USD` or `EUR`. It verifies that qualification returns the same conId and currency, that SMART is an advertised route when exchange metadata is supplied, and that the contract advertises the `MKT` and `TRAIL` order types required by the strategy. A mismatch blocks Start, recovery, or order creation rather than falling back to symbol-only qualification.
+
+Each portable SQLite database uses one contract currency. A draft database can be rebound between USD and EUR while it has no cycles. The first persisted cycle locks the database currency; an existing v3.1.2 database is inferred from its historical cycles. Mixed-currency evidence fails closed because BouncyBot does not convert P/L, risk limits, reinvestment, or commissions through FX.
+
+Whole-share quantities are validated against IBKR `minSize` and `sizeIncrement` metadata. BUY quantities may be rounded down to the largest valid whole-share quantity within budget. A SELL quantity is never silently rounded down, because doing so could leave an untracked app-owned remainder. Missing IBKR size metadata uses the conservative one-share default.
+
+### Connection-loss retry
+
+After an established local API connection is lost, BouncyBot pauses broker-dependent work and retries the configured TWS or Gateway endpoint every 10 seconds without a retry limit. Manual **Disconnect** and application shutdown disable the retry loop. Reconnection alone does not authorize trading: upstream IBKR connectivity, exact-contract qualification, broker reconciliation, and a new actual market-data event must all recover before strategy processing resumes.
 
 ### Rejection circuit breaker
 
@@ -116,7 +128,7 @@ The master is off by default. A numeric zero disables the corresponding limit.
 - maximum completed application net loss for the selected ticker during the current stored date scope;
 - maximum completed application net loss across stored tickers during that scope.
 
-The values come from local completed cycles, not real-time account P/L. Open losses, unrelated trades, FX, financing, and broker adjustments are outside the calculation.
+The values come from local completed cycles in the database's single contract currency, not real-time account P/L. Open losses, unrelated trades, FX, financing, and broker adjustments are outside the calculation. A commission reported in another currency is retained for audit but excluded from local net P/L, and Auto-repeat is disabled because no FX conversion is performed.
 
 ### Completed-cycle cap
 

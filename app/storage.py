@@ -23,7 +23,21 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from .models import ConnectionSettings, CycleState, Stage, StrategySettings, utc_now_iso
+from .models import (
+    SUPPORTED_CONTRACT_CURRENCIES,
+    ConnectionSettings,
+    CycleState,
+    Stage,
+    StrategySettings,
+    normalize_contract_currency,
+    utc_now_iso,
+)
+
+DATABASE_CONTRACT_CURRENCY_KEY = "database_contract_currency"
+
+
+class DatabaseCurrencyError(ValueError):
+    """Raised when a contract currency conflicts with the portable database."""
 
 
 class _ClosingSqliteConnection(sqlite3.Connection):
@@ -527,7 +541,165 @@ class BotStorage:
         allowed = set(ConnectionSettings.__dataclass_fields__)
         return ConnectionSettings(**{k: v for k, v in data.items() if k in allowed})
 
+    @staticmethod
+    def _currency_evidence_in_connection(con: sqlite3.Connection) -> tuple[str, set[str]]:
+        explicit_row = con.execute(
+            "SELECT value_json FROM app_settings WHERE key=?",
+            (DATABASE_CONTRACT_CURRENCY_KEY,),
+        ).fetchone()
+        explicit = ""
+        if explicit_row is not None:
+            try:
+                explicit = normalize_contract_currency(json.loads(explicit_row["value_json"]), fallback="")
+            except Exception as exc:
+                raise DatabaseCurrencyError(
+                    "The database contract-currency setting is unreadable; manual review is required."
+                ) from exc
+
+        rows = con.execute(
+            """
+            SELECT DISTINCT UPPER(TRIM(currency)) AS currency
+            FROM cycles
+            WHERE currency IS NOT NULL AND TRIM(currency) <> ''
+            """
+        ).fetchall()
+        cycle_currencies = {
+            normalize_contract_currency(row["currency"], fallback="")
+            for row in rows
+            if normalize_contract_currency(row["currency"], fallback="")
+        }
+        legacy_blank_row = con.execute(
+            """
+            SELECT COUNT(*) AS n
+            FROM cycles
+            WHERE currency IS NULL OR TRIM(currency) = ''
+            """
+        ).fetchone()
+        if legacy_blank_row is not None and int(legacy_blank_row["n"] or 0) > 0:
+            # Releases before EUR support were USD-only. Treat an old blank
+            # cycle currency as USD rather than allowing that historical DB to
+            # be rebound to EUR and silently mixing monetary units.
+            cycle_currencies.add("USD")
+        return explicit, cycle_currencies
+
+    @staticmethod
+    def _write_database_currency_in_connection(con: sqlite3.Connection, currency: str) -> None:
+        con.execute(
+            """
+            INSERT INTO app_settings(key, value_json, updated_at)
+            VALUES(?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET
+                value_json=excluded.value_json,
+                updated_at=excluded.updated_at
+            """,
+            (
+                DATABASE_CONTRACT_CURRENCY_KEY,
+                json.dumps(currency),
+                utc_now_iso(),
+            ),
+        )
+
+    @classmethod
+    def _validate_currency_evidence(cls, explicit: str, cycle_currencies: set[str]) -> str:
+        unsupported = sorted(
+            value
+            for value in ({explicit} | set(cycle_currencies))
+            if value and value not in SUPPORTED_CONTRACT_CURRENCIES
+        )
+        if unsupported:
+            raise DatabaseCurrencyError(
+                "The database contains unsupported contract currencies: " + ", ".join(unsupported) + "."
+            )
+        if len(cycle_currencies) > 1:
+            raise DatabaseCurrencyError(
+                "The database contains cycles in multiple contract currencies; automatic FX conversion is not supported."
+            )
+        cycle_currency = next(iter(cycle_currencies), "")
+        if explicit and cycle_currency and explicit != cycle_currency:
+            raise DatabaseCurrencyError(
+                f"The database currency lock is {explicit}, but persisted cycles use {cycle_currency}."
+            )
+        return cycle_currency or explicit
+
+    def database_contract_currency(self) -> str:
+        """Return the single USD/EUR contract currency claimed by this DB.
+
+        Existing v3.1.2 databases are migrated lazily: a historical cycle's
+        currency becomes the lock the first time this method is called.  A
+        mixed-currency database fails closed because BouncyBot does not perform
+        FX conversion for P/L, risk limits, or reinvestment.
+        """
+        with self.connect() as con:
+            explicit, cycle_currencies = self._currency_evidence_in_connection(con)
+            resolved = self._validate_currency_evidence(explicit, cycle_currencies)
+            if resolved and not explicit:
+                self._write_database_currency_in_connection(con, resolved)
+            return resolved
+
+    def database_contract_currency_info(self) -> dict[str, Any]:
+        """Return the currency lock plus whether persisted cycles make it final."""
+        with self.connect() as con:
+            explicit, cycle_currencies = self._currency_evidence_in_connection(con)
+            resolved = self._validate_currency_evidence(explicit, cycle_currencies)
+            row = con.execute("SELECT COUNT(*) AS n FROM cycles").fetchone()
+            cycle_count = int(row["n"] or 0) if row is not None else 0
+            if resolved and not explicit:
+                self._write_database_currency_in_connection(con, resolved)
+            return {
+                "currency": resolved,
+                "cycle_count": cycle_count,
+                "locked": cycle_count > 0,
+            }
+
+    def _claim_database_contract_currency_in_connection(
+        self,
+        con: sqlite3.Connection,
+        currency: Any,
+        *,
+        allow_rebind_if_no_cycles: bool = False,
+    ) -> str:
+        """Claim or validate the database currency inside an existing transaction."""
+        requested = normalize_contract_currency(currency, fallback="")
+        if requested not in SUPPORTED_CONTRACT_CURRENCIES:
+            raise DatabaseCurrencyError("Contract currency must be USD or EUR.")
+        explicit, cycle_currencies = self._currency_evidence_in_connection(con)
+        current = self._validate_currency_evidence(explicit, cycle_currencies)
+        if current and current != requested:
+            if allow_rebind_if_no_cycles and not cycle_currencies:
+                self._write_database_currency_in_connection(con, requested)
+                return requested
+            raise DatabaseCurrencyError(
+                f"This SQLite database is locked to {current} contracts. "
+                f"Use a separate portable database for {requested} contracts."
+            )
+        if not current:
+            self._write_database_currency_in_connection(con, requested)
+        return requested
+
+    def claim_database_contract_currency(
+        self,
+        currency: Any,
+        *,
+        allow_rebind_if_no_cycles: bool = False,
+    ) -> str:
+        """Claim or validate the database's one supported contract currency."""
+        with self.connect() as con:
+            return self._claim_database_contract_currency_in_connection(
+                con,
+                currency,
+                allow_rebind_if_no_cycles=allow_rebind_if_no_cycles,
+            )
+
     def save_strategy_settings(self, settings: StrategySettings) -> None:
+        try:
+            exact_con_id = int(getattr(settings, "contract_con_id", 0) or 0)
+        except Exception:
+            exact_con_id = 0
+        if exact_con_id > 0:
+            self.claim_database_contract_currency(
+                getattr(settings, "currency", ""),
+                allow_rebind_if_no_cycles=True,
+            )
         self.set_json("strategy", asdict(settings))
 
     def load_strategy_settings(self) -> StrategySettings:
@@ -593,6 +765,17 @@ class BotStorage:
                     existing = None
                 if isinstance(existing, dict) and existing.get("checkpoint_id") == normalized_checkpoint_id:
                     return existing
+
+            try:
+                exact_con_id = int(getattr(strategy, "contract_con_id", 0) or 0)
+            except Exception:
+                exact_con_id = 0
+            if exact_con_id > 0:
+                self._claim_database_contract_currency_in_connection(
+                    con,
+                    getattr(strategy, "currency", ""),
+                    allow_rebind_if_no_cycles=True,
+                )
 
             for key, value in (
                 ("connection", asdict(connection)),
@@ -678,6 +861,17 @@ class BotStorage:
         return sql, columns, data
 
     def _upsert_cycle_in_connection(self, con: sqlite3.Connection, cycle: CycleState) -> None:
+        requested = normalize_contract_currency(cycle.currency, fallback="")
+        if requested not in SUPPORTED_CONTRACT_CURRENCIES:
+            raise DatabaseCurrencyError("Cycle currency must be USD or EUR.")
+        explicit, cycle_currencies = self._currency_evidence_in_connection(con)
+        current = self._validate_currency_evidence(explicit, cycle_currencies)
+        if current and current != requested:
+            raise DatabaseCurrencyError(
+                f"This SQLite database is locked to {current} contracts and cannot store a {requested} cycle."
+            )
+        if not current:
+            self._write_database_currency_in_connection(con, requested)
         sql, columns, data = self._cycle_upsert_statement(cycle)
         con.execute(sql, tuple(data[col] for col in columns))
 
@@ -688,6 +882,7 @@ class BotStorage:
     def _row_to_cycle(self, row: sqlite3.Row) -> CycleState:
         data = dict(row)
         data.setdefault("primary_exchange", "")
+        data["currency"] = normalize_contract_currency(data.get("currency"), fallback="USD")
         data.setdefault("rth_only", 1)
         data["reinvest_profits"] = bool(data["reinvest_profits"])
         data["rth_only"] = bool(data["rth_only"])
@@ -805,25 +1000,51 @@ class BotStorage:
             row = con.execute(query, tuple(params)).fetchone()
         return self._row_to_cycle(row) if row else None
 
-    def get_app_owned_unsold_position(self, ticker: str) -> dict[str, Any]:
+    @staticmethod
+    def _exact_contract_filter(con_id: Optional[int], *, column: str = "con_id") -> tuple[str, list[Any]]:
+        """Return an optional exact-conId SQL filter with legacy compatibility.
+
+        Releases before exact contract selection could persist a blank/zero
+        ``con_id``.  When an exact contract is selected, those same-ticker
+        legacy rows are included conservatively, while rows belonging to a
+        different positive conId are excluded.
+        """
+        try:
+            exact_con_id = int(con_id or 0)
+        except Exception:
+            exact_con_id = 0
+        if exact_con_id <= 0:
+            return "", []
+        return f" AND (COALESCE({column}, 0)=0 OR {column}=?)", [exact_con_id]
+
+    def get_app_owned_unsold_position(
+        self,
+        ticker: str,
+        *,
+        con_id: Optional[int] = None,
+    ) -> dict[str, Any]:
         """Return locally tracked unsold shares created by this app.
 
         IBKR account positions can combine app trades with manual or external
-        holdings.  BUY gating must therefore use the app's own persisted fill
-        ledger rather than the account-wide broker position.  Cycles explicitly
-        marked manually handled are excluded because the operator has confirmed
-        that their recovery state was resolved outside the app.
+        holdings. BUY gating therefore uses the app's persisted fill ledger.
+        With an exact contract selected, another positive conId that happens to
+        share the same symbol is excluded; legacy same-symbol rows without a
+        conId remain included conservatively. Cycles explicitly marked manually
+        handled are excluded because the operator confirmed their recovery state
+        was resolved outside the app.
         """
         normalized = str(ticker or "").strip().upper()
         if not normalized:
             return {"quantity": 0, "cycles": []}
+        contract_sql, contract_params = self._exact_contract_filter(con_id, column="c.con_id")
         with self.connect() as con:
             rows = con.execute(
-                """
+                f"""
                 SELECT
                     c.id,
                     c.cycle_number,
                     c.stage,
+                    c.con_id,
                     c.buy_filled_qty,
                     c.sell_filled_qty,
                     c.protective_sell_filled_qty,
@@ -835,9 +1056,10 @@ class BotStorage:
                     ) AS manually_handled
                 FROM cycles c
                 WHERE c.ticker=? AND COALESCE(c.buy_filled_qty, 0) > 0
+                {contract_sql}
                 ORDER BY c.cycle_number ASC
                 """,
-                (normalized,),
+                (normalized, *contract_params),
             ).fetchall()
 
         total = 0
@@ -858,6 +1080,7 @@ class BotStorage:
                     "cycle_id": str(row["id"]),
                     "cycle_number": int(row["cycle_number"] or 0),
                     "stage": str(row["stage"] or ""),
+                    "con_id": int(row["con_id"] or 0) or None,
                     "quantity": remaining,
                 }
             )
@@ -868,24 +1091,38 @@ class BotStorage:
             row = con.execute("SELECT COALESCE(MAX(cycle_number), 0) AS n FROM cycles WHERE ticker=?", (ticker.upper(),)).fetchone()
         return int(row["n"] or 0) + 1
 
-    def get_realized_net_profit_for_ticker(self, ticker: str) -> float:
-        """Return completed-cycle net P/L for one ticker.
+    def get_realized_net_profit_for_ticker(
+        self,
+        ticker: str,
+        *,
+        con_id: Optional[int] = None,
+    ) -> float:
+        """Return completed-cycle net P/L for one exact stock contract.
 
         This value feeds the reinvest-profits option. The strategy engine later
         clamps negative totals so losses do not reduce the user's base budget.
+        A blank ``con_id`` preserves the historical ticker-wide API.
         """
+        contract_sql, contract_params = self._exact_contract_filter(con_id)
         with self.connect() as con:
             row = con.execute(
-                """
+                f"""
                 SELECT COALESCE(SUM(net_pnl), 0) AS pnl
                 FROM cycles
                 WHERE ticker=? AND stage=?
+                {contract_sql}
                 """,
-                (ticker.upper(), Stage.CYCLE_COMPLETE.value),
+                (ticker.upper(), Stage.CYCLE_COMPLETE.value, *contract_params),
             ).fetchone()
         return float(row["pnl"] or 0.0)
 
-    def get_daily_net_pnl_for_ticker(self, ticker: str, day_utc: Optional[str] = None) -> float:
+    def get_daily_net_pnl_for_ticker(
+        self,
+        ticker: str,
+        day_utc: Optional[str] = None,
+        *,
+        con_id: Optional[int] = None,
+    ) -> float:
         """Return completed-cycle net P/L for one ticker on a UTC date.
 
         ``day_utc`` is YYYY-MM-DD. When omitted, today's UTC date is used.
@@ -893,14 +1130,16 @@ class BotStorage:
         completed cycles recorded by this app, not the whole IBKR account.
         """
         day = day_utc or utc_now_iso()[:10]
+        contract_sql, contract_params = self._exact_contract_filter(con_id)
         with self.connect() as con:
             row = con.execute(
-                """
+                f"""
                 SELECT COALESCE(SUM(net_pnl), 0) AS pnl
                 FROM cycles
                 WHERE ticker=? AND stage=? AND substr(updated_at, 1, 10)=?
+                {contract_sql}
                 """,
-                (ticker.upper(), Stage.CYCLE_COMPLETE.value, day),
+                (ticker.upper(), Stage.CYCLE_COMPLETE.value, day, *contract_params),
             ).fetchone()
         return float(row["pnl"] or 0.0)
 
@@ -917,44 +1156,66 @@ class BotStorage:
             ).fetchone()
         return float(row["pnl"] or 0.0)
 
-    def get_completed_cycle_count_today(self, ticker: str, day_utc: Optional[str] = None) -> int:
+    def get_completed_cycle_count_today(
+        self,
+        ticker: str,
+        day_utc: Optional[str] = None,
+        *,
+        con_id: Optional[int] = None,
+    ) -> int:
         day = day_utc or utc_now_iso()[:10]
+        contract_sql, contract_params = self._exact_contract_filter(con_id)
         with self.connect() as con:
             row = con.execute(
-                """
+                f"""
                 SELECT COUNT(*) AS n
                 FROM cycles
                 WHERE ticker=? AND stage=? AND substr(updated_at, 1, 10)=?
+                {contract_sql}
                 """,
-                (ticker.upper(), Stage.CYCLE_COMPLETE.value, day),
+                (ticker.upper(), Stage.CYCLE_COMPLETE.value, day, *contract_params),
             ).fetchone()
         return int(row["n"] or 0)
 
-    def get_completed_cycle_count(self, ticker: str) -> int:
-        """Count all completed cycles stored for one ticker."""
+    def get_completed_cycle_count(
+        self,
+        ticker: str,
+        *,
+        con_id: Optional[int] = None,
+    ) -> int:
+        """Count completed cycles for one exact stock contract."""
+        contract_sql, contract_params = self._exact_contract_filter(con_id)
         with self.connect() as con:
             row = con.execute(
-                """
+                f"""
                 SELECT COUNT(*) AS n
                 FROM cycles
                 WHERE ticker=? AND stage=?
+                {contract_sql}
                 """,
-                (ticker.upper(), Stage.CYCLE_COMPLETE.value),
+                (ticker.upper(), Stage.CYCLE_COMPLETE.value, *contract_params),
             ).fetchone()
         return int(row["n"] or 0)
 
-    def get_consecutive_loss_count(self, ticker: str) -> int:
-        """Count most recent completed losing cycles for one ticker."""
+    def get_consecutive_loss_count(
+        self,
+        ticker: str,
+        *,
+        con_id: Optional[int] = None,
+    ) -> int:
+        """Count recent consecutive losing cycles for one exact contract."""
+        contract_sql, contract_params = self._exact_contract_filter(con_id)
         with self.connect() as con:
             rows = con.execute(
-                """
+                f"""
                 SELECT net_pnl
                 FROM cycles
                 WHERE ticker=? AND stage=?
+                {contract_sql}
                 ORDER BY updated_at DESC
                 LIMIT 100
                 """,
-                (ticker.upper(), Stage.CYCLE_COMPLETE.value),
+                (ticker.upper(), Stage.CYCLE_COMPLETE.value, *contract_params),
             ).fetchall()
         count = 0
         for row in rows:
@@ -1713,6 +1974,53 @@ class BotStorage:
                 item["raw"] = item.pop("raw_json", "")
             result.append(item)
         return result
+
+    def has_decision_event_dedupe_key(
+        self,
+        *,
+        cycle_id: str,
+        event_type: str,
+        dedupe_key: str,
+    ) -> bool:
+        """Return whether a structured decision event already owns ``dedupe_key``."""
+        normalized_cycle_id = str(cycle_id or "").strip()
+        normalized_event_type = str(event_type or "").upper().strip()
+        normalized_dedupe_key = str(dedupe_key or "").strip()
+        if not normalized_cycle_id or not normalized_event_type or not normalized_dedupe_key:
+            return False
+        with self.connect() as con:
+            rows = con.execute(
+                """
+                SELECT raw_json
+                FROM decision_events
+                WHERE cycle_id=? AND event_type=?
+                ORDER BY id DESC
+                """,
+                (normalized_cycle_id, normalized_event_type),
+            ).fetchall()
+        for row in rows:
+            try:
+                raw = json.loads(row["raw_json"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if not isinstance(raw, dict):
+                continue
+            if str(raw.get("dedupe_key") or "") == normalized_dedupe_key:
+                return True
+            # Same-release v3.2.0 databases created before the bugscan hotfix
+            # do not yet contain an explicit dedupe_key. Reconstruct the legacy
+            # commission-mismatch identity so replayed callbacks remain
+            # idempotent after upgrading within the same release.
+            if normalized_event_type == "COMMISSION_CURRENCY_MISMATCH":
+                legacy_execution_id = str(raw.get("execution_id") or "")
+                legacy_currency = normalize_contract_currency(
+                    raw.get("commission_currency"),
+                    fallback="",
+                )
+                legacy_key = f"{normalized_cycle_id}|{legacy_execution_id}|{legacy_currency}"
+                if legacy_key == normalized_dedupe_key:
+                    return True
+        return False
 
     def add_decision_event(
         self,

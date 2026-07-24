@@ -36,6 +36,13 @@ Draft settings are persisted independently of an active cycle. Starting a cycle 
 
 The `last_resume_checkpoint` key records the checkpoint ID, UTC creation time, shutdown reason, active cycle identity/stage, ticker, and whether explicit resume is required. During an accepted app exit or controlled Windows shutdown, this setting is committed in the same transaction as the latest connection/strategy drafts, active cycle row, and audit event.
 
+
+### `database_contract_currency`
+
+The `app_settings` key `database_contract_currency` stores the portable database's single supported contract currency (`USD` or `EUR`). A zero-cycle draft can be rebound when a different exact contract is selected. The first persisted cycle makes the lock final. Existing v3.1.2 databases are inferred lazily from historical cycle currency; legacy blank cycle values are treated as USD because those releases were USD-only.
+
+If persisted cycles contain multiple currencies, or the explicit lock conflicts with cycle history, storage fails closed with `DatabaseCurrencyError`. The application does not add unlike currencies, perform FX conversion, or silently rewrite historical cycle currency.
+
 ## `cycles`
 
 One row per strategy cycle. This is the core restart/recovery and completed-history table.
@@ -44,7 +51,7 @@ One row per strategy cycle. This is the core restart/recovery and completed-hist
 
 - `id`, `cycle_number`, `ticker`, `stage`;
 - `created_at`, `updated_at`;
-- `account`, `con_id`, `exchange`, `primary_exchange`, `currency`, `rth_only`;
+- `account`, exact IBKR `con_id`, SMART `exchange`, native `primary_exchange`, one-database `currency`, and `rth_only`;
 - `recovery_required`, `close_position_market_requested`, `stop_after_current_cycle`, `error_message`.
 
 A blank `account` is valid and means no explicit IBKR order account override.
@@ -109,7 +116,7 @@ The table is useful for history and recovery comparison, but an order row alone 
 
 ## `executions`
 
-Recorded fills from live polling or recovery.
+Recorded fills from live polling, callbacks, or recovery. Monetary values remain in the cycle/database contract currency; no FX conversion is performed.
 
 | Column group | Contents |
 |---|---|
@@ -117,7 +124,7 @@ Recorded fills from live polling or recovery.
 | Fill | `side`, `shares`, `price`, `avg_price`, `commission`, `currency`, `executed_at` |
 | Diagnostics | `raw_json` |
 
-Exact IBKR execution IDs are idempotency keys. Duplicate execution or commission callbacks enrich the same row rather than adding quantity again. A stable `__CUMULATIVE__|...` residual row temporarily represents only broker cumulative quantity/commission not yet backed by individual execution IDs; it shrinks or disappears as those callbacks arrive. A recovered execution can exist without a cycle link when exact local ownership cannot be resolved safely. During Stage-3 or Stage-4 close workflows, protective, final-trail, and replacement-market executions are aggregated to calculate remaining app-owned quantity and weighted average exit price.
+Exact IBKR execution IDs are idempotency keys. Duplicate execution or commission callbacks enrich the same row rather than adding quantity again. A stable `__CUMULATIVE__|...` residual row temporarily represents only broker cumulative quantity/commission not yet backed by individual execution IDs; it shrinks or disappears as those callbacks arrive. A recovered execution can exist without a cycle link when exact local ownership cannot be resolved safely. During Stage-3 or Stage-4 close workflows, protective, final-trail, and replacement-market executions are aggregated to calculate remaining app-owned quantity and weighted average exit price. If IBKR reports a commission in another currency, the raw broker currency remains in audit data but the value is excluded from local net P/L and Auto-repeat is disabled.
 
 ## `events`
 
@@ -154,7 +161,7 @@ Raw broker/recovery event records.
 - `order_ref`, `order_id`, `perm_id`, `execution_id`;
 - required `raw_json`.
 
-This table preserves broker facts used for diagnostics. App-owned `ORDER_ERROR` rows retain IBKR error code/message, request/order identity, app `OrderRef`, ticker/currency, and advanced rejection JSON when supplied. The corresponding controller interpretation is also written to `decision_events` as `BROKER_ORDER_ERROR`. In v3.1.2, the full reference must match local persisted ownership before a cycle is attached; unmatched Master-feed events remain with `cycle_id=NULL`. The table is indexed by time, order reference, and execution ID.
+This table preserves broker facts used for diagnostics. App-owned `ORDER_ERROR` rows retain IBKR error code/message, request/order identity, app `OrderRef`, ticker/currency, and advanced rejection JSON when supplied. The corresponding controller interpretation is also written to `decision_events` as `BROKER_ORDER_ERROR`. In current behavior, the full reference must match local persisted ownership before a cycle is attached; unmatched Master-feed events remain with `cycle_id=NULL`. The table is indexed by time, order reference, and execution ID.
 
 ## Foreign-key behavior
 
@@ -174,7 +181,7 @@ Normal application operation does not delete completed cycle history as part of 
 
 The migration path does not drop tables or rewrite trading history.
 
-v3.1.2 adds one defaulted cycle-state column: `buy_remainder_cancel_requested INTEGER NOT NULL DEFAULT 0`. No table is removed or rewritten. Existing v3.1.1, v3.1.0, and v3.0.19 databases migrate in place through the normal additive path.
+v3.1.2 added one defaulted cycle-state column: `buy_remainder_cancel_requested INTEGER NOT NULL DEFAULT 0`. v3.2.0 adds no table or column. Its one-database currency lock uses the existing `app_settings` table and is inferred from historical cycles when upgrading. Existing v3.1.2, v3.1.1, v3.1.0, and v3.0.19 databases open through the normal additive path; a database with valid single-currency history keeps all existing rows.
 
 ## Backups
 

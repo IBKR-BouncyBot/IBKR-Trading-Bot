@@ -1,6 +1,6 @@
 # Documentation index
 
-The files in this directory describe the current v3.1.2 behavior unless explicitly marked otherwise. The root of `docs/` is intentionally limited to current operating, design, recovery, and verification material. Superseded release notes are stored under [`legacy/`](legacy/README.md).
+The files in this directory describe the current v3.2.0 behavior unless explicitly marked otherwise. The root of `docs/` is intentionally limited to current operating, design, recovery, and verification material. Superseded release notes are stored under [`legacy/`](legacy/README.md).
 
 When documents disagree, use this source-of-truth order:
 
@@ -48,7 +48,7 @@ When documents disagree, use this source-of-truth order:
 
 ## Current release note
 
-[`V3_1_2_FILL_RECONCILIATION_AND_STAGE3_CLOSE.md`](V3_1_2_FILL_RECONCILIATION_AND_STAGE3_CLOSE.md) records terminal BUY settlement, idempotent late execution and commission reconciliation, strict full-OrderRef ownership, stable diagnostics, execution timestamp correction, profitable Stage-3 pre-close liquidation, compatibility, and verification scope.
+[`V3_2_0_EUR_SMART_AND_RECONNECT.md`](V3_2_0_EUR_SMART_AND_RECONNECT.md) records exact USD/EUR ordinary-stock SMART contract support, the one-currency-per-database rule, broker capability and session checks, fixed ten-second indefinite local reconnect, compatibility, and verification scope.
 
 ## Archived documentation
 

@@ -1,229 +1,183 @@
-BouncyBot - IBKR Portable Trading Bot v3.1.2
-Fill reconciliation, strict order ownership, diagnostics, timestamps, and Stage-3 close
+BouncyBot - IBKR Portable Trading Bot v3.2.0
+Exact USD/EUR SMART contracts, indefinite ten-second reconnect, and same-release bugscan correction
 Implementation and verification report
-Date: 2026-07-23
+Date: 2026-07-24
 
 BASELINE
 ========
 
-This release was produced from the corrected v3.1.1 source archive:
+This release was produced from the corrected v3.1.2 source archive:
 
-  IBKR_Trading_Bot_3.1.1_IBKR_Order_Validation_Ruff_Corrected_Source.zip
+  IBKR_Trading_Bot_3.1.2_Fill_Reconciliation_Isolation_Stage3_Close_Ruff_Fixed_Source.zip
 
-The v3.1.1 market-rule normalization, what-if validation, broker-error
-retention, rejection circuit breaker, documentation, tests, and portable build
-layout were retained. The release version was advanced to 3.1.2.
+The v3.1.2 fill reconciliation, late execution/commission handling, strict
+full-OrderRef ownership, diagnostic throttling, execution-time correction,
+Stage-3 profitable pre-close liquidation, documentation, tests, and portable
+build layout were retained. The release version was advanced to 3.2.0.
 
-PROBLEM EVIDENCE
-================
+IMPLEMENTED SCOPE
+=================
 
-The implementation addresses defects established by comparing two live audit
-bundles and the associated Gateway evidence:
+1. EXACT USD/EUR ORDINARY-STOCK CONTRACTS OVER SMART
 
-1. A BUY could partially fill, trigger cancellation of the remainder, receive a
-   second fill during the cancellation race, and leave that second execution
-   outside the cycle's durable app-owned quantity.
-2. Late execDetails and commission callbacks were audited but were not always
-   applied to the cycle ledger or completed-cycle P/L.
-3. A shared Master-client feed could associate another portable instance's
-   IBKRBOT-prefixed callback with the current active cycle despite a different
-   complete OrderRef.
-4. Native trailing diagnostics changed their throttle key whenever a displayed
-   price changed, so routine waiting diagnostics could be persisted every tick.
-5. Broker execution timestamps could be shifted by the host timezone.
-6. The existing close-before-RTH option covered Stage 4 but not a profitable
-   Stage-3 position that had not yet reached the normal SELL activation level.
+- Supported contract currencies are USD and EUR.
+- Supported security type is ordinary STK only.
+- Routing is SMART only.
+- Production use requires an exact positive IBKR conId selected from the API
+  contract-search results. Editing the ticker invalidates the prior selection.
+- Qualification rechecks conId, symbol, currency, security type, SMART route,
+  primary exchange, and contract details before monitoring or order submission.
+- ContractDetails capability checks require SMART availability plus the MKT and
+  TRAIL order types used by BouncyBot when those broker fields are supplied.
+- Existing price-dependent market-rule normalization remains authoritative.
+- Whole-share minimum-size and size-increment metadata is validated. BUY size
+  may be rounded down before intent persistence; SELL size is never rounded
+  down because doing so could leave an untracked app-owned remainder.
 
-IMPLEMENTED CHANGES
-===================
+2. ONE CONTRACT CURRENCY PER PORTABLE SQLITE DATABASE
 
-1. BUY SETTLEMENT REMAINS IN STAGE 2 UNTIL TERMINAL
+- The existing app_settings table stores a database_contract_currency key.
+- A zero-cycle draft database may switch between USD and EUR.
+- The first persisted cycle locks the database currency.
+- Existing v3.1.2 databases infer the lock from historical cycles. Legacy blank
+  cycle currencies are interpreted as USD because earlier supported releases
+  were USD-only.
+- Mixed-currency evidence fails closed. BouncyBot does not perform FX
+  conversion for budgets, P/L, risk totals, or reinvestment.
+- A non-zero commission reported in a different currency is retained as a raw
+  broker fact but excluded from local net P/L. Auto-repeat is disabled and a
+  decision event identifies the mismatch.
+- Position, risk, and reinvestment queries use the exact selected conId while
+  retaining conservative compatibility with legacy same-ticker rows that lack
+  a conId. Live account-position lookup does not fall back to another positive
+  conId merely because the ticker symbol matches.
 
-- A positive partial BUY fill no longer moves the strategy immediately to
-  Stage 3.
-- The original BUY order remains under broker polling until IBKR reports a
-  terminal status.
-- The unfilled remainder is cancelled once; the one-shot cancellation state is
-  persisted as buy_remainder_cancel_requested.
-- If the cancellation call fails before confirmation, the one-shot flag is
-  cleared so a later broker cadence can retry.
-- Additional fills during cancellation are reconciled into the cumulative
-  quantity, average price, and commission.
-- Stage 3 and any protective SELL are entered/created only after terminal BUY
-  settlement.
-- Restart and reconnect recovery use the same settlement path.
+3. CONTRACT-SPECIFIC SESSION AND QUANTITY SAFETY
 
-2. IDEMPOTENT LATE EXECUTION AND COMMISSION CALLBACKS
+- Date-specific liquidHours and timeZoneId from the exact contract drive RTH
+  status and timing guards.
+- The historical New York fallback is allowed only for recognized U.S. equity
+  primary exchanges.
+- A non-U.S. contract with missing, invalid, or unparseable session metadata
+  fails closed instead of inheriting U.S. hours.
+- GUI currency formatting, previews, confirmations, Trade History, audit views,
+  and example data are contract-currency aware.
 
-- Real executions are keyed by exact IBKR execution ID and upserted rather than
-  appended blindly.
-- Replayed execDetails callbacks do not duplicate quantity.
-- Commission can arrive before or after execution details.
-- An explicit commissionReport callback overrides an ib_async default 0.0
-  commission placeholder.
-- A stable residual cumulative placeholder represents order-status quantity or
-  commission that has not yet arrived under individual execution IDs.
-- The placeholder shrinks as real callbacks arrive and is removed when the
-  individual ledger fully represents the broker cumulative state.
-- Cycle quantities, weighted average prices, commissions, and P/L are projected
-  from the durable ledger monotonically; an incomplete callback subset cannot
-  reduce a larger broker cumulative quantity.
-- Late commissions update completed-cycle net P/L.
-- Quantity conflicts fail closed: late BUY quantity after creation of an exit
-  order and SELL quantity above app-owned BUY quantity move the cycle to ERROR
-  for manual review.
+4. INDEFINITE FIXED-CADENCE LOCAL API RECONNECT
 
-3. STRICT ORDER-REFERENCE OWNERSHIP
+- A user-requested Connect enables automatic retries before the first socket
+  attempt, so an initial failure does not require another click.
+- A lost local TWS/IB Gateway API socket is retried every 10 seconds.
+- There is no retry limit and no exponential backoff.
+- A successful reconnect resets the failure count and invokes the existing
+  order, execution, position, market-data, and recovery reconciliation paths.
+- Manual Disconnect and application shutdown disable retries.
+- A healthy local API socket with a separate Gateway/TWS-to-IBKR server outage
+  remains under the existing upstream-connectivity recovery logic and is not
+  repeatedly torn down.
 
-- The generic IBKRBOT prefix is no longer accepted as proof that an order belongs
-  to this portable instance.
-- Broker callbacks are attached to a cycle only when their complete OrderRef
-  exactly matches an OrderRef persisted in the local database.
-- Unmatched Master-feed events remain unowned broker diagnostics with
-  cycle_id=NULL.
-- Unmatched events cannot alter the active cycle, quantities, P/L, current
-  status, decision stream, or recovery cancellation set.
-- No installation-specific identifier was added, as requested.
-- Trade-off: loss or replacement of the local database can require manual
-  reconciliation because broad prefix-based recovery is intentionally rejected.
+5. SAME-RELEASE BUGSCAN CORRECTIONS
 
-4. STABLE NATIVE-TRAIL DIAGNOSTIC THROTTLE
-
-- The throttle identity is now based on cycle ID, side, and exact order
-  reference rather than the complete message text.
-- Numeric diagnostic values can change without creating a new throttle bucket.
-- Repeated routine waiting diagnostics are limited to the configured interval.
-- The existing bounded warning-cache behavior remains in place.
-
-5. EXECUTION TIMESTAMP CORRECTION
-
-- Live execDetails uses ib_async's aware fill-receipt timestamp as the canonical
-  persisted UTC execution timeline.
-- The broker-decoded execution timestamp is preserved separately in raw/audit
-  data.
-- Recovered historical fills use the decoded broker execution timestamp.
-- The adapter no longer forces TimezoneTWS to UTC.
-- Tests cover aware live timestamps, recovery timestamps, and host-timezone
-  independence.
-
-6. PROFITABLE STAGE-3 CLOSE BEFORE RTH
-
-The existing setting remains:
-
-  Cancel SELL trail and liquidate before close
-
-It remains OFF by default and retains the existing configurable cutoff.
-
-When enabled in Stage 3, BouncyBot starts the workflow only when:
-
-- RTH is confirmed open;
-- the contract-specific cutoff has been reached;
-- a fresh selected strategy price is available; and
-- selected current price is strictly greater than weighted average BUY price.
-
-Commissions are deliberately ignored for this eligibility comparison.
-
-If no protective SELL is working, the bot submits one RTH-only DAY market SELL
-for the app-owned unsold quantity. If a protective SELL is working, the bot:
-
-1. requests cancellation once;
-2. waits for terminal broker confirmation;
-3. applies any fills during cancellation;
-4. recalculates remaining app-owned quantity;
-5. rechecks that the selected price is still strictly above average BUY; and
-6. submits only the remaining quantity.
-
-If the price no longer passes after cancellation, the cycle moves to ERROR for
-manual review rather than transmitting the replacement. A qualifying quote does
-not guarantee a profitable fill: the market order can execute below the checked
-price or average BUY price. No outside-RTH fallback is submitted. Existing
-Stage-4 cancel-confirm-replace behavior remains intact.
+- Qualification now verifies the broker-returned symbol, SMART order route, and
+  selected primary exchange instead of relying on conId/currency/security type
+  alone. The selected primary exchange is retained if IBKR returns that field
+  blank.
+- SMART/direct market-data fallback variants use the qualified contract's EUR
+  or USD currency when the raw contract object omits currency. EUR contracts no
+  longer produce a USD fallback request or cache key.
+- Resume checkpoints validate/claim database currency in the same SQLite
+  transaction as the settings and active cycle, closing a shutdown-only path
+  that could otherwise bypass the one-currency lock.
+- Reconnect attempts now observe the full ten-second interval even when a
+  deterministic monotonic clock starts at 0.0.
+- An exactly zero commission is currency-neutral. Non-zero cross-currency
+  mismatch events are deduplicated persistently across controller restarts,
+  including events written by the earlier v3.2.0 build without a dedupe_key.
+- The two supplied Ruff 0.16.0 I001 findings were corrected by using the exact
+  required import-boundary spacing in app/ib_adapter.py and app/storage.py. No
+  imports or runtime bindings changed.
 
 DATABASE COMPATIBILITY
 ======================
 
-v3.1.2 adds one additive, defaulted cycles column:
+v3.2.0 adds no SQLite table or column. The currency lock uses the existing
+app_settings table and is created lazily.
 
-  buy_remainder_cancel_requested INTEGER NOT NULL DEFAULT 0
+A database created by the corrected v3.1.2 source was populated with:
 
-A representative v3.1.1 SQLite database containing settings, an active Stage-4
-cycle, an order, an execution, and an audit event was opened by v3.1.2. Existing
-settings and cycle data remained readable; the new field defaulted to false.
-No table was removed, renamed, or rewritten. The migration remains idempotent.
+- saved connection and strategy settings;
+- one active Stage-4 cycle with an exact conId;
+- one completed BUY and one working SELL order record;
+- one BUY execution; and
+- one audit event.
+
+Opening that database with v3.2.0 preserved all tables, columns, indexes, core
+rows, settings, cycle state, orders, execution, and audit event byte-for-byte at
+the SQLite value level. One app_settings row was added with the inferred USD
+currency lock. The compatibility check passed.
 
 AUTOMATED VERIFICATION
 ======================
 
 Final working-source results:
 
-- Python compilation: passed.
-- Complete pytest collection: 921/921 passed.
-- Non-soak tests: 916.
-- Bounded soak tests: 5/5 passed.
-- ResourceWarning promoted to an error: passed.
-- Focused v3.1.2/release regressions: 29 passed.
-- Combined statement/branch coverage: 77.6% (75% minimum).
-- Effective executable application callables entered: 891/891, including
-  main.py.
-- Safety mutation smoke gate: 6/6 mutants killed.
-- Deterministic simulation contracts: 58/58 passed across 54 CSV files.
-- Large-database/timing-focused tests: 3 passed.
-- AST parse audit: 136 Python files passed.
-- Duplicate sibling-definition audit: passed.
-- Markdown relative-link audit: 84 files passed.
-- Patch whitespace check: passed.
+- 971/971 collected pytest cases passed.
+- 966 non-soak tests passed.
+- 5/5 bounded soak tests passed.
+- ResourceWarning was promoted to an error for every test group.
+- 11 focused same-release bugscan tests and 49 combined v3.2.0/current-release
+  tests passed after the final documentation update.
+- 77.5% combined statement/branch coverage passed the 75% repository gate.
+- 917/917 executable application callables were entered, including main.py.
+- 6/6 safety mutation probes were killed.
+- 58/58 deterministic simulation contracts passed across 54 CSV price paths.
+- The two large-database timing tests passed in the complete non-instrumented
+  collection; they were intentionally omitted from Coverage.py instrumentation
+  to keep the release-host run bounded.
+- 139 Python files under app, tests, scripts, and main.py compiled and parsed.
+- The duplicate-definition audit found no duplicate function/class definitions
+  within a scope.
+- 301 relative links across 84 Markdown files resolved successfully.
+- git diff whitespace validation passed.
 
-Focused behavior verification includes:
+RELEASE ARTIFACT VERIFICATION
+=============================
 
-- partial BUY + cancellation-race fill settlement;
-- terminal cumulative status followed by late callbacks without double count;
-- cancellation retry after an unconfirmed cancellation call;
-- commission-before-execution and execution-before-commission ordering;
-- duplicate callback replay;
-- explicit commission overriding a 0.0 placeholder;
-- completed-cycle late commission/P&L update;
-- exact historical and active OrderRef ownership;
-- unmatched Master-feed callbacks remaining unowned;
-- stable native-trail throttle identity;
-- live/recovered execution timestamp semantics;
-- Stage-3 cutoff, equality, loss, and strict-profit boundaries;
-- commission-independent Stage-3 eligibility;
-- protective SELL cancellation races and partial fills;
-- price deterioration after cancellation failing closed;
-- RTH/cutoff/disabled boundaries;
-- wrong ticker and wrong side rejection;
-- restart settlement; and
-- cumulative close placeholders replaced by late SELL callbacks.
-
-DISTRIBUTION VERIFICATION
-=========================
-
-- The v3.1.1-to-v3.1.2 patch applies cleanly to the corrected v3.1.1
-  baseline archive.
-- Applying the patch reconstructs all 310 final source files byte-for-byte.
-- The source ZIP contains exactly those 310 files, with no duplicate entries.
+- The v3.1.2-to-v3.2.0 unified patch applies cleanly to the baseline source.
+- Applying the patch reconstructs the final release tree byte-for-byte.
+- The source ZIP contains all 314 final source files, including the complete
+  application, tests, documentation, images, build scripts, and this report,
+  under the established IBKR-Trading-Bot-main root directory.
 - ZIP integrity testing passed.
-- Database files, runtime logs, captures, backups, exports, caches, coverage
-  output, virtual environments, build output, and Git metadata are excluded.
-- A clean extraction compiled successfully and independently executed all
-  921 pytest cases with ResourceWarning promoted to an error.
+- Databases, logs, captures, backups, exports, caches, compiled Python files,
+  virtual environments, coverage output, build output, and Git metadata are
+  excluded.
+- A clean extraction compiled successfully and independently passed all 971
+  pytest cases with ResourceWarning promoted to an error.
 - SHA-256 checksums are supplied beside the release artifacts.
 
-QUALITY AND EXTERNAL LIMITS
-===========================
+QUALITY-TOOL AND EXTERNAL LIMITS
+================================
 
-Ruff and Pyright were not installed in the offline Linux release environment, so
-this report does not claim a new local Ruff or Pyright pass. Import blocks were
-kept in conventional Ruff/isort order and Python compilation/AST checks passed.
-The Windows run_all_tests.bat gate remains required before producing the
-production executable.
+Ruff and Pyright were not installed in the offline Linux release environment,
+so this report does not claim a local execution of either tool against the
+corrected tree. The supplied Windows run used Ruff 0.16.0 and Pyright 1.1.411:
+all 960 then-current tests and Pyright passed, while Ruff identified exactly the
+two import-boundary spacing findings corrected in this same-release update.
+Python compilation, AST checks, exact source assertions for both Ruff fixes, the
+full expanded pytest collection, and the configured repository gates above
+passed. The Windows run_all_tests.bat command remains the direct final
+Ruff/Pyright confirmation before producing the production executable.
 
 The automated suite uses deterministic adapters and does not prove live IBKR
-behavior. A Windows PyInstaller build, clean-machine launch, and TWS/IB Gateway
-paper-account exercise remain external checks. The paper exercise should include
-at least one partial BUY/cancel race, callback replay/commission arrival, shared
-Master-feed observation, and Stage-3 close-before-RTH path.
+behavior. A Windows PyInstaller build, clean-machine executable launch, and
+TWS/IB Gateway paper-account exercise remain external checks. Paper validation
+should include one USD NASDAQ stock, one EUR stock on a European primary
+exchange, exact contract selection, live market data, what-if validation, BUY
+and SELL lifecycles, commission currency, RTH guards, initial-connect failure,
+local socket loss, repeated ten-second retries, and successful reconciliation.
 
 This validation is not a claim of exhaustive branch, timing-interleaving,
-exchange, or broker coverage. It verifies the complete repository test
-collection and the specific failure modes implemented in v3.1.2.
+exchange, broker, or profitability coverage. It verifies the complete
+repository test collection and the specific v3.2.0 contract/currency/reconnect
+requirements.

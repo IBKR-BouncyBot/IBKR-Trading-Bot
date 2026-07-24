@@ -38,6 +38,7 @@ def _iren_details(contract: Any) -> Any:
         contract=contract,
         minTick=0.0001,
         validExchanges="SMART,NASDAQ",
+        orderTypes="MKT,TRAIL,WHATIF",
         marketRuleIds="557,26",
     )
 
@@ -147,11 +148,16 @@ def test_market_rule_mapping_preserves_empty_rule_positions(
         )
     ]
 
-    qualified = adapter.qualify_stock("TEST", "NASDAQ", "USD", "NASDAQ", 9)
+    rule_id, rule_exchange, advertised = adapter._market_rule_metadata(
+        ib.contract_details[0],
+        requested_exchange="NASDAQ",
+        contract_exchange="NASDAQ",
+        primary_exchange="NASDAQ",
+    )
 
-    assert qualified.market_rule_id == 26
-    assert qualified.market_rule_exchange == "NASDAQ"
-    assert qualified.market_rule_advertised is True
+    assert rule_id == 26
+    assert rule_exchange == "NASDAQ"
+    assert advertised is True
 
 
 def test_blank_rule_for_requested_route_does_not_inherit_another_exchange_rule(
@@ -166,6 +172,7 @@ def test_blank_rule_for_requested_route_does_not_inherit_another_exchange_rule(
             contract=contract,
             minTick=0.0001,
             validExchanges="SMART,NASDAQ",
+            orderTypes="MKT,TRAIL,WHATIF",
             marketRuleIds=",26",
         )
     ]

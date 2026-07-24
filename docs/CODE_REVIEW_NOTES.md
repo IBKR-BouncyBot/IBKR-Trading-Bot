@@ -1,6 +1,6 @@
 # Maintainer review notes
 
-This file records the current review boundaries for v3.1.2. It is not a release changelog and should not be used instead of the behavioral guides.
+This file records the current review boundaries for v3.2.0. It is not a release changelog and should not be used instead of the behavioral guides.
 
 ## Source-of-truth order
 
@@ -22,8 +22,8 @@ Changes in these areas require focused strategy, recovery, and failure-path revi
 - protective/final/market SELL cancellation sequencing;
 - optional account routing and managed-account validation;
 - app-owned versus account-wide position logic;
-- RTH, stale-data, session, ATR, strict what-if, route-specific market-rule pricing, broker rejection, and hard-risk blockers, including the user-owned Maximum spread setting;
-- recovery after missing callbacks or reconnect, including ordering between point-in-time probes and newer terminal polls;
+- exact conId/currency/SMART contract qualification, one-database currency ownership, contract session/size metadata, RTH, stale-data, session, ATR, strict what-if, route-specific market-rule pricing, broker rejection, and hard-risk blockers, including the user-owned Maximum spread setting;
+- recovery after missing callbacks or reconnect, including fixed 10-second retry behavior, exact-contract requalification, database-currency checks, and ordering between point-in-time probes and newer terminal polls;
 - SQLite migration, execution deduplication, backup validation, and writable-directory assumptions;
 - minimum-tick rounding and stop reference prices;
 - zero-trail market-order branches.
@@ -33,7 +33,7 @@ Changes in these areas require focused strategy, recovery, and failure-path revi
 - `StrategyEngine` remains pure: no Qt, SQLite, or live broker calls.
 - The controller remains the single broker-side-effect coordinator.
 - The GUI remains a command/display layer and does not duplicate strategy decisions.
-- Storage migrations remain additive and idempotent.
+- Storage migrations remain additive and idempotent; one portable database remains single-currency and never mixes USD/EUR totals.
 - Broker cancellation and execution facts are not inferred from local intent alone.
 - Expected guard pauses remain visually distinct from reconciliation errors and do not expose recovery-changing actions without an independent mismatch.
 - A normal guard or strategy wait does not expose Reconcile and resume, cancellation, market-SELL, leave-orders-working, or manual-handling recovery permissions; refresh and export remain read-only.
@@ -52,7 +52,7 @@ Changes in these areas require focused strategy, recovery, and failure-path revi
 - A restoration that loses market-data requests replaces subscription handles; a restoration that retains requests still invalidates prior update metadata until a new event arrives.
 - Broker-order and execution reconciliation completes before normal post-restoration strategy processing.
 - Every order-transmission path rechecks connectivity immediately before placement.
-- An accepted native order is not cancelled merely because connectivity is interrupted.
+- An accepted native order is not cancelled merely because connectivity is interrupted. A lost local API endpoint is retried every 10 seconds indefinitely until manual Disconnect or shutdown.
 
 Preserve focused tests for late callbacks, duplicate cached reads, same-price fresh events, restoration races, and point-in-time reconciliation ordering.
 
@@ -96,7 +96,7 @@ When behavior changes:
 
 The public-repository documentation set:
 
-- keeps the application and package version at v3.1.2 for documentation-only revisions within this release;
+- keeps the application and package version at v3.2.0 for documentation-only revisions within this release;
 - keeps current operational material in `docs/` and superseded release notes in `docs/legacy/`;
 - treats SQLite files, backups, audit bundles, reports, captures, screenshots, and broker/account data as private unless deliberately sanitized;
 - uses the unmodified PolyForm Noncommercial License 1.0.0 text in the repository root;

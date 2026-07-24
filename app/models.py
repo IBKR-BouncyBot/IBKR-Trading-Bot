@@ -23,6 +23,7 @@ from typing import Any, Optional
 from .ib_platform import GATEWAY_PLATFORM, SUPPORTED_PLATFORMS, TWS_PLATFORM
 
 APP_ORDER_PREFIX = "IBKRBOT"
+SUPPORTED_CONTRACT_CURRENCIES = frozenset({"USD", "EUR"})
 
 # Minimum-profit guard used for the first SELL trailing-stop.
 # Profit is measured against the executed average buy fill. The cycle anchor is
@@ -36,6 +37,14 @@ PCT_DECIMALS = 2
 # share this clock so records can be aligned without depending on the Windows
 # workstation timezone.
 APP_TIMEZONE_LABEL = "UTC"
+
+
+def normalize_contract_currency(value: Any, *, fallback: str = "USD") -> str:
+    """Return a normalized upper-case contract currency code."""
+    text = str(value or "").strip().upper()
+    if text:
+        return text
+    return str(fallback or "").strip().upper()
 
 
 def ceil_pct(value: float, decimals: int = PCT_DECIMALS) -> float:
@@ -708,8 +717,8 @@ class StrategySettings:
     auto_repeat: bool = True
     rth_only: bool = True  # Safety guard: submit/activate strategy orders only during regular trading hours.
     exchange: str = "SMART"
-    primary_exchange: str = ""  # Optional native exchange for contract disambiguation, e.g. NASDAQ.
-    contract_con_id: Optional[int] = None  # Optional exact IBKR conId selected from API contract search.
+    primary_exchange: str = ""  # Native exchange returned by the exact IBKR contract result.
+    contract_con_id: Optional[int] = None  # Exact IBKR conId; blank is retained only for legacy drafts/test doubles.
     currency: str = "USD"
     sec_type: str = "STK"
     tif: str = "GTC"
@@ -849,20 +858,26 @@ class StrategySettings:
                 errors.append("Liquidate-before-close minutes must be between 1 and 240.")
 
         if str(self.exchange or "").upper() != "SMART":
-            errors.append("V1 supports SMART routing only.")
-        primary_exchange = str(self.primary_exchange or "")
-        if primary_exchange and not primary_exchange.strip().replace("-", "").isalnum():
-            errors.append("Primary exchange may contain only letters/numbers/hyphen, or leave it blank.")
+            errors.append("BouncyBot supports SMART routing only.")
+        primary_exchange = str(self.primary_exchange or "").strip()
+        if primary_exchange and (
+            len(primary_exchange) > 48
+            or any(not (character.isalnum() or character in {"-", "_", ".", " "}) for character in primary_exchange)
+        ):
+            errors.append(
+                "Primary exchange may contain only letters, numbers, spaces, period, underscore, or hyphen."
+            )
         if self.contract_con_id is not None:
             try:
                 if int(self.contract_con_id) <= 0:
                     errors.append("IBKR conId must be blank or a positive integer.")
             except Exception:
                 errors.append("IBKR conId must be blank or a positive integer.")
-        if str(self.currency or "").upper() != "USD":
-            errors.append("V1 supports USD stocks only.")
+        currency = normalize_contract_currency(self.currency)
+        if currency not in SUPPORTED_CONTRACT_CURRENCIES:
+            errors.append("Contract currency must be USD or EUR.")
         if str(self.sec_type or "").upper() != "STK":
-            errors.append("V1 supports STK contracts only.")
+            errors.append("Only ordinary STK contracts are supported.")
         return errors
 
 
@@ -1044,15 +1059,20 @@ class CycleState:
     def new_pending(cls, settings: StrategySettings, cycle_number: int, account: str, reinvested_profit: float) -> "CycleState":
         ticker = settings.normalized_ticker()
         budget = settings.investment_amount + (reinvested_profit if settings.reinvest_profits else 0.0)
+        try:
+            contract_con_id = int(settings.contract_con_id or 0)
+        except Exception:
+            contract_con_id = 0
         return cls(
             id=str(uuid.uuid4()),
             cycle_number=cycle_number,
             ticker=ticker,
             stage=Stage.WAIT_INITIAL_DROP,
             account=account,
+            con_id=(contract_con_id if contract_con_id > 0 else None),
             exchange=settings.exchange.upper(),
             primary_exchange=settings.primary_exchange.strip().upper(),
-            currency=settings.currency.upper(),
+            currency=normalize_contract_currency(settings.currency),
             rth_only=bool(getattr(settings, "rth_only", True)),
             investment_amount=settings.investment_amount,
             budget=budget,

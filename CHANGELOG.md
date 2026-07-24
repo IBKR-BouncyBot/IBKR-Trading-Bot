@@ -2,6 +2,38 @@
 
 This file summarizes behavior-changing and maintenance releases represented by the repository. Historical implementation notes remain in `docs/legacy/` for traceability. Current behavior is documented in `README.md` and the current guides linked from `docs/README.md`.
 
+## v3.2.0
+
+### Same-release bugscan correction
+
+- Tightened exact-contract requalification so the broker-returned symbol, SMART order route, and selected primary exchange must still match the chosen API result. The qualified primary exchange is retained even when IBKR leaves the returned contract field blank.
+- Corrected EUR market-data fallback variants so a qualified EUR contract cannot silently fall back to a USD request/cache key when the raw contract object omits its currency field.
+- Made resume-checkpoint persistence enforce the database currency claim inside the same SQLite transaction as the settings and active-cycle checkpoint. A shutdown checkpoint can no longer bypass an existing USD/EUR database lock.
+- Corrected the ten-second reconnect gate for deterministic clocks that begin at monotonic time zero; failed attempts now wait the full interval before retrying.
+- Treated an exactly zero commission as currency-neutral and made non-zero cross-currency commission warnings persistently idempotent across restarts, including v3.2.0 events written before this correction.
+- Corrected the two Ruff `I001` import-boundary spacing findings in `app/ib_adapter.py` and `app/storage.py`. No imports, runtime bindings, or release version were changed by those formatting corrections.
+
+### Added
+
+- Added support for exact ordinary `STK` contracts denominated in USD or EUR and routed through `SMART`. Live qualification requires a positive IBKR `conId` selected from the API search results and rechecks symbol, `conId`, currency, security type, SMART route, and primary exchange before monitoring or order submission.
+- Scoped account-position lookups and contract-local risk/reinvestment calculations by exact positive `conId`; a same-symbol contract with a different `conId` is not treated as the selected position.
+- Added one-contract-currency enforcement for each portable SQLite database. A new database may change its draft USD/EUR selection before the first cycle; the first persisted cycle locks the database currency. Existing USD databases infer that lock from their historical cycles.
+- Added broker capability checks for SMART availability, required `MKT` and `TRAIL` order types, contract-specific market rules, whole-share minimum size/step rules, and date-specific `liquidHours`/`timeZoneId`.
+- Added a fixed local API reconnect cadence: after an enabled TWS/IB Gateway socket connection is lost, BouncyBot retries every ten seconds indefinitely until it reconnects, the operator selects Disconnect, or the application shuts down.
+
+### Safety and compatibility
+
+- Non-U.S. contracts fail closed when IBKR session metadata is missing, invalid, or unparseable. The historical New York 09:30–16:00 fallback remains available only for recognized U.S. equity primary exchanges.
+- BouncyBot does not perform FX conversion. Investment amounts, local risk totals, realized P/L, and reinvestment remain in the database's single contract currency. A non-zero commission reported in another currency is preserved as a raw broker fact, excluded from local net P/L, and disables Auto-repeat after the current cycle.
+- BUY quantities may be rounded down to a valid whole-share size step before intent is persisted. SELL quantities are never rounded down because doing so could leave an untracked app-owned remainder. IBKR unset numeric sentinels are treated as unavailable size metadata rather than as enormous minimum quantities.
+- Active-cycle recovery fails closed when the stored currency lock or exact contract identity cannot be verified. Manual Disconnect and shutdown continue to stop automatic reconnect attempts. Gateway/TWS upstream-server outages remain governed by the existing upstream reconciliation path rather than forcing repeated local-socket reconnects.
+- No SQLite table or column is added. The database currency lock is stored in the existing `app_settings` key/value table, so v3.1.2, v3.1.1, v3.1.0, and v3.0.19 databases remain forward-compatible.
+
+### Documentation and tests
+
+- Added deterministic coverage for USD/EUR validation, exact contract search and qualification, SMART/order-type capability checks, European session parsing, non-U.S. RTH failure, size-step normalization, database currency inference and locking, cross-currency commission handling, GUI currency display, active-cycle recovery boundaries, and unlimited ten-second reconnect attempts.
+- Added [`docs/V3_2_0_EUR_SMART_AND_RECONNECT.md`](docs/V3_2_0_EUR_SMART_AND_RECONNECT.md) and archived the v3.1.2 release note under `docs/legacy/`.
+
 ## v3.1.2
 
 ### Fixed
@@ -23,7 +55,7 @@ This file summarizes behavior-changing and maintenance releases represented by t
 ### Documentation and tests
 
 - Added focused deterministic coverage for partial-fill cancellation races, terminal cumulative fills followed by late callbacks, callback replay and ordering, late completed-cycle commissions, strict foreign-reference rejection, stable throttling, execution-time normalization, Stage-3 profitable-close boundaries, protective-order cancel/replace, restart recovery, and overfill safeguards.
-- Added [`docs/V3_1_2_FILL_RECONCILIATION_AND_STAGE3_CLOSE.md`](docs/V3_1_2_FILL_RECONCILIATION_AND_STAGE3_CLOSE.md) and archived the v3.1.1 release note under `docs/legacy/`.
+- Added [`docs/V3_1_2_FILL_RECONCILIATION_AND_STAGE3_CLOSE.md`](docs/legacy/V3_1_2_FILL_RECONCILIATION_AND_STAGE3_CLOSE.md) and archived the v3.1.1 release note under `docs/legacy/`.
 
 ## v3.1.1
 

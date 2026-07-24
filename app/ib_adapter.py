@@ -22,11 +22,29 @@ from math import isfinite
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
-from .models import APP_ORDER_PREFIX, utc_now_iso
+from .models import (
+    APP_ORDER_PREFIX,
+    SUPPORTED_CONTRACT_CURRENCIES,
+    normalize_contract_currency,
+    utc_now_iso,
+)
 
 # Preserve the historical module-level datetime seam used by deterministic
 # RTH tests while keeping Ruff-safe module imports.
 datetime = dt.datetime
+
+_US_EQUITY_PRIMARY_EXCHANGES = frozenset(
+    {
+        "AMEX",
+        "ARCA",
+        "BATS",
+        "IEX",
+        "NASDAQ",
+        "NYSE",
+        "NYSEARCA",
+        "NYSEMKT",
+    }
+)
 
 
 class BrokerAdapterError(RuntimeError):
@@ -93,6 +111,15 @@ class QualifiedContract:
     market_rule_id: Optional[int] = None
     market_rule_exchange: str = ""
     market_rule_advertised: bool = False
+    currency: str = "USD"
+    exchange: str = "SMART"
+    sec_type: str = "STK"
+    valid_exchanges: tuple[str, ...] = ()
+    order_types: tuple[str, ...] = ()
+    liquid_hours: str = ""
+    time_zone: str = ""
+    min_size: float = 1.0
+    size_increment: float = 1.0
 
 
 @dataclass(slots=True)
@@ -110,7 +137,15 @@ class ContractSearchResult:
 
     @property
     def supported(self) -> bool:
-        return self.sec_type.upper() == "STK" and self.currency.upper() in {"", "USD"}
+        try:
+            con_id = int(self.con_id or 0)
+        except Exception:
+            con_id = 0
+        return (
+            self.sec_type.upper() == "STK"
+            and self.currency.upper() in SUPPORTED_CONTRACT_CURRENCIES
+            and con_id > 0
+        )
 
     def label(self) -> str:
         bits = [self.symbol or "-"]
@@ -131,7 +166,7 @@ class ContractSearchResult:
         if name and name != self.symbol:
             bits.append(name)
         if not self.supported:
-            bits.append("not supported by v1 settings")
+            bits.append("unsupported: choose an exact USD/EUR STK contract")
         return " | ".join(bits)
 
     def to_dict(self) -> dict[str, Any]:
@@ -271,6 +306,8 @@ class BrokerAdapter:
     ib_async or talking to a real TWS/Gateway session.
     """
 
+    requires_exact_contract_selection = False
+
     def connect(self, host: str, port: int, client_id: int, market_data_type: int = 1) -> None:
         raise NotImplementedError
 
@@ -354,6 +391,46 @@ class BrokerAdapter:
             direction=_normalize_round_direction(direction),
             source="contract_min_tick",
         )
+
+    def normalize_order_quantity(self, contract: QualifiedContract, quantity: int) -> int:
+        """Round a whole-share quantity down to the contract's size rules.
+
+        BouncyBot intentionally submits whole shares only. IBKR can advertise a
+        fractional ``sizeIncrement``; the smallest whole-share quantity that is
+        also an exact multiple of that increment is derived with decimal
+        arithmetic instead of assuming every contract accepts single shares.
+        """
+        try:
+            requested = max(0, int(quantity))
+        except Exception:
+            return 0
+
+        try:
+            min_size_decimal = decimal.Decimal(str(getattr(contract, "min_size", 1.0) or 1.0))
+        except Exception:
+            min_size_decimal = decimal.Decimal("1")
+        try:
+            increment_decimal = decimal.Decimal(
+                str(getattr(contract, "size_increment", 1.0) or 1.0)
+            )
+        except Exception:
+            increment_decimal = decimal.Decimal("1")
+        if not min_size_decimal.is_finite() or min_size_decimal <= 0:
+            min_size_decimal = decimal.Decimal("1")
+        if not increment_decimal.is_finite() or increment_decimal <= 0:
+            increment_decimal = decimal.Decimal("1")
+
+        numerator, _denominator = increment_decimal.as_integer_ratio()
+        whole_share_increment = max(1, abs(int(numerator)))
+        minimum_whole_shares = max(
+            1,
+            int(min_size_decimal.to_integral_value(rounding=decimal.ROUND_CEILING)),
+        )
+        minimum_valid_quantity = (
+            (minimum_whole_shares + whole_share_increment - 1) // whole_share_increment
+        ) * whole_share_increment
+        normalized = (requested // whole_share_increment) * whole_share_increment
+        return normalized if normalized >= minimum_valid_quantity else 0
 
     def what_if_trailing_stop(
         self,
@@ -454,6 +531,8 @@ class IbAsyncTwsAdapter(BrokerAdapter):
     OrderRef already persisted by the local installation before acting on it.
     """
 
+    requires_exact_contract_selection = True
+
     _GENERIC_TICK_LIST = "232"
     _AUTO_MODE_SEQUENCE = (1, 3, 2, 4)  # live, delayed, frozen, delayed-frozen.
     _AUTO_RESCAN_SECONDS = 60.0
@@ -489,7 +568,7 @@ class IbAsyncTwsAdapter(BrokerAdapter):
         self._auto_selected_market_data_type: Optional[int] = None
         self._last_auto_rescan_monotonic = 0.0
         self._search_cache: dict[tuple[str, int], list[ContractSearchResult]] = {}
-        self._variant_cache: dict[tuple[str, str, str, str], QualifiedContract] = {}
+        self._variant_cache: dict[tuple[str, str, str, str, int], QualifiedContract] = {}
         self._rth_cache: dict[int, tuple[float, RthStatus]] = {}
         self._broker_events: deque[dict[str, Any]] = deque(maxlen=1000)
         self._event_handlers_registered_for: Optional[int] = None
@@ -1375,9 +1454,17 @@ class IbAsyncTwsAdapter(BrokerAdapter):
             raise BrokerAdapterError("Not connected to TWS.")
         ticker = ticker.upper().strip()
         exchange = exchange.upper().strip()
-        currency = currency.upper().strip()
+        currency = normalize_contract_currency(currency, fallback="")
         primary_exchange = primary_exchange.upper().strip()
         con_id_value = int(con_id) if con_id else 0
+        if exchange != "SMART":
+            raise BrokerAdapterError("BouncyBot supports SMART-routed stock contracts only.")
+        if currency not in SUPPORTED_CONTRACT_CURRENCIES:
+            raise BrokerAdapterError("BouncyBot supports USD and EUR stock contracts only.")
+        if con_id_value <= 0:
+            raise BrokerAdapterError(
+                "Select an exact IBKR API contract result before qualifying the ticker; a positive conId is required."
+            )
         key = f"{ticker}|{exchange}|{currency}|{primary_exchange}|{con_id_value}"
         if key not in self._contracts:
             kwargs: dict[str, str] = {}
@@ -1408,9 +1495,44 @@ class IbAsyncTwsAdapter(BrokerAdapter):
                 raise BrokerAdapterError(f"IBKR did not resolve contract for {ticker} {exchange} {currency}{suffix}.")
             self._contracts[key] = qualified[0]
         contract = self._contracts[key]
-        con_id_result = getattr(contract, "conId", None)
-        if con_id_result is not None:
-            self._contracts_by_con_id[int(con_id_result)] = contract
+        try:
+            con_id_result = int(getattr(contract, "conId", 0) or 0)
+        except Exception:
+            con_id_result = 0
+        if con_id_result != con_id_value:
+            raise BrokerAdapterError(
+                f"IBKR qualified conId {con_id_result or '-'} instead of the selected conId {con_id_value}."
+            )
+        qualified_symbol = str(getattr(contract, "symbol", "") or "").upper().strip()
+        if qualified_symbol != ticker:
+            raise BrokerAdapterError(
+                f"IBKR qualified symbol {qualified_symbol or '-'}, not the selected symbol {ticker}."
+            )
+        qualified_exchange = str(getattr(contract, "exchange", "") or exchange).upper().strip()
+        if qualified_exchange != exchange:
+            raise BrokerAdapterError(
+                f"IBKR qualified order exchange {qualified_exchange or '-'}, not {exchange}."
+            )
+        qualified_primary_exchange = str(
+            getattr(contract, "primaryExchange", "")
+            or getattr(contract, "primaryExch", "")
+            or primary_exchange
+            or ""
+        ).upper().strip()
+        if primary_exchange and qualified_primary_exchange != primary_exchange:
+            raise BrokerAdapterError(
+                f"IBKR qualified primary exchange {qualified_primary_exchange or '-'}, "
+                f"not the selected primary exchange {primary_exchange}."
+            )
+        qualified_sec_type = str(getattr(contract, "secType", "") or "STK").upper().strip()
+        qualified_currency = normalize_contract_currency(getattr(contract, "currency", currency), fallback=currency)
+        if qualified_sec_type != "STK":
+            raise BrokerAdapterError(f"Selected conId {con_id_value} is {qualified_sec_type or 'not STK'}, not an ordinary stock contract.")
+        if qualified_currency != currency:
+            raise BrokerAdapterError(
+                f"Selected conId {con_id_value} resolved in {qualified_currency or '-'}, not the requested {currency}."
+            )
+        self._contracts_by_con_id[con_id_result] = contract
 
         detail = self._contract_details.get(key)
         if detail is None:
@@ -1422,30 +1544,91 @@ class IbAsyncTwsAdapter(BrokerAdapter):
             if detail is not None:
                 self._contract_details[key] = detail
 
+        if detail is None:
+            raise BrokerAdapterError(
+                f"IBKR returned no ContractDetails for selected conId {con_id_value}; SMART routing and session rules cannot be verified."
+            )
+
+        valid_exchanges = tuple(
+            token.upper()
+            for token in self._csv_tokens(getattr(detail, "validExchanges", ""))
+            if token
+        )
+        order_types = tuple(
+            token.upper()
+            for token in self._csv_tokens(getattr(detail, "orderTypes", ""))
+            if token
+        )
+        if not valid_exchanges:
+            raise BrokerAdapterError(
+                f"IBKR returned no valid-exchange metadata for selected conId {con_id_value}; "
+                "SMART routing cannot be verified."
+            )
+        if "SMART" not in valid_exchanges:
+            raise BrokerAdapterError(f"Selected conId {con_id_value} is not available for SMART routing.")
+        if not order_types:
+            raise BrokerAdapterError(
+                f"IBKR returned no order-type metadata for selected conId {con_id_value}; "
+                "MKT and TRAIL support cannot be verified."
+            )
+        missing_order_types = sorted({"MKT", "TRAIL"}.difference(order_types))
+        if missing_order_types:
+            raise BrokerAdapterError(
+                "Selected contract does not advertise the order types required by BouncyBot: "
+                + ", ".join(missing_order_types)
+                + "."
+            )
+
+        liquid_hours = str(getattr(detail, "liquidHours", "") or "").strip()
+        time_zone = str(getattr(detail, "timeZoneId", "") or "").strip()
+
         min_tick = 0.01
         market_rule_id: Optional[int] = None
         market_rule_exchange = ""
         market_rule_advertised = False
-        if detail is not None:
-            min_tick = _positive_increment(getattr(detail, "minTick", 0.0), fallback=0.01)
-            market_rule_id, market_rule_exchange, market_rule_advertised = self._market_rule_metadata(
-                detail,
-                requested_exchange=exchange,
-                contract_exchange=str(getattr(contract, "exchange", "") or ""),
-                primary_exchange=str(getattr(contract, "primaryExchange", primary_exchange) or ""),
-            )
+        min_tick = _positive_increment(getattr(detail, "minTick", 0.0), fallback=0.01)
+        market_rule_id, market_rule_exchange, market_rule_advertised = self._market_rule_metadata(
+            detail,
+            requested_exchange=exchange,
+            contract_exchange=str(getattr(contract, "exchange", "") or ""),
+            primary_exchange=qualified_primary_exchange,
+        )
+        try:
+            min_size = float(getattr(detail, "minSize", 1.0) or 1.0)
+        except Exception:
+            min_size = 1.0
+        try:
+            size_increment = float(getattr(detail, "sizeIncrement", 1.0) or 1.0)
+        except Exception:
+            size_increment = 1.0
+        # IB API numeric fields can use an approximately 1.797e308 sentinel
+        # when a capability is not supplied. Treat that as unavailable rather
+        # than turning every practical whole-share order into quantity zero.
+        if not isfinite(min_size) or min_size <= 0 or min_size > 1.0e100:
+            min_size = 1.0
+        if not isfinite(size_increment) or size_increment <= 0 or size_increment > 1.0e100:
+            size_increment = 1.0
 
         return QualifiedContract(
             ticker=ticker,
             con_id=con_id_result,
             raw=contract,
-            primary_exchange=str(getattr(contract, "primaryExchange", primary_exchange) or ""),
+            primary_exchange=qualified_primary_exchange,
             local_symbol=str(getattr(contract, "localSymbol", "") or ""),
             trading_class=str(getattr(contract, "tradingClass", "") or ""),
             min_tick=float(min_tick),
             market_rule_id=market_rule_id,
             market_rule_exchange=market_rule_exchange,
             market_rule_advertised=market_rule_advertised,
+            currency=qualified_currency,
+            exchange=qualified_exchange,
+            sec_type=qualified_sec_type,
+            valid_exchanges=valid_exchanges,
+            order_types=order_types,
+            liquid_hours=liquid_hours,
+            time_zone=time_zone,
+            min_size=min_size,
+            size_increment=size_increment,
         )
 
     @staticmethod
@@ -1751,8 +1934,14 @@ class IbAsyncTwsAdapter(BrokerAdapter):
         if primary:
             return primary
         try:
+            expected_con_id = int(contract.con_id or getattr(contract.raw, "conId", 0) or 0)
             for item in self.search_stock_contracts(contract.ticker):
-                if item.symbol == contract.ticker and item.supported and item.primary_exchange:
+                if (
+                    item.symbol == contract.ticker
+                    and item.supported
+                    and item.primary_exchange
+                    and (expected_con_id <= 0 or int(item.con_id or 0) == expected_con_id)
+                ):
                     return item.primary_exchange
         except Exception:
             pass
@@ -1761,8 +1950,12 @@ class IbAsyncTwsAdapter(BrokerAdapter):
     def _qualified_market_data_variant(self, contract: QualifiedContract, exchange: str, primary_exchange: str = "") -> Optional[QualifiedContract]:
         _, _, Stock = self._require_ib_async()
         ticker = contract.ticker.upper().strip()
-        currency = str(getattr(contract.raw, "currency", "") or "USD").upper()
-        key = (ticker, currency, exchange.upper(), primary_exchange.upper())
+        currency = normalize_contract_currency(
+            getattr(contract.raw, "currency", ""),
+            fallback=normalize_contract_currency(contract.currency, fallback="USD"),
+        )
+        expected_con_id = int(contract.con_id or getattr(contract.raw, "conId", 0) or 0)
+        key = (ticker, currency, exchange.upper(), primary_exchange.upper(), expected_con_id)
         if key in self._variant_cache:
             return self._variant_cache[key]
         try:
@@ -1775,12 +1968,27 @@ class IbAsyncTwsAdapter(BrokerAdapter):
                 variant = Stock(ticker, exchange, currency)
                 if primary_exchange:
                     setattr(variant, "primaryExchange", primary_exchange)
+            if expected_con_id > 0:
+                setattr(variant, "conId", expected_con_id)
             qualified = self.ib.qualifyContracts(variant)
             variant = qualified[0] if qualified else variant
+            resolved_con_id = int(getattr(variant, "conId", 0) or 0)
+            if expected_con_id > 0 and resolved_con_id != expected_con_id:
+                return None
+            resolved_currency = normalize_contract_currency(
+                getattr(variant, "currency", currency),
+                fallback=currency,
+            )
+            resolved_sec_type = str(getattr(variant, "secType", "STK") or "STK").upper()
+            if resolved_currency != currency or resolved_sec_type != "STK":
+                return None
             result = QualifiedContract(
                 ticker=ticker,
-                con_id=getattr(variant, "conId", contract.con_id),
+                con_id=resolved_con_id or expected_con_id,
                 raw=variant,
+                exchange=str(getattr(variant, "exchange", exchange) or exchange).upper(),
+                currency=resolved_currency,
+                sec_type=resolved_sec_type,
                 primary_exchange=str(getattr(variant, "primaryExchange", primary_exchange) or ""),
                 local_symbol=str(getattr(variant, "localSymbol", "") or ""),
                 trading_class=str(getattr(variant, "tradingClass", "") or ""),
@@ -1822,13 +2030,18 @@ class IbAsyncTwsAdapter(BrokerAdapter):
             return None
         variants: list[tuple[str, QualifiedContract]] = []
         raw_exchange = str(getattr(contract.raw, "exchange", "") or "").upper()
+        contract_currency = normalize_contract_currency(
+            getattr(contract.raw, "currency", ""),
+            fallback=normalize_contract_currency(contract.currency, fallback="USD"),
+        )
         if raw_exchange == "SMART":
             if wait_seconds <= 0:
                 key = (
                     contract.ticker.upper().strip(),
-                    str(getattr(contract.raw, "currency", "") or "USD").upper(),
+                    contract_currency,
                     f"SMART:{primary}",
                     "",
+                    int(contract.con_id or getattr(contract.raw, "conId", 0) or 0),
                 )
                 smart_primary = self._variant_cache.get(key)
             else:
@@ -1838,9 +2051,10 @@ class IbAsyncTwsAdapter(BrokerAdapter):
         if wait_seconds <= 0:
             key = (
                 contract.ticker.upper().strip(),
-                str(getattr(contract.raw, "currency", "") or "USD").upper(),
+                contract_currency,
                 primary,
                 "",
+                int(contract.con_id or getattr(contract.raw, "conId", 0) or 0),
             )
             direct = self._variant_cache.get(key)
         else:
@@ -2057,8 +2271,14 @@ class IbAsyncTwsAdapter(BrokerAdapter):
         try:
             tz = ZoneInfo(time_zone or "America/New_York")
         except Exception:
-            tz = ZoneInfo("America/New_York")
-            time_zone = "America/New_York"
+            return RthStatus(
+                False,
+                "contract_time_zone_invalid",
+                f"IBKR contract timeZoneId {time_zone or '-'} is not usable; trading is blocked.",
+                now_utc.isoformat(),
+                liquid_hours,
+                str(time_zone or ""),
+            )
         local = now_utc.astimezone(tz)
         today = local.strftime("%Y%m%d")
         matched_day = False
@@ -2158,6 +2378,25 @@ class IbAsyncTwsAdapter(BrokerAdapter):
             )
         return None
 
+    @staticmethod
+    def _may_use_us_equity_rth_fallback(contract: QualifiedContract) -> bool:
+        primary = str(
+            contract.primary_exchange
+            or getattr(contract.raw, "primaryExchange", "")
+            or ""
+        ).upper().strip()
+        return primary in _US_EQUITY_PRIMARY_EXCHANGES
+
+    @staticmethod
+    def _missing_contract_rth_status(message: str) -> RthStatus:
+        now_utc = datetime.now(dt.timezone.utc)
+        return RthStatus(
+            False,
+            "contract_rth_unavailable",
+            message + " Trading is blocked because a non-US contract cannot use US fallback hours.",
+            now_utc.isoformat(),
+        )
+
     def regular_trading_hours_status(self, contract: QualifiedContract) -> RthStatus:
         if not self.is_connected():
             return RthStatus(
@@ -2172,24 +2411,55 @@ class IbAsyncTwsAdapter(BrokerAdapter):
         now_mono = time.monotonic()
         if cached and now_mono - cached[0] < 30.0:
             return cached[1]
+        cached_liquid_hours = str(getattr(contract, "liquid_hours", "") or "")
+        cached_time_zone = str(getattr(contract, "time_zone", "") or "")
+        if cached_liquid_hours and cached_time_zone:
+            parsed = self._parse_liquid_hours_window(
+                cached_liquid_hours,
+                cached_time_zone,
+            )
+            if parsed is not None:
+                self._rth_cache[cache_key] = (now_mono, parsed)
+                return parsed
         try:
             details = list(self.ib.reqContractDetails(contract.raw) or [])
             self.ib.sleep(0.25)
         except Exception as exc:
-            status = self._fallback_us_equity_rth()
-            status.source = "fallback_after_contract_details_error"
-            status.message = f"Could not request contract liquidHours ({exc}); {status.message}"
+            if self._may_use_us_equity_rth_fallback(contract):
+                status = self._fallback_us_equity_rth()
+                status.source = "fallback_after_contract_details_error"
+                status.message = f"Could not request contract liquidHours ({exc}); {status.message}"
+            else:
+                status = self._missing_contract_rth_status(
+                    f"Could not request contract liquidHours ({exc})."
+                )
             self._rth_cache[cache_key] = (now_mono, status)
             return status
         for detail in details:
-            liquid = str(getattr(detail, "liquidHours", "") or "")
-            tz_name = str(getattr(detail, "timeZoneId", "") or "America/New_York")
+            liquid = str(getattr(detail, "liquidHours", "") or "").strip()
+            tz_name = str(getattr(detail, "timeZoneId", "") or "").strip()
+            if not liquid:
+                continue
+            if not tz_name:
+                if self._may_use_us_equity_rth_fallback(contract):
+                    tz_name = "America/New_York"
+                else:
+                    status = self._missing_contract_rth_status(
+                        "IBKR returned contract liquidHours without a timeZoneId."
+                    )
+                    self._rth_cache[cache_key] = (now_mono, status)
+                    return status
             parsed = self._parse_liquid_hours_window(liquid, tz_name)
             if parsed is not None:
                 self._rth_cache[cache_key] = (now_mono, parsed)
                 return parsed
-        status = self._fallback_us_equity_rth()
-        status.source = "fallback_no_contract_liquid_hours"
+        if self._may_use_us_equity_rth_fallback(contract):
+            status = self._fallback_us_equity_rth()
+            status.source = "fallback_no_contract_liquid_hours"
+        else:
+            status = self._missing_contract_rth_status(
+                "IBKR returned no usable contract liquidHours metadata."
+            )
         self._rth_cache[cache_key] = (now_mono, status)
         return status
 
@@ -2594,6 +2864,7 @@ class IbAsyncTwsAdapter(BrokerAdapter):
         perm_id = getattr(order, "permId", None) or getattr(order_status, "permId", None)
         executions: list[dict[str, Any]] = []
         total_commission = 0.0
+        commission_currencies: set[str] = set()
         execution_value = 0.0
         execution_shares = 0.0
         try:
@@ -2601,6 +2872,9 @@ class IbAsyncTwsAdapter(BrokerAdapter):
                 execution = getattr(fill, "execution", None)
                 commission_report = getattr(fill, "commissionReport", None)
                 commission = float(getattr(commission_report, "commission", 0.0) or 0.0)
+                commission_currency = str(getattr(commission_report, "currency", "") or "").upper().strip()
+                if commission_currency and abs(commission) > 0.0:
+                    commission_currencies.add(commission_currency)
                 shares = float(getattr(execution, "shares", 0.0) or 0.0)
                 price = float(getattr(execution, "price", 0.0) or 0.0)
                 if shares > 0 and price > 0:
@@ -2619,11 +2893,12 @@ class IbAsyncTwsAdapter(BrokerAdapter):
                     "brokerExecutionTime": broker_execution_time,
                     "fillReceivedAt": fill_received_at,
                     "commission": commission,
-                    "currency": getattr(commission_report, "currency", None),
+                    "currency": commission_currency or None,
                 })
         except Exception:
             executions = []
             total_commission = 0.0
+            commission_currencies = set()
             execution_value = 0.0
             execution_shares = 0.0
         if (not avg_fill_price or float(avg_fill_price) <= 0) and execution_shares > 0:
@@ -2647,6 +2922,7 @@ class IbAsyncTwsAdapter(BrokerAdapter):
                 "orderType": getattr(order, "orderType", ""),
                 "totalQuantity": getattr(order, "totalQuantity", None),
                 "executions": executions,
+                "commission_currencies": sorted(commission_currencies),
                 "broker_errors": broker_errors,
                 "broker_error": broker_errors[-1] if broker_errors else None,
             },
@@ -2723,6 +2999,7 @@ class IbAsyncTwsAdapter(BrokerAdapter):
         total_shares = 0.0
         total_value = 0.0
         total_commission = 0.0
+        commission_currencies: set[str] = set()
         executions: list[dict[str, Any]] = []
         for fill in fills:
             execution = getattr(fill, "execution", None)
@@ -2734,6 +3011,11 @@ class IbAsyncTwsAdapter(BrokerAdapter):
             if shares <= 0 or price <= 0:
                 continue
             commission = float(getattr(commission_report, "commission", 0.0) or 0.0)
+            commission_currency = str(
+                getattr(commission_report, "currency", "") or ""
+            ).upper().strip()
+            if commission_currency and abs(commission) > 0.0:
+                commission_currencies.add(commission_currency)
             total_shares += shares
             total_value += shares * price
             total_commission += commission
@@ -2749,7 +3031,7 @@ class IbAsyncTwsAdapter(BrokerAdapter):
                 "brokerExecutionTime": broker_execution_time,
                 "fillReceivedAt": fill_received_at,
                 "commission": commission,
-                "currency": getattr(commission_report, "currency", None),
+                "currency": commission_currency or None,
             })
         if total_shares <= 0:
             return None
@@ -2768,6 +3050,7 @@ class IbAsyncTwsAdapter(BrokerAdapter):
                 "recoveredFromExecutions": True,
                 "action": action.upper(),
                 "executions": executions,
+                "commission_currencies": sorted(commission_currencies),
             },
         )
 
@@ -3036,7 +3319,11 @@ class IbAsyncTwsAdapter(BrokerAdapter):
                 continue
             pos_con_id = int(getattr(pos_contract, "conId", 0) or 0) if pos_contract is not None else 0
             pos_symbol = str(getattr(pos_contract, "symbol", "") or "").upper() if pos_contract is not None else ""
-            if (wanted_con_id and pos_con_id == wanted_con_id) or (wanted_symbol and pos_symbol == wanted_symbol):
+            if wanted_con_id > 0:
+                matches_contract = pos_con_id == wanted_con_id
+            else:
+                matches_contract = bool(wanted_symbol and pos_symbol == wanted_symbol)
+            if matches_contract:
                 try:
                     total += float(getattr(pos, "position", 0.0) or 0.0)
                     found = True

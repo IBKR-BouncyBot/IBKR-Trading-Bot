@@ -4,7 +4,7 @@ This document is the technical companion to [`RECOVERY_AND_FAILSAFE.md`](RECOVER
 
 ## Ownership invariants
 
-- Application orders have an `OrderRef` beginning with `IBKRBOT|`.
+- Application orders have an `OrderRef` beginning with `IBKRBOT|`. The prefix alone is not ownership proof.
 - Cancel/recovery actions require an exact full `OrderRef` already persisted locally; unmatched prefixed Master-feed orders are ignored.
 - An external/manual account position does not become application-owned merely because its ticker matches.
 - Application-owned quantity is computed from persisted app BUY fills minus persisted app SELL/protective fills, excluding cycles marked manually handled.
@@ -30,7 +30,7 @@ This document is the technical companion to [`RECOVERY_AND_FAILSAFE.md`](RECOVER
 A new BUY is blocked when required facts are missing, stale, inconsistent, or explicitly disallowed. Relevant facts include:
 
 - local API socket, confirmed Gateway/TWS upstream IBKR connectivity, and completed post-reconnect reconciliation;
-- qualified contract;
+- exact positive-conId contract matching the stored USD/EUR ordinary STK selection, SMART route, and required order capabilities;
 - current RTH state;
 - selected price from a newly consumed market-data event and actual-event freshness;
 - data type in live mode;
@@ -40,10 +40,19 @@ A new BUY is blocked when required facts are missing, stale, inconsistent, or ex
 - local unsold app quantity;
 - strict what-if acceptance based on a real non-error `OrderState` and finite margin/equity output;
 - route-specific market-rule price normalization when IBKR advertises a rule;
-- minimum-tick-valid payload;
+- market-rule-valid price and whole-share quantity conforming to the contract minimum/size increment;
 - recovery confidence.
 
 The complete GUI blocker list is informational; the order path uses fail-closed priority and stops at the first submission blocker.
+
+## Exact-contract and currency invariants
+
+- The live adapter requires a positive API-selected conId; symbol-only qualification is not accepted.
+- Qualification must return the same conId, USD/EUR currency, ordinary STK type, and SMART route.
+- When IBKR advertises route/order metadata, SMART, `MKT`, and `TRAIL` must be supported.
+- The first persisted cycle locks the portable database to one contract currency. A zero-cycle draft may be rebound; a database with cycles may not.
+- A non-U.S. or unknown contract without usable `liquidHours` and `timeZoneId` is closed/blocked rather than assigned U.S. fallback hours.
+- A commission in another currency is not subtracted from local net P/L and disables Auto-repeat because no FX conversion is implemented.
 
 ## Broker rejection invariants
 
@@ -61,9 +70,9 @@ Entry-specific hard risk limits do not intentionally block risk-reducing SELLs f
 - Draft settings and cycle snapshots are separate.
 - Order, execution, decision, broker, and event records preserve identities and raw diagnostic payloads where available.
 - Execution IDs are deduplicated.
-- Schema migration is additive.
+- Schema migration is additive. The one-database contract-currency lock is stored in existing `app_settings`; mixed USD/EUR cycle evidence fails closed.
 - Backups use the SQLite online backup API and are restore-validated before retention.
-- UTC is the canonical application timestamp zone.
+- UTC is the canonical application timestamp zone. Monetary totals are kept in the database contract currency; there is no automatic FX conversion.
 
 ## GUI presentation invariants
 
@@ -82,7 +91,7 @@ Entry-specific hard risk limits do not intentionally block risk-reducing SELLs f
 - ATR uses app-observed prices and completed fixed-duration bars. Observation/bar collection continues while adaptation is disabled, but calculated percentages are not applied.
 - ATR observations are in-memory session state and are not restored after an application restart.
 - When warmup blocking is active, Stage 1 has no manual/fallback drop trigger before ATR readiness.
-- A local socket reconnect invalidates cached subscription handles and rebuilds quote diagnostics.
+- A local socket reconnect invalidates cached subscription handles and rebuilds quote diagnostics. After local loss, the endpoint is retried every 10 seconds indefinitely until connected, manually disconnected, or the application exits.
 - Code 1101 discards lost subscription handles; code 1102 retains handles but invalidates prior event metadata.
 - Re-reading non-null cached `Ticker` fields does not refresh quote age, advance Stage 1/3, or add ATR/volatility samples.
 - Every actual update is consumed once by subscription identity and sequence; its callback time defines freshness and ATR bucketing.

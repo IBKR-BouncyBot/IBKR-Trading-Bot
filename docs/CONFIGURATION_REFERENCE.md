@@ -1,6 +1,6 @@
 # Configuration reference
 
-This document describes the persisted connection and strategy settings in v3.1.2. Values shown as defaults are the dataclass defaults used for a new configuration. Saved SQLite settings override them after the first run.
+This document describes the persisted connection and strategy settings in v3.2.0. Values shown as defaults are the dataclass defaults used for a new configuration. Saved SQLite settings override them after the first run.
 
 ## Connection settings
 
@@ -24,23 +24,27 @@ Standard profiles:
 | TWS Live | live | `127.0.0.1` | `7496` |
 | TWS Paper | paper | `127.0.0.1` | `7497` |
 
-The profile selector supplies platform, mode, host, and port. Host and port remain editable for nonstandard installations.
+The profile selector supplies platform, mode, host, and port. Host and port remain editable for nonstandard installations. After an enabled local TWS/Gateway API socket is lost, BouncyBot retries every ten seconds indefinitely. Manual Disconnect and application shutdown disable those retries; an upstream Gateway/TWS-to-IBKR outage remains a separate reconciliation state.
 
 ## Instrument and order settings
 
 | Setting | Default | Meaning |
 |---|---:|---|
-| Ticker | blank | Required stock symbol. The selected API match should be confirmed before starting. |
+| Ticker | blank | Required stock symbol. Editing it invalidates any prior exact contract selection. |
 | Investment amount | `10000.00` | Base budget used for whole-share sizing. |
 | Exchange | `SMART` | Required strategy routing value. |
-| Primary exchange | blank | Optional native exchange used to disambiguate a stock contract. |
-| Contract conId | blank | Optional exact IBKR contract ID selected by contract search. |
-| Currency | `USD` | Required strategy currency. |
-| Security type | `STK` | Required strategy contract type. |
+| Primary exchange | blank | Read-only native/primary exchange returned by the exact selected IBKR result. |
+| Contract conId | blank | Read-only exact positive IBKR contract ID. Production Start/confirm requires selecting it from API search results. |
+| Currency | `USD` | Read-only contract currency populated by the exact selector. Supported values are USD and EUR. |
+| Security type | `STK` | Only ordinary stock contracts are supported. |
 | Time in force | `GTC` | Used for submitted strategy orders. |
 | RTH only | on | Strategy orders use `outsideRth=False`; new submissions also require an open/known regular session. |
 
-The application supports one confirmed long stock cycle at a time. It does not expose settings for shorting, options, non-USD contracts, or non-SMART routing.
+The application supports one confirmed long ordinary stock cycle at a time. The route is always `SMART`; the exact API-selected contract must be denominated in USD or EUR and have a positive `conId`. Options, funds, CFDs, futures, forex, shorting, direct-exchange routing, and currencies outside USD/EUR are not supported. Each portable SQLite database uses one contract currency. A draft may switch currency before the first cycle; the first persisted cycle locks the database.
+
+During qualification, BouncyBot rechecks the selected symbol, `conId`, currency, `STK` type, SMART route, and primary exchange. When supplied by IBKR, `ContractDetails.validExchanges` must include SMART and `orderTypes` must include `MKT` and `TRAIL`. Whole-share quantities are validated against the contract's advertised minimum size and size increment. A BUY may be rounded down to a valid whole-share step before intent is stored; a SELL is never rounded down because that could leave an untracked remainder.
+
+A non-zero commission in the database currency is included in net P/L. A non-zero commission reported in another currency is preserved in raw broker facts but excluded from local net P/L, and Auto-repeat is disabled after the current cycle because no FX conversion model is available.
 
 ## Manual strategy percentages
 
@@ -122,7 +126,7 @@ This cannot guarantee a fill within the assumed buffer.
 | Reinvest profits | on | Adds positive completed application net P/L for the ticker to the base investment amount. Losses do not reduce the base. |
 | Auto repeat | on | Starts another cycle after completion unless stop-after-current-cycle is active or the enabled maximum completed-cycle cap has been reached. |
 
-The reinvestment calculation uses completed cycles stored by this application, not account-wide IBKR P/L.
+The reinvestment calculation uses completed cycles stored by this application, not account-wide IBKR P/L. Because one database contains only one contract currency, these local totals are not mixed across USD and EUR. BouncyBot does not perform FX conversion.
 
 ## Data-quality and timing guards
 
@@ -144,7 +148,7 @@ The reinvestment calculation uses completed cycles stored by this application, n
 | Cancel SELL trail and liquidate before close | off | Stage 3: at the cutoff, submits an RTH-only `DAY` market SELL only when selected current price is strictly above average BUY price; commissions are ignored. A working protective SELL is cancelled and confirmed terminal first. Stage 4: cancels the final native SELL trail, waits for terminal status, then sells the remaining app-owned shares. Market execution can still realize a loss. |
 | Liquidate before close | `5 min` | Cutoff before the contract-specific RTH close. Valid range `1-240 min`. The field is active only when the optional policy is enabled. |
 
-The first/last-minute entry windows, BUY cancellation window, and optional Stage-4 liquidation cutoff use the current contract's IBKR `liquidHours` boundaries and contract timezone. This includes date-specific early closes. If IBKR does not provide usable contract hours, the adapter exposes its existing conservative US-equity fallback; if no usable boundary is available at all, a new BUY fails closed and automatic pre-close cancellation is not guessed.
+The first/last-minute entry windows, BUY cancellation window, and optional Stage-3/Stage-4 liquidation cutoff use the exact contract's IBKR `liquidHours` boundaries and `timeZoneId`. This includes date-specific early closes. The conservative New York fallback is used only for recognized U.S. equity primary exchanges. A non-U.S. contract with missing, invalid, or unparseable session metadata fails closed; BouncyBot does not guess U.S. hours for a European listing.
 
 The data-type, what-if, stale-data, ATR, RTH, and controller-state checks are independent of the optional hard-risk master where implemented. Turning off hard limits does not turn off the normal broker/data safety checks. Local socket state, Gateway/TWS upstream IBKR connectivity, post-reconnect reconciliation, and the requirement for an actual post-connect/post-recovery ticker event are controller invariants rather than user-disableable settings.
 

@@ -769,7 +769,7 @@ def test_main_window_constructs_and_exercises_command_recovery_and_history_paths
     window._start_platform_clicked()
     window._browse_platform_path()
     window._search_ticker_clicked()
-    window._on_ticker_search_results([{"label": "AAPL", "symbol": "AAPL", "supported": True, "con_id": 123}])
+    window._on_ticker_search_results([{"label": "AAPL", "symbol": "AAPL", "supported": True, "con_id": 123, "currency": "USD", "sec_type": "STK", "primary_exchange": "NASDAQ"}])
     window._selected_ticker_match()
     window._use_selected_ticker_match()
     window._confirm_ticker_price_clicked()
@@ -824,3 +824,44 @@ def test_no_wheel_filter_blocks_wheel_only_for_edit_controls(gui_module):
     watched = Dummy()
     assert filter_object.eventFilter(watched, EventStub(EventStub.Wheel)) in {True, False}
     assert filter_object.eventFilter(watched, EventStub(EventStub.FocusIn)) in {True, False}
+
+
+def test_exact_eur_contract_selection_populates_identity_and_currency_display(gui_module):
+    controller = ControllerStub()
+    window = gui_module.MainWindow(controller)
+
+    selected = window._apply_contract_match(
+        {
+            "label": "SAP | STK | EUR | IBIS",
+            "symbol": "SAP",
+            "supported": True,
+            "con_id": 1001,
+            "currency": "EUR",
+            "sec_type": "STK",
+            "exchange": "SMART",
+            "primary_exchange": "IBIS",
+        }
+    )
+
+    assert selected is True
+    assert window.ticker_edit.text() == "SAP"
+    assert window.primary_exchange_edit.text() == "IBIS"
+    assert window.currency_edit.text() == "EUR"
+    assert window.con_id_edit.text() == "1001"
+    settings = window._strategy_from_ui()
+    assert settings.currency == "EUR"
+    assert settings.exchange == "SMART"
+    assert settings.sec_type == "STK"
+    assert settings.contract_con_id == 1001
+    assert gui_module._format_currency(123.45, 2).startswith("€")
+
+    prefixes: list[str] = []
+    recorder = SimpleNamespace(setPrefix=prefixes.append)
+    window._currency_money_spins = [recorder]
+    window._apply_currency_display("USD")
+    assert prefixes == ["$ "]
+    assert gui_module._format_currency(123.45, 2).startswith("$")
+
+    window._clear_selected_contract_selection()
+    assert window.currency_edit.text() == ""
+    assert window.con_id_edit.text() == ""

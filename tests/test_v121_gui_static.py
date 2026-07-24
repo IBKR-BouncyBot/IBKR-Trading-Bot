@@ -6,7 +6,7 @@ CONTROLLER = Path("app/controller.py").read_text(encoding="utf-8")
 
 
 def test_v121_version_labels_are_current():
-    assert "BouncyBot - IBKR Portable Trading Bot v3.1.2" in GUI
+    assert "BouncyBot - IBKR Portable Trading Bot v3.2.0" in GUI
     assert "# BouncyBot - an IBKR Portable Trading Bot " in README
     assert 'self._visual_refresh_timer.setInterval(75)' in GUI
     assert 'self._history_filter_timer.setInterval(200)' in GUI
@@ -69,8 +69,9 @@ def test_v121_ticker_contract_section_is_above_entry():
     assert 'grid.addWidget(atr_box, 3, 0, 1, 4)' in GUI
     assert 'ticker_grid.addWidget(QLabel("Ticker"), 0, 0)' in GUI
     assert 'ticker_grid.addWidget(QLabel("Primary exchange"), 0, 2)' in GUI
-    assert 'ticker_grid.addWidget(QLabel("IBKR conId"), 1, 0)' in GUI
-    assert 'ticker_grid.addWidget(self.contract_label, 3, 0, 1, 4)' in GUI
+    assert 'ticker_grid.addWidget(QLabel("Contract currency"), 1, 0)' in GUI
+    assert 'ticker_grid.addWidget(QLabel("IBKR conId"), 1, 2)' in GUI
+    assert 'ticker_grid.addWidget(self.contract_label, 4, 0, 1, 4)' in GUI
 
 
 def test_v121_command_bar_is_bottom_bar_below_tabs():

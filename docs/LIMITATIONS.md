@@ -1,12 +1,12 @@
 # Limitations and non-goals
 
-This document states the boundaries of v3.1.2. Treat each limitation as an operational constraint, not as a future guarantee.
+This document states the boundaries of v3.2.0. Treat each limitation as an operational constraint, not as a future guarantee.
 
 ## Strategy scope
 
 - One active strategy cycle is supported at a time.
 - The strategy is long-only: BUY whole shares, then SELL the application-owned quantity.
-- Supported strategy contracts are `STK`, `USD`, and `SMART` routed.
+- Supported strategy contracts are exact API-selected ordinary `STK` listings in USD or EUR, routed through `SMART`, with a positive conId and usable IBKR capability/session metadata.
 - The GUI does not implement short selling, options, futures, forex, bonds, crypto, fractional shares, bracket portfolios, pairs, or multi-leg orders.
 - It is not a portfolio optimizer, scanner, signal marketplace, or backtesting platform.
 
@@ -17,8 +17,8 @@ This document states the boundaries of v3.1.2. Treat each limitation as an opera
 - The optional slippage buffer changes planning math only. It is not a limit order and does not cap slippage.
 - The protective SELL cannot guarantee protection during gaps, market closures, halts, disconnections, rejection, or insufficient liquidity.
 - The application cannot override IBKR risk checks, exchange rules, account restrictions, or order simulations.
-- The optional Stage-4 close-before-RTH policy is not guaranteed to finish before the close. Cancellation acknowledgement, partial fills, order rejection, halts, connectivity, and limited remaining time can leave shares unsold and require manual review. Its market replacement can realize a loss.
-- The close-before-RTH policy applies only to the normal final Stage-4 native SELL trail. It does not liquidate Stage-3 positions and does not create an extended-hours or overnight protective order.
+- The optional Stage-3/Stage-4 close-before-RTH policy is not guaranteed to finish before the close. Cancellation acknowledgement, partial fills, order rejection, halts, connectivity, and limited remaining time can leave shares unsold and require manual review. Its market replacement can realize a loss.
+- In Stage 3, the close-before-RTH policy acts only while a fresh selected price is strictly above the weighted average BUY price, ignoring commissions. The market fill can still be below that reference or realize a loss. The policy does not create an extended-hours or overnight protective order.
 
 ## Position ownership limits
 
@@ -42,7 +42,16 @@ Use separate accounts or deliberate operating procedures when strict position se
 - Freshness is tracked at the ticker-update event level, not as an exchange timestamp for every individual field; a fresh callback can contain an unchanged value.
 - ATR uses prices observed while this application is running and RTH is open. Observation/bar collection continues when adaptation is disabled, but the buffer is not persisted. It resets on restart, is not exchange-native historical ATR, and does not warm up while the application is closed.
 - The recent-volatility filter uses the application’s observed sample range, not a broker historical-volatility product.
-- Normal RTH and session-timing guards use date-specific IBKR contract `liquidHours`, including early closes. The fallback used when IBKR contract hours are unavailable is designed for US equities and may not represent holidays, halts, or special sessions perfectly.
+- Normal RTH and session-timing guards use date-specific IBKR contract `liquidHours`, including early closes. The 09:30–16:00 New York fallback is permitted only for recognized U.S. primary exchanges and may not represent holidays, halts, or special sessions perfectly. Non-U.S. or unknown contracts with missing/unusable session metadata fail closed.
+
+## Contract, route, currency, and quantity limits
+
+- v3.2.0 supports only USD and EUR ordinary `STK` contracts selected from an exact IBKR API result. Other currencies and security types remain unsupported.
+- Order routing is `SMART` only. The primary exchange identifies the selected native listing; direct-routing workflows are not implemented.
+- “SMART supported” is capability-driven, not a guarantee for every listing or venue. BouncyBot requires the selected contract to advertise or accept SMART, `MKT`, `TRAIL`, market-rule pricing, whole-share quantity rules, and usable regular-session metadata. A missing capability blocks the contract.
+- Each portable SQLite database is single-currency. A zero-cycle draft can switch between USD and EUR, but the first persisted cycle locks the database. Mixed USD/EUR history and automatic FX conversion are not supported.
+- Quantity handling is whole-share only. BUY quantity may round down to a compatible `minSize`/`sizeIncrement`; SELL quantity is not rounded down because that could leave an untracked remainder. Broker lot-size metadata can still be incomplete or change.
+- A commission reported in another currency is preserved for audit but excluded from local net P/L, and Auto-repeat is disabled. This is not a substitute for statement-level FX accounting.
 
 ## Broker validation and order-price limits
 
@@ -57,7 +66,7 @@ Use separate accounts or deliberate operating procedures when strict position se
 - This is a desktop process, not a redundant service. Application-side monitoring stops when Windows, Python, the executable, TWS/Gateway, the network, or the API session stops.
 - IBKR-native orders already accepted by the broker may continue to work after the application closes or loses connectivity; application-side Stage 1/3 observation does not.
 - A BUY can fill while callbacks are unavailable. Application-side follow-up, including protective SELL placement that did not already exist, is delayed until connectivity and reconciliation return.
-- Handling 1100/1101/1102 reduces stale-data risk but does not provide redundant Internet, Gateway, machine, or process failover.
+- Handling 1100/1101/1102 and retrying a lost local API connection every 10 seconds reduces stale-data and unattended-disconnect risk but does not provide redundant Internet, Gateway, machine, process, credential, or session failover.
 - Startup recovery is conservative and requires explicit operator action for a stored active cycle.
 - Orderly Windows update/sign-out/shutdown requests receive a final resume checkpoint, but a sudden power cut, forced process kill, operating-system crash, or storage failure cannot execute that hook. Only state already committed to SQLite is recoverable in those cases.
 - Broker responses and recent execution windows may be incomplete; ambiguous states are moved to manual review rather than guessed. A cached recovery probe is only a point-in-time view. Newer normal order polls can supersede its matching rows, but any later explicit probe that still reports an order must be investigated.
@@ -76,7 +85,7 @@ Use separate accounts or deliberate operating procedures when strict position se
 - Windows is the supported GUI and packaging target.
 - Python 3.11 or newer is required when running from source.
 - TWS or IB Gateway must be installed, logged in, authenticated, and configured for API access.
-- The application does not automate credentials, two-factor authentication, session restarts, or daily IBKR maintenance windows.
+- The application retries a lost local API socket every 10 seconds indefinitely, but it does not automate credentials, two-factor authentication, platform login, session restarts, or daily IBKR maintenance windows. Manual Disconnect and application shutdown stop the retries.
 
 ## Security and distribution limits
 
@@ -89,4 +98,4 @@ Use separate accounts or deliberate operating procedures when strict position se
 
 ## Multi-instance ownership boundary
 
-Multiple BouncyBot copies can share a Master API feed. v3.1.2 rejects attribution of any order or callback whose complete `OrderRef` is not already persisted locally. This prevents one installation from acting on another installation's app-prefixed order, but it also means a lost or replaced local database can require manual recovery instead of broad prefix-based discovery.
+Multiple BouncyBot copies can share a Master API feed. v3.2.0 rejects attribution of any order or callback whose complete `OrderRef` is not already persisted locally. This prevents one installation from acting on another installation's app-prefixed order, but it also means a lost or replaced local database can require manual recovery instead of broad prefix-based discovery.

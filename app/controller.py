@@ -76,11 +76,13 @@ from .ib_adapter import (
 from .ib_platform import connection_helper_text, launch_platform, platform_label
 from .market_data_capture import MarketDataCaptureManager
 from .models import (
+    SUPPORTED_CONTRACT_CURRENCIES,
     ConnectionSettings,
     CycleState,
     Stage,
     StopAction,
     StrategySettings,
+    normalize_contract_currency,
     recovery_cycle_signature,
     strategy_with_atr_adaptive_percentages,
     utc_now_iso,
@@ -153,6 +155,7 @@ class TradingController:
     DATABASE_CADENCE_SECONDS = 1.00
     MAINTENANCE_CADENCE_SECONDS = 1.00
     MAX_IDLE_WAIT_SECONDS = 0.25
+    RECONNECT_INTERVAL_SECONDS = 10.0
 
     # Zero means do not add a second rate limit inside the strategy cadence when
     # reading the cached TWS subscription handle. The adapter stamps actual
@@ -187,10 +190,12 @@ class TradingController:
             "recent_events": [],
             "history_summary": {},
             "guard_facts": {},
+            "database_currency": {},
             "errors": {},
         }
         self._executions_recorded: set[str] = set()
         self._pending_commissions_by_execution_id: dict[str, dict[str, Any]] = {}
+        self._commission_currency_mismatch_keys: set[str] = set()
         self._last_price_warning_at: dict[str, float] = {}
         self.price_snapshot: Optional[dict[str, Any]] = None
         self._last_price_poll_monotonic = 0.0
@@ -505,14 +510,25 @@ class TradingController:
         """Synchronous local-SQLite read used by the trade-history detail dialog."""
         return self.storage.cycle_audit_details(cycle_id)
 
-    def app_owned_unsold_position(self, ticker: str) -> dict[str, Any]:
+    def app_owned_unsold_position(
+        self,
+        ticker: str,
+        *,
+        con_id: Optional[int] = None,
+    ) -> dict[str, Any]:
         """Return the persisted unsold quantity created by this app only.
 
         This is a read-only local query used immediately before GUI stop and
         recovery actions. It deliberately excludes the account-wide IBKR
         position, which can contain shares acquired manually or by other apps.
+        When the active cycle matches the requested ticker, its exact conId is
+        used automatically so another listing with the same symbol is excluded.
         """
-        return self.storage.get_app_owned_unsold_position(ticker)
+        active = self.active_cycle
+        exact_con_id = con_id
+        if exact_con_id is None and active is not None and active.ticker == str(ticker or "").strip().upper():
+            exact_con_id = active.con_id
+        return self.storage.get_app_owned_unsold_position(ticker, con_id=exact_con_id)
 
     def export_history(self, ticker: str = "") -> Path:
         stamp = utc_now_iso().replace(":", "-")
@@ -520,11 +536,18 @@ class TradingController:
 
     def export_audit_bundle(self, target_dir: Optional[Path] = None) -> Path:
         """Synchronous diagnostic export used by the Reconciliation screen."""
+        try:
+            database_currency = self.storage.database_contract_currency_info()
+        except Exception as exc:
+            database_currency = {"currency": "", "locked": False, "cycle_count": 0, "error": str(exc)}
         snapshot = {
             "created_at": utc_now_iso(),
             "connected": self.connected,
             "status": self.status,
             "db_path": str(self.storage.db_path),
+            "database_contract_currency": database_currency.get("currency", ""),
+            "database_contract_currency_locked": bool(database_currency.get("locked", False)),
+            "database_cycle_count": int(database_currency.get("cycle_count", 0) or 0),
             "connection": asdict(self.connection),
             "display_account": self._display_account_label(),
             "strategy": asdict(self.strategy),
@@ -563,7 +586,7 @@ class TradingController:
         """Return a BUY blocker for unsold shares created by this app only."""
         if database_facts is None:
             try:
-                summary = self.storage.get_app_owned_unsold_position(cycle.ticker)
+                summary = self.storage.get_app_owned_unsold_position(cycle.ticker, con_id=cycle.con_id)
             except Exception as exc:
                 message = f"BUY pre-flight blocked order: app-owned position ledger could not be confirmed: {exc}"
                 return self._trading_blocker("BUY", "app_position_unverified", message, "App ledger unavailable")
@@ -573,8 +596,12 @@ class TradingController:
             if error:
                 message = f"BUY pre-flight blocked order: app-owned position ledger could not be confirmed: {error}"
                 return self._trading_blocker("BUY", "app_position_unverified", message, "App ledger unavailable")
-            if str(database_facts.get("ticker") or "") != cycle.ticker or "app_owned_position" not in database_facts:
-                message = "BUY pre-flight blocked order: the cached app-owned position ledger has not been refreshed for this ticker yet."
+            if (
+                str(database_facts.get("ticker") or "") != cycle.ticker
+                or int(database_facts.get("con_id") or 0) != int(cycle.con_id or 0)
+                or "app_owned_position" not in database_facts
+            ):
+                message = "BUY pre-flight blocked order: the cached app-owned position ledger has not been refreshed for this exact contract yet."
                 return self._trading_blocker("BUY", "app_position_unverified", message, "App ledger refreshing")
             summary = database_facts.get("app_owned_position") or {}
         try:
@@ -850,6 +877,7 @@ class TradingController:
         cycle = self.active_cycle
         facts: dict[str, Any] = {
             "ticker": cycle.ticker if cycle is not None else "",
+            "con_id": cycle.con_id if cycle is not None else None,
             "errors": {},
         }
         if cycle is None or cycle.stage != Stage.WAIT_INITIAL_DROP:
@@ -863,16 +891,16 @@ class TradingController:
             except Exception as exc:
                 errors[name] = str(exc)
 
-        capture("app_owned_position", lambda: self.storage.get_app_owned_unsold_position(cycle.ticker))
+        capture("app_owned_position", lambda: self.storage.get_app_owned_unsold_position(cycle.ticker, con_id=cycle.con_id))
         if bool(getattr(cycle, "hard_risk_limits_enabled", False)):
             if float(getattr(cycle, "max_daily_loss_ticker", 0.0) or 0.0) > 0:
-                capture("daily_net_pnl_ticker", lambda: self.storage.get_daily_net_pnl_for_ticker(cycle.ticker))
+                capture("daily_net_pnl_ticker", lambda: self.storage.get_daily_net_pnl_for_ticker(cycle.ticker, con_id=cycle.con_id))
             if float(getattr(cycle, "max_daily_loss_total", 0.0) or 0.0) > 0:
                 capture("daily_net_pnl_total", self.storage.get_daily_net_pnl_total)
             if int(getattr(cycle, "max_cycles_per_ticker_day", 0) or 0) > 0:
-                capture("completed_cycle_count", lambda: self.storage.get_completed_cycle_count(cycle.ticker))
+                capture("completed_cycle_count", lambda: self.storage.get_completed_cycle_count(cycle.ticker, con_id=cycle.con_id))
             if int(getattr(cycle, "max_consecutive_losses", 0) or 0) > 0:
-                capture("consecutive_loss_count", lambda: self.storage.get_consecutive_loss_count(cycle.ticker))
+                capture("consecutive_loss_count", lambda: self.storage.get_consecutive_loss_count(cycle.ticker, con_id=cycle.con_id))
         return facts
 
     def _refresh_snapshot_database_cache(self, *, force: bool = False) -> dict[str, Any]:
@@ -898,6 +926,11 @@ class TradingController:
         except Exception as exc:
             history_summary = dict(previous.get("history_summary") or {})
             errors["history_summary"] = str(exc)
+        try:
+            database_currency = self.storage.database_contract_currency_info()
+        except Exception as exc:
+            database_currency = dict(previous.get("database_currency") or {})
+            errors["database_currency"] = str(exc)
 
         guard_facts = self._snapshot_guard_database_facts()
         self._snapshot_database_cache = {
@@ -905,6 +938,7 @@ class TradingController:
             "recent_events": list(recent_events or []),
             "history_summary": dict(history_summary or {}),
             "guard_facts": guard_facts,
+            "database_currency": dict(database_currency or {}),
             "errors": errors,
             "refreshed_at": utc_now_iso(),
         }
@@ -929,6 +963,7 @@ class TradingController:
         recent_events = list(database_cache.get("recent_events") or [])
         history_summary = dict(database_cache.get("history_summary") or {})
         database_facts = database_cache.get("guard_facts") or {}
+        database_currency = dict(database_cache.get("database_currency") or {})
 
         if not self.connected:
             broker_connectivity = dict(self._broker_connectivity)
@@ -956,6 +991,9 @@ class TradingController:
             "connected": self.connected,
             "status": self.status,
             "db_path": str(self.storage.db_path),
+            "database_contract_currency": database_currency.get("currency", ""),
+            "database_contract_currency_locked": bool(database_currency.get("locked", False)),
+            "database_cycle_count": int(database_currency.get("cycle_count", 0) or 0),
             "connection": asdict(self.connection),
             "display_account": self._display_account_label(),
             "broker_accounts": list(self._broker_display_accounts),
@@ -972,7 +1010,10 @@ class TradingController:
                 "gui_seconds": self.GUI_CADENCE_SECONDS,
                 "database_seconds": self.DATABASE_CADENCE_SECONDS,
                 "maintenance_seconds": self.MAINTENANCE_CADENCE_SECONDS,
+                "reconnect_seconds": self.RECONNECT_INTERVAL_SECONDS,
             },
+            "auto_reconnect_enabled": bool(self._auto_reconnect_enabled),
+            "reconnect_failures": int(self._reconnect_failures),
             "market_capture": {"enabled": True, "buffer_rows": self._market_capture.buffer_size, "pending": self._market_capture.pending_count, "completed_files": [str(p) for p in self._market_capture.completed_files[-5:]]},
             "broker_recovery": dict(self._last_recovery_probe or {}),
             "recovery_confidence": self._recovery_confidence(),
@@ -1590,17 +1631,27 @@ class TradingController:
         target = self._platform_name(settings)
         self.status = f"Connecting to {target} API at {settings.host}:{settings.port}..."
         self.signals.connection_changed.emit(False, self.status)
+        # A user-requested Connect enables the same fixed retry policy as a
+        # previously healthy connection.  If the first socket attempt fails,
+        # the worker will keep retrying every ten seconds until the operator
+        # disconnects or shuts down the app.
+        self._auto_reconnect_enabled = True
         try:
             self.adapter.connect(settings.host, settings.port, settings.client_id, settings.market_data_type)
         except Exception as exc:
             self.connected = False
+            self._reconnect_failures = 1
+            self._last_reconnect_attempt_monotonic = time.monotonic()
             helper = connection_helper_text(settings.normalized_platform(), settings.host, settings.port, exc)
-            self.status = f"{target} connection unavailable. {helper}"
+            self.status = (
+                f"{target} connection unavailable. {helper} BouncyBot will retry every "
+                f"{self.RECONNECT_INTERVAL_SECONDS:g} seconds until connected or manually disconnected."
+            )
             self.storage.add_event("WARN", self.status)
             self.signals.connection_changed.emit(False, self.status)
             raise BrokerAdapterError(self.status) from exc
-        self._auto_reconnect_enabled = True
         self._reconnect_failures = 0
+        self._last_reconnect_attempt_monotonic = 0.0
         self.connected = True
         self._reset_price_feed_after_reconnect()
         process_events = getattr(self.adapter, "process_events", None)
@@ -1658,7 +1709,11 @@ class TradingController:
             self.connected = False
             self._reconnect_failures = 0
             self._last_reconnect_attempt_monotonic = 0.0
-            self._log("INFO", f"Waiting for {target} login/API socket, then auto-reconnect will continue.")
+            self._log(
+                "INFO",
+                f"Waiting for {target} login/API socket; BouncyBot will retry every "
+                f"{self.RECONNECT_INTERVAL_SECONDS:g} seconds until connected or manually disconnected.",
+            )
         self.emit_snapshot(force=True)
 
     def _disconnect(self) -> None:
@@ -2104,17 +2159,139 @@ class TradingController:
             # Compatibility test doubles and minimal adapters may omit con_id.
             return self.adapter.qualify_stock(ticker, exchange, currency, primary_exchange)
 
-    def _contract_for_strategy(self, settings: StrategySettings) -> QualifiedContract:
+    def _validate_exact_contract_selection(
+        self,
+        settings: StrategySettings,
+        *,
+        claim_database_currency: bool = False,
+    ) -> str:
+        """Validate the exact SMART/STK/USD-or-EUR contract selected in the GUI."""
         ticker = settings.normalized_ticker()
         if not ticker:
             raise ValueError("Ticker is required.")
-        return self._adapter_qualify_stock(
+        if str(settings.exchange or "").upper().strip() != "SMART":
+            raise ValueError("BouncyBot supports SMART-routed stock contracts only.")
+        if str(settings.sec_type or "").upper().strip() != "STK":
+            raise ValueError("Only ordinary STK contracts are supported.")
+        currency = normalize_contract_currency(settings.currency, fallback="")
+        if currency not in SUPPORTED_CONTRACT_CURRENCIES:
+            raise ValueError("Select an exact USD or EUR stock contract from the IBKR API results.")
+        try:
+            con_id = int(settings.contract_con_id or 0)
+        except Exception:
+            con_id = 0
+        exact_required = bool(getattr(self.adapter, "requires_exact_contract_selection", False))
+        if settings.contract_con_id is not None and con_id <= 0:
+            raise ValueError("IBKR conId must be blank or a positive integer.")
+        if exact_required and con_id <= 0:
+            raise ValueError(
+                "Select an exact IBKR API contract result before confirming or starting; a positive conId is required."
+            )
+        if claim_database_currency:
+            self.storage.claim_database_contract_currency(
+                currency,
+                allow_rebind_if_no_cycles=True,
+            )
+        settings.exchange = "SMART"
+        settings.currency = currency
+        settings.sec_type = "STK"
+        return currency
+
+    @staticmethod
+    def _qualified_contract_text(
+        contract: QualifiedContract,
+        field: str,
+        raw_field: str,
+    ) -> str:
+        value = getattr(contract, field, "")
+        if value in (None, ""):
+            value = getattr(getattr(contract, "raw", None), raw_field, "")
+        return str(value or "")
+
+    def _verify_qualified_contract(
+        self,
+        contract: QualifiedContract,
+        settings: StrategySettings,
+    ) -> None:
+        """Fail closed if IBKR resolves a contract other than the selected one."""
+        expected_ticker = settings.normalized_ticker()
+        actual_ticker = str(getattr(contract, "ticker", "") or "").upper().strip()
+        if actual_ticker and actual_ticker != expected_ticker:
+            raise ValueError(
+                f"IBKR resolved ticker {actual_ticker}, not the selected ticker {expected_ticker}."
+            )
+
+        try:
+            expected_con_id = int(settings.contract_con_id or 0)
+        except Exception:
+            expected_con_id = 0
+        try:
+            actual_con_id = int(getattr(contract, "con_id", 0) or 0)
+        except Exception:
+            actual_con_id = 0
+        if expected_con_id > 0 and actual_con_id != expected_con_id:
+            raise ValueError(
+                f"IBKR resolved conId {actual_con_id or '-'}, not the selected conId {expected_con_id}."
+            )
+
+        expected_currency = normalize_contract_currency(settings.currency, fallback="")
+        actual_currency = normalize_contract_currency(
+            self._qualified_contract_text(contract, "currency", "currency"),
+            fallback=expected_currency,
+        )
+        if actual_currency != expected_currency:
+            raise ValueError(
+                f"IBKR resolved contract currency {actual_currency or '-'}, not {expected_currency}."
+            )
+
+        actual_exchange = self._qualified_contract_text(
+            contract,
+            "exchange",
+            "exchange",
+        ).upper().strip()
+        if actual_exchange and actual_exchange != "SMART":
+            raise ValueError(
+                f"IBKR resolved order exchange {actual_exchange}; BouncyBot requires SMART routing."
+            )
+
+        expected_primary_exchange = str(settings.primary_exchange or "").upper().strip()
+        actual_primary_exchange = self._qualified_contract_text(
+            contract,
+            "primary_exchange",
+            "primaryExchange",
+        ).upper().strip()
+        if (
+            expected_primary_exchange
+            and actual_primary_exchange
+            and actual_primary_exchange != expected_primary_exchange
+        ):
+            raise ValueError(
+                f"IBKR resolved primary exchange {actual_primary_exchange}, "
+                f"not the selected primary exchange {expected_primary_exchange}."
+            )
+
+        actual_sec_type = self._qualified_contract_text(
+            contract,
+            "sec_type",
+            "secType",
+        ).upper().strip()
+        if actual_sec_type and actual_sec_type != "STK":
+            raise ValueError(
+                f"IBKR resolved security type {actual_sec_type}; only ordinary STK contracts are supported."
+            )
+
+    def _contract_for_strategy(self, settings: StrategySettings) -> QualifiedContract:
+        ticker = settings.normalized_ticker()
+        self._validate_exact_contract_selection(settings, claim_database_currency=True)
+        contract = self._adapter_qualify_stock(
             ticker,
             settings.exchange,
             settings.currency,
             settings.primary_exchange,
             settings.contract_con_id,
         )
+        self._verify_qualified_contract(contract, settings)
+        return contract
 
     def _search_contracts(self, connection: ConnectionSettings, query: str) -> None:
         self.connection = connection
@@ -2131,7 +2308,24 @@ class TradingController:
         if not pattern:
             raise ValueError("Ticker/search text is required.")
         results = self.adapter.search_stock_contracts(pattern)
-        payload = [r.to_dict() if hasattr(r, "to_dict") else dict(r) for r in results]
+        currency_info = self.storage.database_contract_currency_info()
+        database_currency = normalize_contract_currency(currency_info.get("currency"), fallback="")
+        currency_locked = bool(currency_info.get("locked", False))
+        payload: list[dict[str, Any]] = []
+        for result in results:
+            row = result.to_dict() if hasattr(result, "to_dict") else dict(result)
+            row_currency = normalize_contract_currency(row.get("currency"), fallback="")
+            compatible = not currency_locked or not database_currency or row_currency == database_currency
+            row["database_currency"] = database_currency
+            row["database_currency_locked"] = currency_locked
+            row["database_currency_compatible"] = compatible
+            if not compatible:
+                row["supported"] = False
+                row["label"] = (
+                    f"{row.get('label') or row.get('symbol') or 'Contract'} | "
+                    f"unsupported: this database is locked to {database_currency}"
+                )
+            payload.append(row)
         self.signals.contract_search_updated.emit(payload)
         self.signals.ticker_search_updated.emit(payload)
         self._log("INFO", f"Contract search for {pattern} returned {len(payload)} result(s).")
@@ -2141,8 +2335,7 @@ class TradingController:
         ticker = settings.normalized_ticker()
         if not ticker:
             raise ValueError("Ticker is required.")
-        if settings.contract_con_id is not None and int(settings.contract_con_id) <= 0:
-            raise ValueError("IBKR conId must be blank or a positive integer.")
+        self._validate_exact_contract_selection(settings, claim_database_currency=True)
         self.adapter.set_market_data_type(self.connection.market_data_type)
         contract = self._contract_for_strategy(settings)
         self.contract = contract
@@ -2172,6 +2365,17 @@ class TradingController:
             # Re-clicking Start after a restart or reconnect should resume the
             # stored active cycle, not fail with a duplicate-cycle error.
             self.active_cycle = active
+            try:
+                self.storage.claim_database_contract_currency(active.currency)
+            except Exception as exc:
+                self._recovery_required = True
+                self.status = (
+                    "Stored active cycle conflicts with the portable database currency lock; "
+                    f"automatic recovery is blocked: {exc}"
+                )
+                self._log("ERROR", self.status, active)
+                self.emit_snapshot(force=True)
+                return
             if self._active_cycle_is_stale(active) and bool(getattr(self, "_stale_active_cycle_detected", False)):
                 self._startup_resume_required = False
                 self._stale_active_cycle_detected = True
@@ -2198,9 +2402,56 @@ class TradingController:
                 active.touch()
                 self.storage.upsert_cycle(active)
             self._startup_resume_required = False
+            exact_required = bool(getattr(self.adapter, "requires_exact_contract_selection", False))
+            if exact_required and not self._optional_int(active.con_id):
+                active.stage = Stage.MANUAL_REVIEW
+                active.recovery_required = True
+                active.error_message = (
+                    "Stored active cycle has no exact IBKR conId. Automatic recovery is blocked; "
+                    "verify the position and orders in IBKR before taking manual action."
+                )
+                active.touch()
+                self.active_cycle = active
+                self._recovery_required = True
+                self.storage.upsert_cycle(active)
+                self.status = active.error_message
+                self._log("ERROR", self.status, active)
+                self.emit_snapshot(force=True)
+                return
             try:
-                self.contract = self._adapter_qualify_stock(active.ticker, active.exchange, active.currency, active.primary_exchange, active.con_id)
+                self.contract = self._adapter_qualify_stock(
+                    active.ticker,
+                    active.exchange,
+                    active.currency,
+                    active.primary_exchange,
+                    active.con_id,
+                )
+                resume_identity = StrategySettings(
+                    ticker=active.ticker,
+                    investment_amount=max(0.01, float(active.investment_amount or 0.01)),
+                    exchange=active.exchange,
+                    primary_exchange=active.primary_exchange,
+                    contract_con_id=active.con_id,
+                    currency=active.currency,
+                    sec_type="STK",
+                )
+                self._verify_qualified_contract(self.contract, resume_identity)
             except Exception as exc:
+                if exact_required:
+                    active.stage = Stage.MANUAL_REVIEW
+                    active.recovery_required = True
+                    active.error_message = (
+                        "Active-cycle contract qualification failed; automatic recovery is blocked: "
+                        f"{exc}"
+                    )
+                    active.touch()
+                    self.active_cycle = active
+                    self._recovery_required = True
+                    self.storage.upsert_cycle(active)
+                    self.status = active.error_message
+                    self._log("ERROR", self.status, active)
+                    self.emit_snapshot(force=True)
+                    return
                 self._log("WARN", f"Active cycle resumed, but contract qualification failed: {exc}", active)
             self._recover_after_connect()
             self._apply_active_strategy_edits(settings)
@@ -2209,6 +2460,7 @@ class TradingController:
             self.emit_snapshot(force=True)
             return
 
+        self._validate_exact_contract_selection(settings, claim_database_currency=True)
         self.adapter.set_market_data_type(self.connection.market_data_type)
         contract = self._contract_for_strategy(settings)
         self._update_rth_status(contract)
@@ -2219,7 +2471,7 @@ class TradingController:
         # effective settings object rather than the stale command payload.
         settings = self.strategy
         last_price = price_snapshot.price if bool((self.price_snapshot or {}).get("strategy_price_usable")) else None
-        realized = self.storage.get_realized_net_profit_for_ticker(ticker)
+        realized = self.storage.get_realized_net_profit_for_ticker(ticker, con_id=contract.con_id)
         cycle_number = self.storage.get_next_cycle_number(ticker)
         if last_price is None or last_price <= 0:
             # Do not fail Start just because TWS has not delivered a price yet.
@@ -2260,7 +2512,7 @@ class TradingController:
             return
         if settings.normalized_ticker() != cycle.ticker:
             return
-        realized = self.storage.get_realized_net_profit_for_ticker(cycle.ticker)
+        realized = self.storage.get_realized_net_profit_for_ticker(cycle.ticker, con_id=cycle.con_id)
         updated, changed_fields = StrategyEngine.apply_editable_settings(cycle, settings, realized)
         changed = bool(changed_fields) or updated.to_dict() != cycle.to_dict()
         self.active_cycle = updated
@@ -2386,9 +2638,19 @@ class TradingController:
             total_shares += shares
             total_value += shares * price
             try:
-                total_commission += float(row.get("commission") or 0.0)
+                commission_value = float(row.get("commission") or 0.0)
             except Exception:
-                pass
+                commission_value = 0.0
+            if commission_value:
+                accepted_commission = self._commission_in_cycle_currency(
+                    cycle,
+                    commission_value,
+                    row.get("currency"),
+                    execution_id=str(row.get("execution_id") or row.get("execId") or "RECOVERED"),
+                    source="RECOVERED_EXECUTION_AGGREGATE",
+                )
+                if accepted_commission is not None:
+                    total_commission += accepted_commission
         if total_shares <= 0:
             return 0, 0.0, 0.0, matches
         return int(total_shares), total_value / total_shares, total_commission, matches
@@ -2400,6 +2662,23 @@ class TradingController:
             price = float(row.get("price") or row.get("avg_price") or row.get("avgPrice") or 0.0)
             if shares <= 0 or price <= 0:
                 continue
+            commission_value = row.get("commission")
+            try:
+                commission = (
+                    float(commission_value)
+                    if commission_value not in (None, "")
+                    else None
+                )
+            except Exception:
+                commission = None
+            if commission is not None and abs(commission) > 0.0:
+                commission = self._commission_in_cycle_currency(
+                    cycle,
+                    commission,
+                    row.get("currency"),
+                    execution_id=execution_id or "RECOVERED",
+                    source="RECOVERED_EXECUTION_ROW",
+                )
             self.storage.upsert_execution(
                 cycle=cycle,
                 ticker=cycle.ticker,
@@ -2407,12 +2686,8 @@ class TradingController:
                 shares=shares,
                 price=price,
                 avg_price=float(row.get("avg_price") or row.get("avgPrice") or price),
-                commission=(
-                    float(row.get("commission"))
-                    if row.get("commission") not in (None, "")
-                    else None
-                ),
-                currency=str(row.get("currency") or cycle.currency),
+                commission=commission,
+                currency=cycle.currency,
                 order_ref=str(row.get("order_ref") or self._order_identity_for_side(cycle, side)[0] or ""),
                 order_id=int(row.get("order_id") or row.get("orderId") or 0) or None,
                 perm_id=int(row.get("perm_id") or row.get("permId") or 0) or None,
@@ -2733,7 +3008,10 @@ class TradingController:
             probe["invalidated_at"] = utc_now_iso()
             probe["invalidation_reason"] = "The broker API connection failed after this probe."
             self._last_recovery_probe = probe
-        self.status = f"{self._platform_name()} connection problem: {message}. Auto-reconnect pending."
+        self.status = (
+            f"{self._platform_name()} connection problem: {message}. "
+            f"Auto-reconnect will retry every {self.RECONNECT_INTERVAL_SECONDS:g} seconds until connected."
+        )
         self.signals.connection_changed.emit(False, self.status)
         now = time.monotonic()
         if now - self._last_connection_warning_monotonic >= 10.0:
@@ -2744,8 +3022,10 @@ class TradingController:
         if not self._auto_reconnect_enabled:
             return False
         now = time.monotonic()
-        backoff = min(60.0, 2.0 ** min(self._reconnect_failures, 6))
-        if self._last_reconnect_attempt_monotonic and now - self._last_reconnect_attempt_monotonic < backoff:
+        if (
+            self._reconnect_failures > 0
+            and now - self._last_reconnect_attempt_monotonic < self.RECONNECT_INTERVAL_SECONDS
+        ):
             return False
         self._last_reconnect_attempt_monotonic = now
         try:
@@ -2754,6 +3034,7 @@ class TradingController:
             self.adapter.connect(self.connection.host, self.connection.port, self.connection.client_id, self.connection.market_data_type)
             self.connected = True
             self._reconnect_failures = 0
+            self._last_reconnect_attempt_monotonic = 0.0
             self._reset_price_feed_after_reconnect()
             process_events = getattr(self.adapter, "process_events", None)
             if callable(process_events):
@@ -2796,7 +3077,10 @@ class TradingController:
             self.connected = False
             self._reconnect_failures += 1
             helper = connection_helper_text(self.connection.normalized_platform(), self.connection.host, self.connection.port, exc)
-            self.status = f"Reconnect failed: {helper}"
+            self.status = (
+                f"Reconnect failed: {helper} BouncyBot will retry again in "
+                f"{self.RECONNECT_INTERVAL_SECONDS:g} seconds."
+            )
             self.signals.connection_changed.emit(False, self.status)
             self._log("WARN", self.status, self.active_cycle)
             return False
@@ -3125,6 +3409,90 @@ class TradingController:
                 self._pending_commissions_by_execution_id.pop(oldest, None)
         self._pending_commissions_by_execution_id[execution_id] = dict(event)
 
+    def _commission_in_cycle_currency(
+        self,
+        cycle: CycleState,
+        commission: Optional[float],
+        currency: Any,
+        *,
+        execution_id: str,
+        source: str,
+    ) -> Optional[float]:
+        """Return a commission only when no FX conversion would be required."""
+        if commission is None:
+            return None
+        commission_value = float(commission)
+        if commission_value == 0.0:
+            return 0.0
+        commission_currency = normalize_contract_currency(currency, fallback="")
+        cycle_currency = normalize_contract_currency(cycle.currency, fallback="")
+        if not commission_currency or commission_currency == cycle_currency:
+            return commission_value
+
+        key = f"{cycle.id}|{execution_id}|{commission_currency}"
+        already_recorded = key in self._commission_currency_mismatch_keys
+        if not already_recorded:
+            try:
+                already_recorded = self.storage.has_decision_event_dedupe_key(
+                    cycle_id=cycle.id,
+                    event_type="COMMISSION_CURRENCY_MISMATCH",
+                    dedupe_key=key,
+                )
+            except Exception:
+                already_recorded = False
+            self._commission_currency_mismatch_keys.add(key)
+
+        if not cycle.stop_after_current_cycle:
+            cycle.stop_after_current_cycle = True
+            cycle.touch()
+            self.storage.upsert_cycle(cycle)
+        if bool(getattr(self.strategy, "auto_repeat", False)):
+            self.strategy.auto_repeat = False
+            try:
+                self.storage.save_strategy_settings(self.strategy)
+            except Exception:
+                pass
+        active_cycle = self.active_cycle
+        if (
+            active_cycle is not None
+            and active_cycle.id != cycle.id
+            and not active_cycle.stop_after_current_cycle
+        ):
+            active_cycle.stop_after_current_cycle = True
+            active_cycle.touch()
+            try:
+                self.storage.upsert_cycle(active_cycle)
+            except Exception:
+                pass
+
+        if not already_recorded:
+            message = (
+                f"Commission for execution {execution_id or '-'} was reported in {commission_currency}, "
+                f"but this database and cycle use {cycle_currency}. The commission was not added to net P/L, "
+                "and Auto-repeat was disabled because BouncyBot does not perform FX conversion."
+            )
+            try:
+                self.storage.add_decision_event(
+                    event_type="COMMISSION_CURRENCY_MISMATCH",
+                    message=message,
+                    cycle=cycle,
+                    stage_before=cycle.stage.value,
+                    stage_after=cycle.stage.value,
+                    decision_result="commission_excluded_no_fx_conversion",
+                    raw={
+                        "dedupe_key": key,
+                        "execution_id": execution_id,
+                        "commission": commission_value,
+                        "commission_currency": commission_currency,
+                        "cycle_currency": cycle_currency,
+                        "source": source,
+                    },
+                )
+            except Exception:
+                pass
+            self._log("WARN", message, cycle)
+        return None
+
     def _apply_execution_callback_event(
         self,
         event_type: str,
@@ -3180,6 +3548,7 @@ class TradingController:
             price = float(existing.get("price") or 0.0)
 
         pending = self._pending_commissions_by_execution_id.pop(execution_id, None)
+        commission_currency = event.get("currency")
         if pending is not None:
             try:
                 pending_value = pending.get("commission")
@@ -3189,8 +3558,22 @@ class TradingController:
                 # the library's default 0.0 commission placeholder.
                 if pending_commission is not None:
                     commission = pending_commission
+                    commission_currency = pending.get("currency") or commission_currency
             except Exception:
                 pass
+
+        if commission is not None and (
+            event_type == "COMMISSION_REPORT"
+            or pending is not None
+            or abs(float(commission)) > 0.0
+        ):
+            commission = self._commission_in_cycle_currency(
+                cycle,
+                commission,
+                commission_currency,
+                execution_id=execution_id,
+                source=event_type,
+            )
 
         if existing is not None:
             if shares <= 0:
@@ -3223,7 +3606,7 @@ class TradingController:
             price=price,
             avg_price=avg_price,
             commission=commission,
-            currency=str(event.get("currency") or (existing or {}).get("currency") or cycle.currency),
+            currency=cycle.currency,
             order_ref=order_ref,
             order_id=self._optional_int(event.get("order_id") or event.get("orderId")),
             perm_id=self._optional_int(event.get("perm_id") or event.get("permId")),
@@ -3572,7 +3955,7 @@ class TradingController:
             self._last_atr_adaptive_values = dict(adaptive)
             cycle = self.active_cycle
             if cycle is not None and cycle.ticker == updated.normalized_ticker() and cycle.stage not in {Stage.IDLE, Stage.CYCLE_COMPLETE, Stage.STOPPED, Stage.ERROR, Stage.MANUAL_REVIEW}:
-                realized = self.storage.get_realized_net_profit_for_ticker(cycle.ticker)
+                realized = self.storage.get_realized_net_profit_for_ticker(cycle.ticker, con_id=cycle.con_id)
                 next_cycle, changed_fields = StrategyEngine.apply_editable_settings(cycle, updated, realized)
                 if changed_fields or next_cycle.to_dict() != cycle.to_dict():
                     self.active_cycle = next_cycle
@@ -3879,8 +4262,23 @@ class TradingController:
                 "local_symbol": contract.local_symbol,
                 "trading_class": contract.trading_class,
                 "min_tick": getattr(contract, "min_tick", 0.01),
-                "exchange": str(getattr(raw, "exchange", "") or ""),
-                "currency": str(getattr(raw, "currency", "") or ""),
+                "exchange": str(
+                    getattr(contract, "exchange", "")
+                    or getattr(raw, "exchange", "")
+                    or ""
+                ),
+                "currency": str(
+                    getattr(contract, "currency", "")
+                    or getattr(raw, "currency", "")
+                    or ""
+                ),
+                "sec_type": str(
+                    getattr(contract, "sec_type", "")
+                    or getattr(raw, "secType", "")
+                    or ""
+                ),
+                "min_size": getattr(contract, "min_size", 1.0),
+                "size_increment": getattr(contract, "size_increment", 1.0),
             }
         if self._latest_rth_status is not None:
             data["rth_status"] = dict(self._latest_rth_status)
@@ -5100,8 +5498,11 @@ class TradingController:
         def database_fact(name: str, loader: Any) -> Any:
             if database_facts is None:
                 return loader()
-            if str(database_facts.get("ticker") or "") != cycle.ticker:
-                raise RuntimeError("cached risk facts are for a different ticker")
+            if (
+                str(database_facts.get("ticker") or "") != cycle.ticker
+                or int(database_facts.get("con_id") or 0) != int(cycle.con_id or 0)
+            ):
+                raise RuntimeError("cached risk facts are for a different exact contract")
             errors = database_facts.get("errors") or {}
             if name in errors:
                 raise RuntimeError(str(errors[name]))
@@ -5111,7 +5512,7 @@ class TradingController:
 
         ticker = cycle.ticker
         if hard_limits_enabled and float(getattr(cycle, "max_daily_loss_ticker", 0.0) or 0.0) > 0:
-            pnl = database_fact("daily_net_pnl_ticker", lambda: self.storage.get_daily_net_pnl_for_ticker(ticker))
+            pnl = database_fact("daily_net_pnl_ticker", lambda: self.storage.get_daily_net_pnl_for_ticker(ticker, con_id=cycle.con_id))
             if pnl <= -float(cycle.max_daily_loss_ticker):
                 message = f"Hard risk limit blocked BUY: {ticker} daily app P/L {pnl:.2f} is at/below -{cycle.max_daily_loss_ticker:.2f}."
                 if add("daily_loss_ticker", message, "Ticker loss limit"):
@@ -5123,13 +5524,13 @@ class TradingController:
                 if add("daily_loss_total", message, "Total loss limit"):
                     return blockers
         if hard_limits_enabled and int(getattr(cycle, "max_cycles_per_ticker_day", 0) or 0) > 0:
-            count = database_fact("completed_cycle_count", lambda: self.storage.get_completed_cycle_count(ticker))
+            count = database_fact("completed_cycle_count", lambda: self.storage.get_completed_cycle_count(ticker, con_id=cycle.con_id))
             if count >= int(cycle.max_cycles_per_ticker_day):
                 message = f"Hard risk limit blocked BUY: {ticker} already has {count} completed cycles in total."
                 if add("max_cycles", message, "Max cycles"):
                     return blockers
         if hard_limits_enabled and int(getattr(cycle, "max_consecutive_losses", 0) or 0) > 0:
-            count = database_fact("consecutive_loss_count", lambda: self.storage.get_consecutive_loss_count(ticker))
+            count = database_fact("consecutive_loss_count", lambda: self.storage.get_consecutive_loss_count(ticker, con_id=cycle.con_id))
             if count >= int(cycle.max_consecutive_losses):
                 message = f"Hard risk limit blocked BUY: {ticker} has {count} consecutive losing completed cycles."
                 if add("loss_streak", message, "Loss streak"):
@@ -5265,6 +5666,41 @@ class TradingController:
             raw={"payload": dict(payload), "side": side.upper(), "role": role, "order_type": order_type},
         )
 
+    def _normalize_contract_quantity(
+        self,
+        cycle: CycleState,
+        payload: dict[str, Any],
+        side: str,
+    ) -> tuple[dict[str, Any], Optional[str]]:
+        """Apply IBKR whole-share minimum/step rules before recording intent."""
+        if self.contract is None:
+            return payload, "Order quantity cannot be validated without a qualified contract."
+        try:
+            requested = int(payload.get("quantity") or 0)
+        except Exception:
+            requested = 0
+        method = getattr(self.adapter, "normalize_order_quantity", None)
+        try:
+            normalized = int(method(self.contract, requested)) if callable(method) else requested
+        except Exception as exc:
+            return payload, f"Order quantity validation failed: {exc}"
+        if normalized <= 0:
+            return payload, (
+                "Calculated quantity is below the selected contract's whole-share minimum or size increment."
+            )
+        side_value = str(side or "").upper()
+        if side_value == "SELL" and normalized != requested:
+            return payload, (
+                f"SELL quantity {requested} does not conform to the selected contract's size increment; "
+                "the app will not leave an untracked remainder."
+            )
+        updated = dict(payload)
+        updated["quantity"] = normalized
+        if side_value == "BUY" and normalized != requested:
+            cycle.quantity = normalized
+            return updated, f"Normalized BUY quantity from {requested} to {normalized} shares for the selected contract size rules."
+        return updated, None
+
     def _place_trailing_order(self, cycle: CycleState, action: StrategyAction, side: str, role: str = "") -> None:
         rollback_side = "PROTECTIVE_SELL" if role == "PROTECTIVE_SELL" else side.upper()
         connectivity_message = self._order_submission_connectivity_message(rollback_side)
@@ -5293,6 +5729,14 @@ class TradingController:
                 self._log("WARN", normalization_message, self.active_cycle)
                 return
             self._log("INFO", normalization_message, cycle)
+        payload, quantity_message = self._normalize_contract_quantity(cycle, payload, side)
+        if quantity_message:
+            if quantity_message.startswith(("Order quantity", "Calculated quantity", "SELL quantity")):
+                self.active_cycle = StrategyEngine.rollback_unsubmitted_order(cycle, rollback_side, quantity_message)
+                self.storage.upsert_cycle(self.active_cycle)
+                self._log("WARN", quantity_message, self.active_cycle)
+                return
+            self._log("INFO", quantity_message, cycle)
         if side.upper() == "BUY":
             try:
                 cycle.quantity = int(payload.get("quantity") or cycle.quantity)
@@ -5409,7 +5853,18 @@ class TradingController:
                 self.storage.upsert_cycle(self.active_cycle)
                 self._log("WARN", message, self.active_cycle)
                 return
-        payload = action.payload
+        payload = dict(action.payload)
+        payload, quantity_message = self._normalize_contract_quantity(cycle, payload, side)
+        if quantity_message:
+            if quantity_message.startswith(("Order quantity", "Calculated quantity", "SELL quantity")):
+                self.active_cycle = StrategyEngine.rollback_unsubmitted_order(cycle, rollback_side, quantity_message)
+                self.storage.upsert_cycle(self.active_cycle)
+                self._log("WARN", quantity_message, self.active_cycle)
+                return
+            self._log("INFO", quantity_message, cycle)
+        if side.upper() == "BUY":
+            cycle.quantity = int(payload.get("quantity") or cycle.quantity)
+            self.storage.upsert_cycle(cycle)
         if side.upper() == "BUY":
             risk_message = self._risk_guard_message_for_buy(cycle, payload)
             if risk_message:
@@ -6258,6 +6713,23 @@ class TradingController:
                     )
                 )
                 self._executions_recorded.add(exec_id)
+                commission_value = execution.get("commission")
+                try:
+                    commission = (
+                        float(commission_value)
+                        if commission_value not in (None, "")
+                        else None
+                    )
+                except Exception:
+                    commission = None
+                if commission is not None and abs(commission) > 0.0:
+                    commission = self._commission_in_cycle_currency(
+                        cycle,
+                        commission,
+                        execution.get("currency"),
+                        execution_id=exec_id,
+                        source="ORDER_POLL_EXECUTION",
+                    )
                 self.storage.upsert_execution(
                     cycle=cycle,
                     ticker=cycle.ticker,
@@ -6265,12 +6737,8 @@ class TradingController:
                     shares=float(execution.get("shares") or 0.0),
                     price=float(execution.get("price") or polled.avg_fill_price or 0.0),
                     avg_price=float(execution.get("avgPrice") or execution.get("avg_price") or polled.avg_fill_price or 0.0),
-                    commission=(
-                        float(execution.get("commission"))
-                        if execution.get("commission") not in (None, "")
-                        else None
-                    ),
-                    currency=str(execution.get("currency") or cycle.currency),
+                    commission=commission,
+                    currency=cycle.currency,
                     order_ref=polled.order_ref,
                     order_id=polled.order_id,
                     perm_id=polled.perm_id,
@@ -6280,13 +6748,33 @@ class TradingController:
                 )
 
         if polled.filled > 0:
+            cumulative_commission = float(polled.commission or 0.0)
+            commission_currencies = {
+                normalize_contract_currency(value, fallback="")
+                for value in list((polled.raw or {}).get("commission_currencies") or [])
+                if normalize_contract_currency(value, fallback="")
+            }
+            mismatched_currencies = sorted(
+                value
+                for value in commission_currencies
+                if value != normalize_contract_currency(cycle.currency, fallback="")
+            )
+            if cumulative_commission and mismatched_currencies:
+                self._commission_in_cycle_currency(
+                    cycle,
+                    cumulative_commission,
+                    mismatched_currencies[0],
+                    execution_id=f"{polled.order_ref}|CUMULATIVE",
+                    source="ORDER_POLL_CUMULATIVE",
+                )
+                cumulative_commission = 0.0
             self.storage.reconcile_cumulative_execution_placeholder(
                 cycle=cycle,
                 side=side_value,
                 order_ref=polled.order_ref,
                 cumulative_shares=float(polled.filled),
                 cumulative_avg_price=float(polled.avg_fill_price or 0.0),
-                cumulative_commission=float(polled.commission or 0.0),
+                cumulative_commission=cumulative_commission,
                 order_id=polled.order_id,
                 perm_id=polled.perm_id,
                 currency=cycle.currency,
@@ -6307,7 +6795,7 @@ class TradingController:
             return
         if bool(getattr(cycle, "hard_risk_limits_enabled", False)) and int(getattr(cycle, "max_cycles_per_ticker_day", 0) or 0) > 0:
             max_cycles = int(cycle.max_cycles_per_ticker_day)
-            completed = self.storage.get_completed_cycle_count(cycle.ticker)
+            completed = self.storage.get_completed_cycle_count(cycle.ticker, con_id=cycle.con_id)
             if completed >= max_cycles:
                 self._log(
                     "INFO",
@@ -6322,7 +6810,7 @@ class TradingController:
         price_snapshot = self.adapter.price_snapshot(self.contract, timeout=8.0)
         self._record_price_snapshot(price_snapshot, self.contract)
         last_price = price_snapshot.price if bool((self.price_snapshot or {}).get("strategy_price_usable")) else None
-        realized = self.storage.get_realized_net_profit_for_ticker(cycle.ticker)
+        realized = self.storage.get_realized_net_profit_for_ticker(cycle.ticker, con_id=cycle.con_id)
         next_number = self.storage.get_next_cycle_number(cycle.ticker)
         repeat_settings = self._settings_for_repeat_cycle(cycle)
         if last_price is None or last_price <= 0:

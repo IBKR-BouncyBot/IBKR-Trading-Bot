@@ -74,11 +74,13 @@ from .ib_platform import (
 from .models import (
     APP_TIMEZONE_LABEL,
     PROFIT_GUARD_EPSILON_PCT,
+    SUPPORTED_CONTRACT_CURRENCIES,
     ConnectionSettings,
     Stage,
     StopAction,
     StrategySettings,
     minimum_sell_stop_price_for_profit,
+    normalize_contract_currency,
     projected_minimum_profit_levels,
     recovery_cycle_signature,
     suggested_broker_timing_defaults,
@@ -129,7 +131,26 @@ class NoWheelEditFilter(QObject):
             return True
         return super().eventFilter(watched, event)
 
-CURRENCY_SYMBOL = "$"
+CURRENCY_SYMBOLS = {"USD": "$", "EUR": "€"}
+ACTIVE_CONTRACT_CURRENCY = "USD"
+CURRENCY_SYMBOL = CURRENCY_SYMBOLS[ACTIVE_CONTRACT_CURRENCY]
+
+
+def _set_active_contract_currency(value: Any) -> str:
+    """Set the one-database display currency and return the normalized code."""
+    global ACTIVE_CONTRACT_CURRENCY, CURRENCY_SYMBOL
+    currency = normalize_contract_currency(value, fallback="USD")
+    if currency not in SUPPORTED_CONTRACT_CURRENCIES:
+        currency = "USD"
+    ACTIVE_CONTRACT_CURRENCY = currency
+    CURRENCY_SYMBOL = CURRENCY_SYMBOLS[currency]
+    return currency
+
+
+def _currency_prefix(value: Any = None) -> str:
+    currency = normalize_contract_currency(value, fallback=ACTIVE_CONTRACT_CURRENCY)
+    return f"{CURRENCY_SYMBOLS.get(currency, currency)} "
+
 
 SEMANTIC_COLORS = {
     "success": "#16a34a",
@@ -911,11 +932,12 @@ def _semantic_state_for_text(text: Any) -> str:
 
 
 def _looks_like_currency_label(label: Any) -> bool:
-    """Return True for labels that represent a USD amount or price.
+    """Return True for labels that represent a contract-currency amount.
 
-    The app currently trades USD stock contracts. The helper is intentionally
-    label-based so order identifiers, quantities, counts, ages, conIds, and
-    percentages do not get a currency prefix just because their value is numeric.
+    Each portable database uses one USD or EUR contract currency. The helper is
+    intentionally label-based so order identifiers, quantities, counts, ages,
+    conIds, and percentages do not get a currency prefix merely because their
+    value is numeric.
     """
     text = str(label or "").strip().lower()
     if not text:
@@ -3100,7 +3122,7 @@ class ProfitGuardWidget(QWidget):
             (("SELL market trigger" if self.sell_trail_pct <= 0 else "Place final SELL"), _format_price(required_last), ("trailing OFF" if self.sell_trail_pct <= 0 else f"trail {self.sell_trail_pct:.2f}%"), QColor("#1d4ed8")),
         ]
         guard_blocks = [
-            ("Hard risk", self._onoff(self.hard_risk_limits_enabled), f"ticker ${self.max_daily_loss_ticker:,.0f} / total ${self.max_daily_loss_total:,.0f}", QColor("#b45309")),
+            ("Hard risk", self._onoff(self.hard_risk_limits_enabled), f"ticker {_format_currency(self.max_daily_loss_ticker, 0)} / total {_format_currency(self.max_daily_loss_total, 0)}", QColor("#b45309")),
             ("Cycle limits", ("OFF" if self.max_cycles_per_ticker_day <= 0 else f"max {self.max_cycles_per_ticker_day} total"), f"loss streak {self.max_consecutive_losses}", QColor("#b45309")),
             ("Liquidity", f"spread {self.max_spread_pct:.2f}%", f"min {_format_currency(self.min_trade_price, 2)} / gap {self.max_gap_pct:.2f}%", QColor("#b45309")),
             ("Live data", self._onoff(self.block_delayed_live), "blocks delayed/frozen live orders", QColor("#b45309")),
@@ -5384,7 +5406,7 @@ class CycleAuditDialog(QDialog):
             lines.extend([
                 "BUILT-IN EXAMPLE CYCLE",
                 "=" * 80,
-                "This is synthetic v3.1.2 paper-trading example data. It is not an actual market record, is not stored in SQLite, and cannot affect trading or risk totals.",
+                "This is synthetic v3.2.0 paper-trading example data. It is not an actual market record, is not stored in SQLite, and cannot affect trading or risk totals.",
                 "The scenario models a liquid U.S. stock pullback, a multi-execution trailing BUY fill, a temporary protective SELL, and a modest trailing-stop profit exit.",
                 "",
             ])
@@ -5490,9 +5512,13 @@ class MainWindow(QMainWindow):
         self._manual_input_lock_enabled = False
         self._manual_input_lock_widget_ids: set[int] = set()
         self._stop_dialog_exit_requested = False
+        self._currency_money_spins: list[QDoubleSpinBox] = []
+        self._display_currency = _set_active_contract_currency(
+            getattr(self.controller.strategy, "currency", "USD")
+        )
         self._system_shutdown_in_progress = False
         self._last_system_shutdown_session_key = ""
-        self.setWindowTitle("BouncyBot - IBKR Portable Trading Bot v3.1.2")
+        self.setWindowTitle("BouncyBot - IBKR Portable Trading Bot v3.2.0")
         self.resize(1440, 950)
 
         self._autosave_timer = QTimer(self)
@@ -6019,11 +6045,15 @@ class MainWindow(QMainWindow):
         grid.setVerticalSpacing(8)
 
         self.ticker_edit = QLineEdit()
-        self.ticker_edit.setPlaceholderText("e.g. AAPL")
+        self.ticker_edit.setPlaceholderText("e.g. AAPL or SAP")
         self.primary_exchange_edit = QLineEdit()
-        self.primary_exchange_edit.setPlaceholderText("Optional, e.g. NASDAQ")
+        self.primary_exchange_edit.setPlaceholderText("Filled by exact API contract result")
+        self.primary_exchange_edit.setReadOnly(True)
+        self.currency_edit = QLineEdit()
+        self.currency_edit.setPlaceholderText("Filled by API selector: USD or EUR")
+        self.currency_edit.setReadOnly(True)
         self.con_id_edit = QLineEdit()
-        self.con_id_edit.setPlaceholderText("Filled by API selector, optional")
+        self.con_id_edit.setPlaceholderText("Required: choose an exact API contract")
         self.con_id_edit.setReadOnly(True)
         self.investment_spin = self._money_spin(10000.0)
         self.initial_drop_spin = self._pct_spin(2.0)
@@ -6136,6 +6166,7 @@ class MainWindow(QMainWindow):
         self.atr_min_pct_info = self._info_badge()
         self.atr_max_pct_info = self._info_badge()
         self.ticker_selector_info = self._info_badge()
+        self.currency_info = self._info_badge()
         self.reinvest_info = self._info_badge()
         self.auto_repeat_info = self._info_badge()
         self.protective_sell_info = self._info_badge()
@@ -6184,6 +6215,7 @@ class MainWindow(QMainWindow):
         self._register_change_tracked_inputs([
             ("ticker", "Ticker", self.ticker_edit, "contract"),
             ("primary_exchange", "Primary exchange", self.primary_exchange_edit, "contract"),
+            ("currency", "Contract currency", self.currency_edit, "contract"),
             ("con_id", "IBKR conId", self.con_id_edit, "contract"),
             ("investment_amount", "Investment amount", self.investment_spin, "entry"),
             ("initial_drop_pct", "Initial drop %", self.initial_drop_spin, "entry"),
@@ -6268,19 +6300,23 @@ class MainWindow(QMainWindow):
         ticker_grid.addWidget(self._pct_field(self.ticker_edit, self.ticker_info), 0, 1)
         ticker_grid.addWidget(QLabel("Primary exchange"), 0, 2)
         ticker_grid.addWidget(self._pct_field(self.primary_exchange_edit, self.primary_exchange_info), 0, 3)
-        ticker_grid.addWidget(QLabel("IBKR conId"), 1, 0)
-        ticker_grid.addWidget(self._pct_field(self.con_id_edit, self.con_id_info), 1, 1)
-        ticker_grid.addWidget(self._label_with_info("API ticker selector", self.ticker_selector_info), 1, 2)
-        ticker_grid.addWidget(self.ticker_matches_combo, 1, 3)
+        ticker_grid.addWidget(QLabel("Contract currency"), 1, 0)
+        ticker_grid.addWidget(self._pct_field(self.currency_edit, self.currency_info), 1, 1)
+        ticker_grid.addWidget(QLabel("IBKR conId"), 1, 2)
+        ticker_grid.addWidget(self._pct_field(self.con_id_edit, self.con_id_info), 1, 3)
+        ticker_grid.addWidget(self._label_with_info("API ticker selector", self.ticker_selector_info), 2, 0)
+        ticker_grid.addWidget(self.ticker_matches_combo, 2, 1, 1, 3)
         selector_buttons = QHBoxLayout()
         selector_buttons.addWidget(self.ticker_search_btn)
         selector_buttons.addWidget(self.ticker_use_match_btn)
         selector_buttons.addWidget(self.ticker_confirm_btn)
-        ticker_grid.addLayout(selector_buttons, 2, 0, 1, 4)
-        self.contract_label = QLabel("Contract: STK / SMART / optional primary exchange / USD.")
+        ticker_grid.addLayout(selector_buttons, 3, 0, 1, 4)
+        self.contract_label = QLabel(
+            "Contract: select an exact USD or EUR ordinary STK result; routing remains SMART."
+        )
         self.contract_label.setObjectName("Muted")
         self.contract_label.setWordWrap(True)
-        ticker_grid.addWidget(self.contract_label, 3, 0, 1, 4)
+        ticker_grid.addWidget(self.contract_label, 4, 0, 1, 4)
         grid.addWidget(ticker_box, 0, 0, 1, 4)
 
         exit_box = QGroupBox("EXIT")
@@ -6935,7 +6971,9 @@ class MainWindow(QMainWindow):
         spin.setDecimals(2)
         spin.setSingleStep(100.0)
         spin.setValue(value)
-        spin.setPrefix("$ ")
+        spin.setPrefix(_currency_prefix(getattr(self, "_display_currency", "USD")))
+        if hasattr(self, "_currency_money_spins"):
+            self._currency_money_spins.append(spin)
         return spin
 
     def _make_button_bold(self, button: QPushButton) -> None:
@@ -7158,7 +7196,7 @@ class MainWindow(QMainWindow):
             f"Current value: {initial_drop:.2f}%.\n"
             "Stage 1: before any position is opened, the app waits until last price drops from the current anchor.\n"
             "If last price rises before the drop is reached, the anchor resets upward.\n"
-            f"Example with anchor $100.00: drop trigger = {_format_currency(levels['drop_trigger'])}.\n"
+            f"Example with anchor {_format_currency(100.0, 2)}: drop trigger = {_format_currency(levels['drop_trigger'])}.\n"
             "No stock is owned during this drop stage.",
         )
         self._set_pct_tooltip(
@@ -7169,7 +7207,7 @@ class MainWindow(QMainWindow):
             "Stage 2: after the initial drop, a value above 0 places a native TWS BUY trailing-stop order.\n"
             "The stop trails downward while price keeps falling. A rebound by this percentage triggers a market buy.\n"
             "Set this field to 0.00% to disable BUY trailing-stop behavior and submit a BUY market order immediately when the initial-drop condition is met.\n"
-            f"Example with anchor $100.00: projected BUY trigger/reference = {_format_currency(levels['projected_buy_stop'])}.",
+            f"Example with anchor {_format_currency(100.0, 2)}: projected BUY trigger/reference = {_format_currency(levels['projected_buy_stop'])}.",
         )
         self._set_pct_tooltip(
             self.rise_trigger_spin,
@@ -7178,7 +7216,7 @@ class MainWindow(QMainWindow):
             f"Current value: {minimum_profit:.2f}%.\n"
             "Stage 3: after the buy fill, the app waits until it can place the SELL trailing-stop with the first stop price already protecting this profit.\n"
             "Profit is measured against the actual average buy fill. The cycle-anchor comparison is shown only as context.\n"
-            f"Example with anchor $100.00: projected buy reference = {_format_currency(levels['protected_reference'])}; "
+            f"Example with anchor {_format_currency(100.0, 2)}: projected buy reference = {_format_currency(levels['protected_reference'])}; "
             f"minimum initial SELL stop = {_format_currency(levels['minimum_sell_stop'])}; "
             f"last price needed before placing SELL trailing-stop = {_format_currency(levels['required_last_price'])}.\n"
             "This is before commissions, fees, gaps, and market-order slippage.",
@@ -7191,7 +7229,7 @@ class MainWindow(QMainWindow):
             "Stage 4: after the minimum-profit trigger is reached, a value above 0 places a native TWS SELL trailing-stop order.\n"
             "A wider SELL trailing-stop does not reduce the configured minimum profit; it raises the last price required before the SELL trailing-stop can be placed.\n"
             "Set this field to 0.00% to disable SELL trailing-stop behavior and submit a SELL market order as soon as the minimum-profit condition is met.\n"
-            f"Example with anchor $100.00: last price must reach {_format_currency(levels['required_last_price'])} so the first SELL stop/reference is at least {_format_currency(levels['minimum_sell_stop'])}.\n"
+            f"Example with anchor {_format_currency(100.0, 2)}: last price must reach {_format_currency(levels['required_last_price'])} so the first SELL stop/reference is at least {_format_currency(levels['minimum_sell_stop'])}.\n"
             f"Projected protection: {levels['profit_vs_projected_buy_pct']:.2f}% vs projected buy, {levels['profit_vs_anchor_pct']:.2f}% vs anchor.",
         )
 
@@ -7205,9 +7243,10 @@ class MainWindow(QMainWindow):
         zero_text = "Enter 0 to disable only this individual limit."
         tooltips = [
             (self.ticker_edit, self.ticker_info, "Ticker symbol used for IBKR contract search and SMART-routed stock orders. Press Enter here to search for ticker matches."),
-            (self.primary_exchange_edit, self.primary_exchange_info, "Optional primary exchange for contract identification, for example NASDAQ. Routing remains SMART."),
-            (self.con_id_edit, self.con_id_info, "Read-only IBKR contract ID from the selected API match. Blank means the app qualifies by ticker/exchange/currency."),
-            (self.investment_spin, self.investment_info, f"Base amount for each BUY cycle. Current default-based hard-risk suggestions use ${amount:,.2f} as the reference."),
+            (self.primary_exchange_edit, self.primary_exchange_info, "Primary listing exchange returned by the exact IBKR API contract result. Routing remains SMART."),
+            (self.currency_edit, self.currency_info, "Read-only contract currency returned by the selected exact API result. BouncyBot supports USD and EUR, with one contract currency per portable SQLite database."),
+            (self.con_id_edit, self.con_id_info, "Read-only unique IBKR contract ID. An exact positive conId selected from the API results is required before confirmation or Start."),
+            (self.investment_spin, self.investment_info, f"Base amount for each BUY cycle in {self._display_currency}. Current default-based hard-risk suggestions use {_format_currency(amount, 2)} as the reference."),
             (self.ticker_matches_combo, self.ticker_selector_info, "API search result selector. Select the stock contract you want, then click '2. Use selected match'."),
             (self.atr_adaptive_check, self.atr_adaptive_info, "Default ON. The app collects RTH-only subscribed API price observations and builds rolling ATR bars whether adaptation is enabled or disabled. When enabled, calculated ATR values can update Initial drop %, BUY rebound/trail %, Minimum profit % if enabled below, and SELL trailing-stop %. Outside RTH, collection and adaptive updates pause. The in-memory ATR history is not retained across app restarts."),
             (
@@ -7234,12 +7273,12 @@ class MainWindow(QMainWindow):
             (self.slippage_buffer_check, self.slippage_buffer_info, "Use slippage buffer. When enabled, the bot plans as if the BUY fill could be worse than the displayed BUY stop and as if the SELL fill could be worse than the displayed SELL stop. It reduces BUY quantity and raises the minimum-profit SELL activation level. It does not change the IBKR order type and cannot guarantee the final execution price."),
             (self.slippage_buffer_spin, self.slippage_buffer_pct_info, f"Slippage buffer percentage. Current value {self.slippage_buffer_spin.value():.2f}%. BUY sizing uses projected BUY stop multiplied by this buffer. Minimum-profit SELL activation is also raised so the planned profit still has room for a worse market fill. This is a planning guard, not a broker guarantee."),
             (self.hard_risk_limits_check, self.hard_risk_limits_info, "Optional master switch for app-side hard risk limits. Individual numeric limits with value 0 are disabled."),
-            (self.max_daily_loss_ticker_spin, self.max_daily_loss_ticker_info, f"Blocks new BUY entries for this ticker after daily app net P/L reaches this loss. Suggested from amount: ${risk_defaults['max_daily_loss_ticker']:,.2f}. {zero_text}"),
-            (self.max_daily_loss_total_spin, self.max_daily_loss_total_info, f"Blocks new BUY entries after total daily app net P/L reaches this loss. Suggested from amount: ${risk_defaults['max_daily_loss_total']:,.2f}. {zero_text}"),
+            (self.max_daily_loss_ticker_spin, self.max_daily_loss_ticker_info, f"Blocks new BUY entries for this ticker after daily app net P/L reaches this loss. Suggested from amount: {_format_currency(risk_defaults['max_daily_loss_ticker'], 2)}. {zero_text}"),
+            (self.max_daily_loss_total_spin, self.max_daily_loss_total_info, f"Blocks new BUY entries after total daily app net P/L reaches this loss. Suggested from amount: {_format_currency(risk_defaults['max_daily_loss_total'], 2)}. {zero_text}"),
             (self.max_cycles_ticker_day_spin, self.max_cycles_info, f"Maximum completed cycles allowed for this ticker in total. Suggested: {risk_defaults['max_cycles_per_ticker_day']}. {zero_text}"),
             (self.max_consecutive_losses_spin, self.max_consecutive_info, f"Blocks new BUY entries after this many consecutive losing completed cycles. Suggested: {risk_defaults['max_consecutive_losses']}. {zero_text}"),
             (self.max_spread_pct_spin, self.max_spread_info, f"Maximum bid/ask spread percentage before a new BUY can be sent. This field is user-controlled and is never rewritten from live bid/ask data. Current value: {self.max_spread_pct_spin.value():.2f}%. {zero_text}"),
-            (self.min_trade_price_spin, self.min_trade_price_info, f"Minimum permitted sizing price for a new BUY. Suggested: ${risk_defaults['min_trade_price']:,.2f}. {zero_text}"),
+            (self.min_trade_price_spin, self.min_trade_price_info, f"Minimum permitted sizing price for a new BUY. Suggested: {_format_currency(risk_defaults['min_trade_price'], 2)}. {zero_text}"),
             (self.max_gap_pct_spin, self.max_gap_info, f"Maximum absolute gap from previous close before a new BUY can be sent. Default 0 disables this guard. Suggested: {risk_defaults['max_gap_from_prev_close_pct']:.2f}%. {zero_text}"),
             (self.block_delayed_live_check, self.block_delayed_live_info, "Default ON. Blocks live-profile BUY orders if the API feed is delayed, frozen, or delayed-frozen."),
             (self.what_if_check, self.what_if_info, "Default ON. Runs an IBKR what-if margin/buying-power pre-check before the real BUY order is submitted."),
@@ -7943,7 +7982,7 @@ class MainWindow(QMainWindow):
             exchange="SMART",
             primary_exchange=self.primary_exchange_edit.text().strip().upper(),
             contract_con_id=self._contract_con_id_from_ui(),
-            currency="USD",
+            currency=self._contract_currency_from_ui(),
             sec_type="STK",
             tif="GTC",
         )
@@ -7958,6 +7997,10 @@ class MainWindow(QMainWindow):
             return None
         return value if value > 0 else None
 
+    def _contract_currency_from_ui(self) -> str:
+        text = self.currency_edit.text().strip() if hasattr(self, "currency_edit") else ""
+        return normalize_contract_currency(text, fallback="")
+
     def _set_selected_contract_con_id(self, value: Any) -> None:
         if not hasattr(self, "con_id_edit"):
             return
@@ -7967,11 +8010,89 @@ class MainWindow(QMainWindow):
             con_id = 0
         self.con_id_edit.setText(str(con_id) if con_id > 0 else "")
 
-    def _clear_selected_contract_con_id(self, *args: Any) -> None:
+    def _set_selected_contract_currency(self, value: Any) -> None:
+        if not hasattr(self, "currency_edit"):
+            return
+        currency = normalize_contract_currency(value, fallback="")
+        self.currency_edit.setText(currency if currency in SUPPORTED_CONTRACT_CURRENCIES else "")
+        if currency in SUPPORTED_CONTRACT_CURRENCIES:
+            self._apply_currency_display(currency)
+
+    def _apply_currency_display(self, value: Any) -> None:
+        currency = normalize_contract_currency(value, fallback="USD")
+        if currency not in SUPPORTED_CONTRACT_CURRENCIES:
+            currency = "USD"
+        if currency == getattr(self, "_display_currency", ""):
+            return
+        currency = _set_active_contract_currency(currency)
+        self._display_currency = currency
+        for spin in list(getattr(self, "_currency_money_spins", [])):
+            spin.setPrefix(_currency_prefix(currency))
+        if hasattr(self, "investment_spin"):
+            self._update_strategy_tooltips()
+            self._update_strategy_previews()
+
+    def _clear_selected_contract_selection(self, *args: Any) -> None:
+        had_selection = False
         if hasattr(self, "con_id_edit") and self.con_id_edit.text():
             self.con_id_edit.clear()
-            self.contract_label.setText("Contract: STK / SMART / optional primary exchange / USD.")
+            had_selection = True
+        if hasattr(self, "currency_edit") and self.currency_edit.text():
+            self.currency_edit.clear()
+            had_selection = True
+        if hasattr(self, "primary_exchange_edit") and self.primary_exchange_edit.text():
+            self.primary_exchange_edit.clear()
+            had_selection = True
+        if had_selection:
+            self.contract_label.setText(
+                "Contract: edited manually; search again and choose an exact USD or EUR STK result."
+            )
             self._schedule_settings_autosave()
+
+    # Historical test/helper name retained as a compatibility alias.
+    def _clear_selected_contract_con_id(self, *args: Any) -> None:
+        self._clear_selected_contract_selection(*args)
+
+    def _apply_contract_match(self, match: dict[str, Any]) -> bool:
+        if not bool(match.get("supported")):
+            QMessageBox.warning(
+                self,
+                "Unsupported contract",
+                str(match.get("label") or "Select an exact USD or EUR ordinary STK contract compatible with this database."),
+            )
+            return False
+        try:
+            con_id = int(match.get("con_id") or 0)
+        except Exception:
+            con_id = 0
+        currency = normalize_contract_currency(match.get("currency"), fallback="")
+        sec_type = str(match.get("sec_type") or "").upper().strip()
+        if con_id <= 0 or currency not in SUPPORTED_CONTRACT_CURRENCIES or sec_type != "STK":
+            QMessageBox.warning(
+                self,
+                "Exact contract required",
+                "Choose an API result with a positive conId, STK security type, and USD or EUR currency.",
+            )
+            return False
+        symbol = str(match.get("symbol") or "").upper().strip()
+        primary_exchange = str(match.get("primary_exchange") or "").upper().strip()
+        result_exchange = str(match.get("exchange") or "").upper().strip()
+        if not primary_exchange and result_exchange not in {"", "SMART"}:
+            primary_exchange = result_exchange
+        self.ticker_edit.setText(symbol)
+        self.primary_exchange_edit.setText(primary_exchange)
+        self._set_selected_contract_currency(currency)
+        self._set_selected_contract_con_id(con_id)
+        lock_text = ""
+        database_currency = normalize_contract_currency(match.get("database_currency"), fallback="")
+        if bool(match.get("database_currency_locked")) and database_currency:
+            lock_text = f" Database locked to {database_currency}."
+        self.contract_label.setText(
+            f"Contract: {symbol} / STK / SMART / primary {primary_exchange or '-'} / "
+            f"{currency} / conId {con_id}.{lock_text}"
+        )
+        self._schedule_settings_autosave()
+        return True
 
     def _connect_clicked(self) -> None:
         self.controller.connect_tws(self._connection_from_ui())
@@ -8013,28 +8134,22 @@ class MainWindow(QMainWindow):
         if not match:
             QMessageBox.information(self, "No match selected", "Search for ticker first, then select a contract.")
             return
-        symbol = str(match.get("symbol") or "").upper().strip()
-        primary_exchange = str(match.get("primary_exchange") or match.get("exchange") or "").upper().strip()
-        if symbol:
-            self.ticker_edit.setText(symbol)
-        if primary_exchange:
-            self.primary_exchange_edit.setText(primary_exchange)
-        self._set_selected_contract_con_id(match.get("con_id"))
-        self._schedule_settings_autosave()
+        self._apply_contract_match(match)
 
     def _confirm_ticker_price_clicked(self) -> None:
         match = self._selected_ticker_match()
-        if match:
-            symbol = str(match.get("symbol") or "").upper().strip()
-            primary_exchange = str(match.get("primary_exchange") or match.get("exchange") or "").upper().strip()
-            if symbol:
-                self.ticker_edit.setText(symbol)
-            if primary_exchange:
-                self.primary_exchange_edit.setText(primary_exchange)
-            self._set_selected_contract_con_id(match.get("con_id"))
+        if match and not self._apply_contract_match(match):
+            return
         strategy = self._strategy_from_ui()
         if not strategy.normalized_ticker():
             QMessageBox.warning(self, "Ticker required", "Enter or select a ticker first.")
+            return
+        if strategy.contract_con_id is None or strategy.currency not in SUPPORTED_CONTRACT_CURRENCIES:
+            QMessageBox.warning(
+                self,
+                "Exact contract required",
+                "Search IBKR and choose an exact USD or EUR STK result before confirming the ticker.",
+            )
             return
         self.controller.confirm_ticker_price(self._connection_from_ui(), strategy)
 
@@ -8042,11 +8157,13 @@ class MainWindow(QMainWindow):
         connection = self._connection_from_ui()
         strategy = self._strategy_from_ui()
         errors = connection.validate() + strategy.validate()
+        if strategy.contract_con_id is None or strategy.currency not in SUPPORTED_CONTRACT_CURRENCIES:
+            errors.append("Search IBKR and choose an exact USD or EUR STK contract before Start.")
         if errors:
             QMessageBox.warning(self, "Invalid input", "\n".join(errors))
             return
         summary = [
-            f"Ticker: {strategy.normalized_ticker()}",
+            f"Ticker: {strategy.normalized_ticker()} / {strategy.currency} / conId {strategy.contract_con_id}",
             f"Profile: {connection.platform} / {connection.trading_mode.upper()} / {connection.host}:{connection.port}",
             f"Investment amount: {_format_currency(strategy.investment_amount, 2)}",
             f"Protective SELL: {'ON' if strategy.protective_sell_enabled else 'OFF'} ({strategy.protective_sell_trailing_stop_pct:.2f}%)",
@@ -8141,10 +8258,24 @@ class MainWindow(QMainWindow):
         connection = snapshot.get("connection") or {}
         strategy = snapshot.get("strategy") or {}
         cycle = snapshot.get("active_cycle")
+        display_currency = (
+            (cycle or {}).get("currency")
+            or snapshot.get("database_contract_currency")
+            or strategy.get("currency")
+        )
+        if display_currency:
+            self._apply_currency_display(display_currency)
         status_text = str(snapshot.get("status", ""))
         if self.connection_status.text() != status_text:
             self.connection_status.setText(status_text)
         db_path_text = str(snapshot.get("db_path", ""))
+        database_currency = normalize_contract_currency(
+            snapshot.get("database_contract_currency"),
+            fallback="",
+        )
+        if database_currency:
+            lock_state = "locked" if snapshot.get("database_contract_currency_locked") else "draft"
+            db_path_text += f" | Contract currency: {database_currency} ({lock_state})"
         if self.db_path_label.text() != db_path_text:
             self.db_path_label.setText(db_path_text)
         if hasattr(self, "live_status_bar"):
@@ -8155,7 +8286,20 @@ class MainWindow(QMainWindow):
         # worker snapshots back into editable controls; otherwise a periodic
         # snapshot can overwrite values while the user is changing them.
         if not self._inputs_loaded_from_snapshot:
-            self._apply_snapshot_to_inputs(connection, strategy)
+            initial_strategy = dict(strategy)
+            if isinstance(cycle, dict):
+                for field in (
+                    "ticker",
+                    "exchange",
+                    "primary_exchange",
+                    "currency",
+                    "con_id",
+                ):
+                    source_field = "contract_con_id" if field == "con_id" else field
+                    value = cycle.get(field)
+                    if value not in (None, ""):
+                        initial_strategy[source_field] = value
+            self._apply_snapshot_to_inputs(connection, initial_strategy)
             self._inputs_loaded_from_snapshot = True
         stage = cycle.get("stage") if cycle else None
         self._update_input_locks(stage)
@@ -9043,7 +9187,14 @@ class MainWindow(QMainWindow):
 
             self.ticker_edit.setText(str(strategy.get("ticker", self.ticker_edit.text()) or ""))
             self.primary_exchange_edit.setText(str(strategy.get("primary_exchange", self.primary_exchange_edit.text()) or ""))
+            self._set_selected_contract_currency(strategy.get("currency"))
             self._set_selected_contract_con_id(strategy.get("contract_con_id"))
+            if self._contract_con_id_from_ui() and self._contract_currency_from_ui():
+                self.contract_label.setText(
+                    f"Contract: {self.ticker_edit.text().strip().upper()} / STK / SMART / "
+                    f"primary {self.primary_exchange_edit.text().strip().upper() or '-'} / "
+                    f"{self._contract_currency_from_ui()} / conId {self._contract_con_id_from_ui()}."
+                )
             self.investment_spin.setValue(float(strategy.get("investment_amount", self.investment_spin.value())))
             self.initial_drop_spin.setValue(float(strategy.get("initial_drop_pct", self.initial_drop_spin.value())))
             self.buy_rebound_spin.setValue(float(strategy.get("buy_rebound_trail_pct", self.buy_rebound_spin.value())))
@@ -9192,6 +9343,8 @@ class MainWindow(QMainWindow):
         self._set_widgets_enabled([
             self.ticker_edit,
             self.primary_exchange_edit,
+            self.currency_edit,
+            self.con_id_edit,
             self.ticker_matches_combo,
             self.ticker_search_btn,
             self.ticker_use_match_btn,
@@ -9334,9 +9487,13 @@ class MainWindow(QMainWindow):
             con_id = contract.get("con_id") or "-"
             local_symbol = contract.get("local_symbol") or "-"
             trading_class = contract.get("trading_class") or "-"
+            contract_currency = normalize_contract_currency(
+                contract.get("currency"),
+                fallback=getattr(self, "_display_currency", "USD"),
+            )
             contract_text = (
-                f"Confirmed contract: {contract.get('ticker') or '-'} / STK / SMART / primary {primary} / USD | "
-                f"conId {con_id} | local {local_symbol} | class {trading_class}"
+                f"Confirmed contract: {contract.get('ticker') or '-'} / STK / SMART / primary {primary} / "
+                f"{contract_currency} | conId {con_id} | local {local_symbol} | class {trading_class}"
             )
             if self.contract_label.text() != contract_text:
                 self.contract_label.setText(contract_text)
@@ -9481,12 +9638,27 @@ class MainWindow(QMainWindow):
         """Return one deterministic, realistic UI-only completed trade.
 
         It is never stored in SQLite and therefore cannot affect Completed trade
-        summary metrics or risk-limit calculations.
+        summary metrics or risk-limit calculations. The synthetic contract uses
+        the portable database's active USD or EUR display currency.
         """
+        currency = normalize_contract_currency(ACTIVE_CONTRACT_CURRENCY, fallback="USD")
+        if currency == "EUR":
+            ticker = "SAP"
+            primary_exchange = "IBIS"
+            con_id = 14203339
+        else:
+            currency = "USD"
+            ticker = "AAPL"
+            primary_exchange = "NASDAQ"
+            con_id = 265598
         return {
             "__example": True,
-            "id": "EXAMPLE-AAPL-20260716-CYCLE-1",
-            "ticker": "AAPL",
+            "id": f"EXAMPLE-{ticker}-20260716-CYCLE-1",
+            "ticker": ticker,
+            "exchange": "SMART",
+            "primary_exchange": primary_exchange,
+            "currency": currency,
+            "con_id": con_id,
             "cycle_number": 1,
             "stage": Stage.CYCLE_COMPLETE.value,
             "created_at": "2026-07-16T13:35:00+00:00",
@@ -9528,8 +9700,8 @@ class MainWindow(QMainWindow):
             "atr_adaptive_display": "yes",
             "buy_order_type": "BUY TRAIL",
             "sell_order_type": "SELL TRAIL",
-            "buy_order_ref": "IBKRBOT|AAPL|CYCLE-000001|EXAMPLE|BUY_TRAIL",
-            "sell_order_ref": "IBKRBOT|AAPL|CYCLE-000001|EXAMPLE|SELL_TRAIL",
+            "buy_order_ref": f"IBKRBOT|{ticker}|CYCLE-000001|EXAMPLE|BUY_TRAIL",
+            "sell_order_ref": f"IBKRBOT|{ticker}|CYCLE-000001|EXAMPLE|SELL_TRAIL",
             "updated_at": "2026-07-16T15:55:16+00:00",
             "holding_minutes_display": "1h 46m 47s",
             "sell_vs_buy_pct": ((212.52 / 210.57) - 1.0) * 100.0,
@@ -9551,7 +9723,10 @@ class MainWindow(QMainWindow):
         cycle = dict(row or cls._example_history_row())
         cycle_id = str(cycle["id"])
         buy_ref = str(cycle["buy_order_ref"])
-        protective_ref = "IBKRBOT|AAPL|CYCLE-000001|EXAMPLE|PROTECTIVE_SELL_TRAIL"
+        ticker = str(cycle.get("ticker") or "AAPL")
+        currency = normalize_contract_currency(cycle.get("currency"), fallback="USD")
+        primary_exchange = str(cycle.get("primary_exchange") or ("IBIS" if currency == "EUR" else "NASDAQ"))
+        protective_ref = f"IBKRBOT|{ticker}|CYCLE-000001|EXAMPLE|PROTECTIVE_SELL_TRAIL"
         sell_ref = str(cycle["sell_order_ref"])
 
         orders = [
@@ -9606,9 +9781,10 @@ class MainWindow(QMainWindow):
                 "price": 210.56,
                 "avg_price": 210.56,
                 "commission": 0.15,
+                "currency": currency,
                 "execution_id": "EXAMPLE-BUY-1",
                 "order_ref": buy_ref,
-                "raw_json": {"liquidity": "removed", "exchange": "NASDAQ"},
+                "raw_json": {"liquidity": "removed", "exchange": primary_exchange},
             },
             {
                 "executed_at": "2026-07-16T14:08:27+00:00",
@@ -9617,9 +9793,10 @@ class MainWindow(QMainWindow):
                 "price": 210.5774,
                 "avg_price": 210.57,
                 "commission": 0.20,
+                "currency": currency,
                 "execution_id": "EXAMPLE-BUY-2",
                 "order_ref": buy_ref,
-                "raw_json": {"liquidity": "removed", "exchange": "NASDAQ"},
+                "raw_json": {"liquidity": "removed", "exchange": primary_exchange},
             },
             {
                 "executed_at": "2026-07-16T15:55:14+00:00",
@@ -9628,9 +9805,10 @@ class MainWindow(QMainWindow):
                 "price": 212.52,
                 "avg_price": 212.52,
                 "commission": 0.35,
+                "currency": currency,
                 "execution_id": "EXAMPLE-SELL-1",
                 "order_ref": sell_ref,
-                "raw_json": {"liquidity": "removed", "exchange": "NASDAQ"},
+                "raw_json": {"liquidity": "removed", "exchange": primary_exchange},
             },
         ]
         decision_events = [
@@ -9640,7 +9818,7 @@ class MainWindow(QMainWindow):
                 "stage_before": Stage.WAIT_INITIAL_DROP.value,
                 "stage_after": Stage.WAIT_INITIAL_DROP.value,
                 "decision_result": "ACCEPTED",
-                "message": "Initial live strategy price established the cycle anchor at $211.84.",
+                "message": f"Initial live strategy price established the cycle anchor at {_format_currency(211.84)}.",
                 "raw_json": {"price": 211.84, "source": "last"},
             },
             {
@@ -9671,7 +9849,7 @@ class MainWindow(QMainWindow):
                 "decision_result": "FILLED",
                 "broker_order_id": 4101,
                 "perm_id": 710001,
-                "message": "Two executions completed the 47-share BUY at a $210.57 average.",
+                "message": f"Two executions completed the 47-share BUY at a {_format_currency(210.57)} average.",
                 "raw_json": {"price": 210.57, "filled": 47, "commission": 0.35},
             },
             {
@@ -9691,7 +9869,7 @@ class MainWindow(QMainWindow):
                 "stage_before": Stage.WAIT_RISE_TRIGGER.value,
                 "stage_after": Stage.WAIT_RISE_TRIGGER.value,
                 "decision_result": "CANCEL_PROTECTIVE_FIRST",
-                "message": "Selected price reached $212.62, above the $212.5764 minimum-profit trigger.",
+                "message": f"Selected price reached {_format_currency(212.62)}, above the {_format_currency(212.5764)} minimum-profit trigger.",
                 "raw_json": {"price": 212.62, "rise_trigger_price": 212.5764},
             },
             {
@@ -9724,17 +9902,17 @@ class MainWindow(QMainWindow):
                 "decision_result": "FILLED",
                 "broker_order_id": 4103,
                 "perm_id": 710003,
-                "message": "The trailing SELL filled at $212.52 after a reversal from the $213.18 session high.",
+                "message": f"The trailing SELL filled at {_format_currency(212.52)} after a reversal from the {_format_currency(213.18)} session high.",
                 "raw_json": {"price": 212.52, "filled": 47, "gross_pnl": 91.65, "net_pnl": 90.95},
             },
         ]
         events = [
-            {"created_at": "2026-07-16T13:34:58+00:00", "level": "INFO", "message": "AAPL SMART/NASDAQ contract qualified; live paper-account market data selected.", "raw_json": {}},
+            {"created_at": "2026-07-16T13:34:58+00:00", "level": "INFO", "message": f"{ticker} SMART/{primary_exchange} {currency} contract qualified; live paper-account market data selected.", "raw_json": {}},
             {"created_at": "2026-07-16T14:02:12+00:00", "level": "INFO", "message": "BUY trail accepted by TWS: orderId 4101, permId 710001.", "raw_json": {"order_ref": buy_ref}},
-            {"created_at": "2026-07-16T14:08:27+00:00", "level": "INFO", "message": "BUY complete: 47 shares at $210.57 average; total commission $0.35.", "raw_json": {}},
+            {"created_at": "2026-07-16T14:08:27+00:00", "level": "INFO", "message": f"BUY complete: 47 shares at {_format_currency(210.57)} average; total commission {_format_currency(0.35, 2)}.", "raw_json": {}},
             {"created_at": "2026-07-16T14:08:29+00:00", "level": "INFO", "message": "Protective SELL trail active while the minimum-profit condition is pending.", "raw_json": {"order_ref": protective_ref}},
             {"created_at": "2026-07-16T15:21:10+00:00", "level": "INFO", "message": "Protective SELL cancellation confirmed; final profit trail may now be submitted.", "raw_json": {}},
-            {"created_at": "2026-07-16T15:55:14+00:00", "level": "INFO", "message": "SELL complete: 47 shares at $212.52; gross $91.65, net $90.95.", "raw_json": {}},
+            {"created_at": "2026-07-16T15:55:14+00:00", "level": "INFO", "message": f"SELL complete: 47 shares at {_format_currency(212.52)}; gross {_format_currency(91.65, 2)}, net {_format_currency(90.95, 2)}.", "raw_json": {}},
             {"created_at": "2026-07-16T15:55:16+00:00", "level": "INFO", "message": "Cycle 1 persisted as complete; no application-owned shares remain.", "raw_json": {}},
         ]
 
@@ -9772,7 +9950,7 @@ class MainWindow(QMainWindow):
             market_capture_rows.append({
                 "captured_at_utc": captured_at,
                 "monotonic_ts": float(index),
-                "ticker": "AAPL",
+                "ticker": ticker,
                 "cycle_id": cycle_id,
                 "cycle_number": 1,
                 "stage": stage,

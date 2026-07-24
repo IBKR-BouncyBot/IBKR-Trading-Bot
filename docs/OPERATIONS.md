@@ -1,6 +1,6 @@
 # Operations guide
 
-This guide describes the normal operator workflow for v3.1.2. It does not replace the broker’s API documentation or account controls.
+This guide describes the normal operator workflow for v3.2.0. It does not replace the broker’s API documentation or account controls.
 
 ## Before starting
 
@@ -24,13 +24,20 @@ A single-instance lock is created beside the application. If the application rep
 3. Keep Account blank to let IBKR apply the connected session’s default account, or enter an explicit managed-account override.
 4. Click **1. Connect**.
 5. Enter the symbol and click **2. Search/select ticker**.
-6. Select the intended API contract. Use the primary exchange or conId to resolve ambiguity.
+6. Select the intended exact API result. It must be an ordinary `STK` contract in USD or EUR with a positive conId. BouncyBot keeps routing on `SMART` and copies the result's primary exchange, currency, and conId into the read-only contract fields.
 7. Click **3. Confirm ticker + get price**.
-8. Review the local/upstream connection state, price source, data type, bid/ask, actual update age/sequence, contract minimum tick, and RTH status. The route-specific market rule is resolved at order-preflight time and recorded in the order/audit diagnostics. A populated cached quote is not a fresh update.
+8. Review the local/upstream connection state, selected currency and conId, price source, data type, bid/ask, actual update age/sequence, contract minimum tick, quantity rules, and RTH status. The route-specific market rule is resolved at order-preflight time and recorded in the order/audit diagnostics. A populated cached quote is not a fresh update.
 
 Contract `minTick` is not treated as universally valid when IBKR advertises a market rule. Before a priced order is transmitted, BouncyBot loads the rule for the selected route and normalizes the proposed price to the applicable band. If that broker metadata cannot be resolved, the order is blocked rather than guessed.
 
-Do not infer contract identity from the symbol alone when multiple API matches exist.
+Do not infer contract identity from the symbol alone. Search again after manually editing the ticker or primary exchange; manual edits clear the exact conId selection. The live adapter verifies that qualification returns the selected conId, currency, ordinary STK type, SMART capability, required order types, and usable session metadata.
+
+
+### Portable database currency
+
+Each portable SQLite database uses one contract currency. A new database may switch between USD and EUR while it has no cycles. The first persisted cycle locks the database to that currency. When upgrading an existing v3.1.2 database, BouncyBot infers and records the lock from its historical cycles; a normal v3.1.2 database is therefore locked to USD.
+
+Use a separate portable folder/database for EUR contracts after a USD cycle exists, and vice versa. Do not copy cycles of different currencies into one database. BouncyBot does not convert historical P/L, risk limits, reinvestment, or commissions through FX.
 
 ## Configure the strategy
 
@@ -58,7 +65,7 @@ Monitor:
 - current stage and trigger values;
 - API actual-update age, update count/sequence, cached-only state, and source;
 - local API socket and Gateway/TWS upstream IBKR state;
-- RTH status;
+- contract-specific RTH status; a non-U.S. contract without usable `liquidHours` and `timeZoneId` is blocked rather than assigned U.S. fallback hours;
 - app-owned order status and fill quantities;
 - warning/error events;
 - Reconciliation state after any disconnect.
@@ -72,6 +79,12 @@ Simple, Advanced, and Debug modes all show **Recovery / audit log** across the f
 Normal configured pauses, such as ATR warmup, closed RTH, session windows, stale data, or a hard-risk limit, are caution states. They do not mean the local database and broker disagree. Reconciliation therefore disables Reconcile-and-resume, Stop, Cancel, Sell, Leave-working, and Mark-handled actions during an ordinary guard/strategy wait; read-only **Refresh from IBKR/TWS** and audit export remain available.
 
 Red is reserved for actual or suspected broker/local inconsistency, an uncertain recovery state, or a condition requiring operator review.
+
+## Contract and commission validation failures
+
+Start or recovery is blocked when the selected exact conId no longer resolves to the same USD/EUR ordinary stock, when SMART or the required market/trailing order types are unavailable, or when IBKR supplies no safe non-U.S. regular-session schedule. Verify the selected API result and contract details instead of typing a replacement symbol manually.
+
+If IBKR reports a commission in a currency different from the database/cycle currency, the execution remains recorded but that commission is excluded from local net P/L. BouncyBot records a `COMMISSION_CURRENCY_MISMATCH` decision event and disables Auto-repeat for the current cycle because it performs no FX conversion.
 
 ## Broker validation failures
 
@@ -146,7 +159,7 @@ Closing the main window invokes the same stop-choice path and uses the same pers
 
 The application distinguishes two failures:
 
-- **Local socket loss:** the application can no longer reach TWS/Gateway. It pauses, discards subscription handles, and starts the normal reconnect backoff.
+- **Local socket loss:** the application can no longer reach TWS/Gateway. It pauses, discards subscription handles, and retries the same endpoint every 10 seconds indefinitely. Manual **Disconnect** or application shutdown stops those retries.
 - **Upstream IBKR loss while Gateway/TWS remains local:** broker code 1100 or 2110 invalidates all quote freshness and pauses strategy advancement, app-order polling, and new order submission without claiming that the local process disconnected. The status bar shows **Gateway only**. Contract search, ticker confirmation, strategy start, broker refresh, cancellation, and market-close commands are rejected until the upstream link is ready; the workflow bar disables actions that require the broker session.
 
 On restoration:
@@ -169,6 +182,10 @@ After any outage or restart:
 7. Use **Mark manually handled** when the position/order was resolved outside the application and the local cycle should no longer block a new entry.
 
 ATR observation history is in-memory only and starts empty after an application or Windows restart. A stale active cycle is intentionally held for explicit reconciliation. The recovery probe itself is point-in-time: normal terminal order polls can retire an older matching probe row; after any TWS-side change, use **Refresh from IBKR/TWS** to obtain a newer authoritative probe.
+
+## v3.2.0 paper-account validation
+
+Before live use, validate at least one exact USD SMART stock and one exact EUR SMART stock in a paper account. Confirm contract search, conId qualification, market-data entitlement, market-rule price normalization, whole-share size rules, what-if validation, BUY and SELL order acceptance, commissions, contract-specific RTH status, reconnect/reconciliation, and pre-close behavior. A successful source test run cannot prove venue-specific broker acceptance.
 
 ## Shutdown and data retention
 

@@ -13,7 +13,14 @@ from dataclasses import dataclass
 from math import floor, isfinite
 from typing import Any, Optional
 
-from .models import Stage, StrategySettings, minimum_sell_stop_price_for_profit, projected_minimum_profit_levels
+from .models import (
+    SUPPORTED_CONTRACT_CURRENCIES,
+    Stage,
+    StrategySettings,
+    minimum_sell_stop_price_for_profit,
+    normalize_contract_currency,
+    projected_minimum_profit_levels,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,18 +45,25 @@ def _num(value: Any) -> Optional[float]:
     return result
 
 
-def _money(value: Any) -> str:
+def _currency_symbol(value: Any) -> str:
+    currency = normalize_contract_currency(value, fallback="USD")
+    if currency not in SUPPORTED_CONTRACT_CURRENCIES:
+        currency = "USD"
+    return {"USD": "$", "EUR": "€"}[currency]
+
+
+def _money(value: Any, currency: Any = "USD") -> str:
     number = _num(value)
     if number is None:
         return "-"
-    return f"${number:,.4f}"
+    return f"{_currency_symbol(currency)}{number:,.4f}"
 
 
-def _money2(value: Any) -> str:
+def _money2(value: Any, currency: Any = "USD") -> str:
     number = _num(value)
     if number is None:
         return "-"
-    return f"${number:,.2f}"
+    return f"{_currency_symbol(currency)}{number:,.2f}"
 
 
 def _pct(value: Any) -> str:
@@ -114,6 +128,12 @@ def build_strategy_flowchart_cards(
     """
     cycle = cycle or {}
     price_snapshot = price_snapshot or {}
+    currency = normalize_contract_currency(
+        cycle.get("currency") or getattr(strategy, "currency", "USD"),
+        fallback="USD",
+    )
+    if currency not in SUPPORTED_CONTRACT_CURRENCIES:
+        currency = "USD"
     active_stage = _stage_from_cycle(cycle)
     reference, reference_label = _reference_price(strategy, cycle, price_snapshot)
     slippage_enabled = bool(cycle.get("slippage_buffer_enabled", getattr(strategy, "slippage_buffer_enabled", False)))
@@ -168,9 +188,9 @@ def build_strategy_flowchart_cards(
     risk_lines = []
     if risk_enabled:
         if getattr(strategy, "max_daily_loss_ticker", 0.0):
-            risk_lines.append(f"ticker loss <= ${strategy.max_daily_loss_ticker:,.2f}/day")
+            risk_lines.append(f"ticker loss <= {_money2(strategy.max_daily_loss_ticker, currency)}/day")
         if getattr(strategy, "max_daily_loss_total", 0.0):
-            risk_lines.append(f"total loss <= ${strategy.max_daily_loss_total:,.2f}/day")
+            risk_lines.append(f"total loss <= {_money2(strategy.max_daily_loss_total, currency)}/day")
         if getattr(strategy, "max_cycles_per_ticker_day", 0):
             risk_lines.append(f"max cycles <= {strategy.max_cycles_per_ticker_day} total")
         if getattr(strategy, "max_consecutive_losses", 0):
@@ -178,7 +198,7 @@ def build_strategy_flowchart_cards(
         if getattr(strategy, "max_spread_pct", 0.0):
             risk_lines.append(f"spread <= {_pct(strategy.max_spread_pct)}")
         if getattr(strategy, "min_trade_price", 0.0):
-            risk_lines.append(f"price >= ${strategy.min_trade_price:,.2f}")
+            risk_lines.append(f"price >= {_money2(strategy.min_trade_price, currency)}")
         if getattr(strategy, "max_gap_from_prev_close_pct", 0.0):
             risk_lines.append(f"gap <= {_pct(strategy.max_gap_from_prev_close_pct)}")
     if getattr(strategy, "block_delayed_data_in_live", False):
@@ -238,11 +258,11 @@ def build_strategy_flowchart_cards(
             stage=Stage.WAIT_INITIAL_DROP,
             title="Stage 1 - Watch for initial drop",
             order_summary="IBKR order: none",
-            trigger_summary=f"Price <= {_money(drop_trigger)}",
+            trigger_summary=f"Price <= {_money(drop_trigger, currency)}",
             details=(
-                f"Ticker {ticker}; reference {_money(anchor)} ({reference_label}).",
+                f"Ticker {ticker}; reference {_money(anchor, currency)} ({reference_label}).",
                 "Anchor resets upward while price moves above the current anchor.",
-                f"Initial drop {_pct(strategy.initial_drop_pct)}; selected API price {_money(selected_price)}.",
+                f"Initial drop {_pct(strategy.initial_drop_pct)}; selected API price {_money(selected_price, currency)}.",
                 atr_lines[0],
                 f"Hard risk {_bool_text(risk_enabled)}; live-data guard {_bool_text(bool(getattr(strategy, 'block_delayed_data_in_live', False)))}.",
                 f"Risk details: {risk_summary}.",
@@ -254,12 +274,12 @@ def build_strategy_flowchart_cards(
             stage=Stage.BUY_TRAIL_ACTIVE,
             title="Stage 2 - BUY order",
             order_summary=("IBKR order: BUY MKT" if float(strategy.buy_rebound_trail_pct or 0.0) <= 0 else "IBKR order: BUY TRAIL"),
-            trigger_summary=(f"BUY market at drop reference {_money(buy_stop)}; trailing disabled" if float(strategy.buy_rebound_trail_pct or 0.0) <= 0 else f"Initial BUY stop {_money(buy_stop)}; trail {_pct(strategy.buy_rebound_trail_pct)}"),
+            trigger_summary=(f"BUY market at drop reference {_money(buy_stop, currency)}; trailing disabled" if float(strategy.buy_rebound_trail_pct or 0.0) <= 0 else f"Initial BUY stop {_money(buy_stop, currency)}; trail {_pct(strategy.buy_rebound_trail_pct)}"),
             details=(
                 "Submitted only after Stage 1 reaches the drop trigger.",
                 ("BUY trailing is disabled by a 0.00% setting, so the app submits a market BUY immediately." if float(strategy.buy_rebound_trail_pct or 0.0) <= 0 else "TWS/IB Gateway trails the BUY stop down as price keeps falling."),
                 ("The market order is monitored until TWS/IB Gateway reports a fill." if float(strategy.buy_rebound_trail_pct or 0.0) <= 0 else "A rebound to the trailing stop triggers a market BUY."),
-                f"Sizing: floor({_money2(budget)} / {_money(sizing)}) = {projected_qty} shares.",
+                f"Sizing: floor({_money2(budget, currency)} / {_money(sizing, currency)}) = {projected_qty} shares.",
                 f"Slippage buffer {_bool_text(slippage_enabled)}" + (f" ({_pct(slippage_pct)})." if slippage_enabled else "."),
                 atr_lines[1] if len(atr_lines) > 1 else atr_lines[0],
                 f"Pre-BUY checks: {safety_summary_short}.",
@@ -271,12 +291,12 @@ def build_strategy_flowchart_cards(
             stage=Stage.WAIT_RISE_TRIGGER,
             title="Stage 3 - Position open / wait for minimum profit",
             order_summary="IBKR order: optional protective SELL TRAIL" if protective_enabled else "IBKR order: none",
-            trigger_summary=f"Wait until last price >= {_money(required_last)}",
+            trigger_summary=f"Wait until last price >= {_money(required_last, currency)}",
             details=(
-                f"Average BUY reference {_money(avg_buy)}.",
+                f"Average BUY reference {_money(avg_buy, currency)}.",
                 f"Minimum profit {_pct(strategy.rise_trigger_pct)}; slippage buffer {_pct(slippage_pct) if slippage_enabled else 'OFF'}.",
-                f"Buffered first SELL stop >= {_money(min_sell_stop)}; required last >= {_money(required_last)}.",
-                (f"Protective trail ON: stop about {_money(protective_stop or avg_buy * (1.0 - protective_trail / 100.0))}, trail {_pct(protective_trail)}." if protective_enabled else "Protective trail OFF: position can remain unprotected until Stage 4."),
+                f"Buffered first SELL stop >= {_money(min_sell_stop, currency)}; required last >= {_money(required_last, currency)}.",
+                (f"Protective trail ON: stop about {_money(protective_stop or avg_buy * (1.0 - protective_trail / 100.0), currency)}, trail {_pct(protective_trail)}." if protective_enabled else "Protective trail OFF: position can remain unprotected until Stage 4."),
                 f"Safety checks remain active for new BUY entries: {safety_summary_short}.",
             ),
             active=active_stage == Stage.WAIT_RISE_TRIGGER,
@@ -285,7 +305,7 @@ def build_strategy_flowchart_cards(
             stage=Stage.SELL_TRAIL_ACTIVE,
             title="Stage 4 - Profit-protecting SELL order",
             order_summary=("IBKR order: SELL MKT" if float(strategy.sell_trailing_stop_pct or 0.0) <= 0 else "IBKR order: SELL TRAIL"),
-            trigger_summary=(f"SELL market once minimum stop/reference {_money(min_sell_stop)} is protected" if float(strategy.sell_trailing_stop_pct or 0.0) <= 0 else f"Initial SELL stop {_money(min_sell_stop)}; trail {_pct(strategy.sell_trailing_stop_pct)}"),
+            trigger_summary=(f"SELL market once minimum stop/reference {_money(min_sell_stop, currency)} is protected" if float(strategy.sell_trailing_stop_pct or 0.0) <= 0 else f"Initial SELL stop {_money(min_sell_stop, currency)}; trail {_pct(strategy.sell_trailing_stop_pct)}"),
             details=(
                 "Submitted after Stage 3 required last price is reached.",
                 "If protective SELL is working, the app cancels it before submitting the final SELL order.",

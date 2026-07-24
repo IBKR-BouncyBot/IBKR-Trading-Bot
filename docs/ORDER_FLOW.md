@@ -18,7 +18,7 @@ The controller requires, as applicable:
 
 - live local API socket and confirmed Gateway/TWS-to-IBKR server connection;
 - completed post-reconnect broker reconciliation;
-- qualified contract;
+- exact positive-`conId` ordinary `STK` contract in the database currency, requalified for SMART routing and required order capabilities;
 - no unresolved recovery/manual-review state;
 - no unsold application-owned quantity from persisted fills;
 - valid open/current RTH state;
@@ -28,7 +28,7 @@ The controller requires, as applicable:
 - ATR readiness when the ATR entry blocker is enabled;
 - session timing, fixed user-configured spread threshold, gap, price, volatility, P/L, cycle, and streak limits;
 - a successful IBKR what-if check when enabled;
-- a broker-valid order payload normalized to the applicable route-specific IBKR market-rule increment, or to the contract minimum tick only when no market rule is advertised.
+- a broker-valid order payload normalized to the applicable SMART market-rule increment, or to the contract minimum tick only when no market rule is advertised, with a whole-share quantity conforming to the contract minimum/step.
 
 The controller returns the first fail-closed blocker to the submission path while the GUI can display the complete evaluated list.
 
@@ -36,7 +36,7 @@ An account-wide external stock position is not part of this BUY block. Only the 
 
 ## Connectivity boundary for every order
 
-BUY, final SELL, protective SELL, and market-close paths check connectivity before preflight/construction and again immediately before the database backup and broker call. A local socket alone is insufficient: upstream IBKR connectivity must be confirmed and post-restoration reconciliation must be complete.
+BUY, final SELL, protective SELL, and market-close paths check connectivity before preflight/construction and again immediately before the database backup and broker call. A local socket alone is insufficient: upstream IBKR connectivity must be confirmed and post-restoration reconciliation must be complete. After an enabled local socket is lost, BouncyBot retries every ten seconds indefinitely until success, manual Disconnect, or shutdown.
 
 During code 1100/2110, no new order is sent and normal app-order polling is paused. Code 1101 recreates market-data subscriptions; code 1102 keeps them but requires a new event. Existing native orders are not cancelled merely because connectivity is lost and can continue at IBKR. Their later status/fills are recovery facts, not evidence that the application was monitoring continuously.
 
@@ -60,6 +60,8 @@ For a positive BUY trail, the adapter creates a BUY trailing-stop order with:
 
 The controller chooses a stop reference at or above visible ask/last/selected values. When IBKR advertises market rules, the adapter selects the rule for the requested route, requests its price bands, and rounds the stop upward to the increment applicable at that price. The quantity sizing price is normalized independently because a slippage adjustment can cross a market-rule boundary. If the advertised rule cannot be resolved or loaded, submission is blocked. Contract `minTick` is used only when no market rule is advertised.
 
+Before intent is recorded, the adapter validates the whole-share quantity against `ContractDetails.minSize` and `sizeIncrement`. A BUY may be rounded down to the largest valid whole-share quantity within budget. A SELL must already conform exactly; it is never rounded down because that could leave an app-owned remainder without an exit order.
+
 ### Market BUY
 
 When BUY trail is zero, the drop condition produces a market BUY rather than a native trail. The same quantity, account, RTH, what-if, ownership, and guard checks still apply.
@@ -82,7 +84,7 @@ If a Stage-2 BUY has no fill and becomes `Inactive` or `Rejected`, or reaches a 
 
 ## BUY fills, cancellation races, and late callbacks
 
-Order-status polling, execution callbacks, commission callbacks, and recent-execution recovery can report the same economic fill in different orders. SQLite uses the exact IBKR execution ID as the idempotency key. A duplicate callback enriches the existing row rather than adding quantity again. Commission-before-execution callbacks are held briefly and applied when the matching execution arrives; commission-after-execution callbacks update that same row and cycle P/L.
+Order-status polling, execution callbacks, commission callbacks, and recent-execution recovery can report the same economic fill in different orders. SQLite uses the exact IBKR execution ID as the idempotency key. A duplicate callback enriches the existing row rather than adding quantity again. Commission-before-execution callbacks are held briefly and applied when the matching execution arrives; commission-after-execution callbacks update that same row and cycle P/L. A non-zero commission is included in net P/L only when its reported currency matches the cycle/database currency (or IBKR omits the currency). A different-currency commission remains in raw broker/audit data, is excluded from local P/L, and disables Auto-repeat because BouncyBot does not convert currencies.
 
 Order status can expose cumulative filled quantity before individual execution IDs arrive. BouncyBot stores a stable residual cumulative placeholder for only the unrepresented quantity and commission. As real execution callbacks arrive, the placeholder shrinks and is deleted when the callback ledger fully represents the broker cumulative total. This prevents both lost fills and double counting.
 
@@ -172,7 +174,7 @@ After a local reconnect, 1101/1102 restoration, or startup recovery, the control
 - persisted active cycle and order records;
 - open app-owned orders reported by IBKR;
 - recent app-owned executions;
-- current contract/account facts;
+- current exact contract identity, database currency, SMART/order capability, session, and account facts;
 - local fill ledger and unsold quantity.
 
 It may attach to a locally known exact `OrderRef`, import missing executions idempotently, complete a cycle, or require manual review. The cached broker probe is point-in-time: a newer normal terminal poll updates or removes its matching order row, while a later explicit probe that still reports the order remains visible. It does not recreate or cancel an order when exact ownership/state is uncertain.
