@@ -26,7 +26,7 @@ from typing import Any, Callable, Optional
 from zoneinfo import ZoneInfo
 
 from PySide6.QtCore import QEvent, QObject, QPointF, QRectF, QSize, Qt, QTimer
-from PySide6.QtGui import QAction, QBrush, QColor, QFont, QPainter, QPen
+from PySide6.QtGui import QAction, QBrush, QColor, QFont, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QApplication,
@@ -54,6 +54,7 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
+    QTextBrowser,
     QTextEdit,
     QToolTip,
     QVBoxLayout,
@@ -86,7 +87,7 @@ from .models import (
     suggested_broker_timing_defaults,
     suggested_hard_risk_defaults,
 )
-from .paths import debug_captures_dir
+from .paths import debug_captures_dir, resource_path
 from .timeline_scaling import (
     choose_timestamp_for_display,
     clamp_fraction,
@@ -134,6 +135,21 @@ class NoWheelEditFilter(QObject):
 CURRENCY_SYMBOLS = {"USD": "$", "EUR": "€"}
 ACTIVE_CONTRACT_CURRENCY = "USD"
 CURRENCY_SYMBOL = CURRENCY_SYMBOLS[ACTIVE_CONTRACT_CURRENCY]
+
+BOUNCYBOT_GITHUB_URL = "https://github.com/IBKR-BouncyBot/IBKR-Trading-Bot"
+BOUNCYBOT_REFERRAL_URL = "https://ibkr.com/referral/gerrit585"
+BOUNCYBOT_SUPPORT_ADDRESSES = (
+    (
+        "Cardano / ADA",
+        "addr1q85w2v474ywzx868s69pghygek3vrhxm69e7c6ysuf28qhv8kmj5wd059grxl82f8h5mtyzl87cvqj8ldv2e0las7tnsdej9ax",
+    ),
+    (
+        "Midnight / NIGHT",
+        "addr1qyre4dsc3xdgcr8w3lmfdy038f9w0statt7q7d8urfvgyh58kmj5wd059grxl82f8h5mtyzl87cvqj8ldv2e0las7tnsu66x8a",
+    ),
+    ("Ethereum / ETH", "0xe1283022e1166df70092ff3094a1d2bd79102c3a"),
+    ("Solana / SOL", "78EG5myV7Xjx4iNWt7mnn3BHULMNhLchFAcggnyeiiyb"),
+)
 
 
 def _set_active_contract_currency(value: Any) -> str:
@@ -1146,6 +1162,31 @@ def _auto_size_table_columns(
 def _resize_table_columns_for_available_width(table: QTableWidget, *, min_last_width: int = 160) -> None:
     """Backward-compatible wrapper for content-based table autosizing."""
     _auto_size_table_columns(table, minimum=64, maximum=360, last_maximum=max(360, int(min_last_width)))
+
+
+def _fit_table_width_to_columns(
+    table: QTableWidget,
+    *,
+    minimum: int = 280,
+    maximum: int = 480,
+    padding: int = 24,
+) -> None:
+    """Limit a compact table to the width required by its visible columns."""
+    try:
+        content_width = sum(max(0, int(table.columnWidth(column))) for column in range(table.columnCount()))
+        frame_width = max(0, int(table.frameWidth())) * 2
+        scrollbar_width = 0
+        scrollbar = table.verticalScrollBar()
+        if scrollbar is not None:
+            scrollbar_width = max(0, int(scrollbar.sizeHint().width()))
+        target = content_width + frame_width + scrollbar_width + int(padding)
+        target = max(int(minimum), min(int(maximum), target))
+        table.setMinimumWidth(target)
+        table.setMaximumWidth(target)
+        vertical_policy = table.sizePolicy().verticalPolicy()
+        table.setSizePolicy(QSizePolicy.Fixed, vertical_policy)
+    except Exception:
+        table.setMaximumWidth(int(maximum))
 
 
 def _cap_table_columns_for_horizontal_scroll(table: QTableWidget, *, minimum: int = 70, maximum: int = 220) -> None:
@@ -4006,10 +4047,26 @@ class PricePanel(QGroupBox):
         root = QVBoxLayout(self)
         top = QHBoxLayout()
 
+        instrument = QVBoxLayout()
+        instrument.setContentsMargins(0, 0, 0, 0)
+        instrument.setSpacing(2)
+
+        self.big_ticker = QLabel("-")
+        self.big_ticker.setObjectName("BigPrice")
+        self.big_ticker.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        instrument.addWidget(self.big_ticker)
+
+        self.instrument_info = QLabel("Contract details: -")
+        self.instrument_info.setObjectName("PriceInstrumentInfo")
+        self.instrument_info.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.instrument_info.setWordWrap(True)
+        instrument.addWidget(self.instrument_info)
+
         self.big_price = QLabel("-")
         self.big_price.setObjectName("BigPrice")
         self.big_price.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        top.addWidget(self.big_price, 1)
+        instrument.addWidget(self.big_price)
+        top.addLayout(instrument, 1)
 
         right = QVBoxLayout()
         self.price_status = QLabel("No price request yet")
@@ -4101,6 +4158,11 @@ class PricePanel(QGroupBox):
     def update_data(self, cycle: Optional[dict[str, Any]], price_snapshot: Optional[dict[str, Any]]) -> None:
         price_snapshot = price_snapshot or {}
         self._last_price_snapshot = price_snapshot
+        ticker_text, instrument_text = self._instrument_identity(cycle, price_snapshot)
+        if self.big_ticker.text() != ticker_text:
+            self.big_ticker.setText(ticker_text)
+        if self.instrument_info.text() != instrument_text:
+            self.instrument_info.setText(instrument_text)
         price = price_snapshot.get("price")
         price_text = _format_price(price)
         if self.big_price.text() != price_text:
@@ -4137,6 +4199,77 @@ class PricePanel(QGroupBox):
         self._update_progress(cycle, price, price_snapshot)
         if self.fields_table.isVisible():
             self._update_field_table(price_snapshot)
+
+    @staticmethod
+    def _instrument_identity(
+        cycle: Optional[dict[str, Any]],
+        price_snapshot: dict[str, Any],
+    ) -> tuple[str, str]:
+        cycle = cycle or {}
+        contract = price_snapshot.get("contract") or {}
+        if not isinstance(contract, dict):
+            contract = {}
+
+        ticker = str(
+            contract.get("ticker")
+            or price_snapshot.get("ticker")
+            or cycle.get("ticker")
+            or "-"
+        ).strip().upper()
+        ticker = ticker or "-"
+
+        description = str(contract.get("description") or "").strip()
+        identity_parts: list[str] = []
+        sec_type = str(contract.get("sec_type") or "").strip().upper()
+        exchange = str(contract.get("exchange") or cycle.get("exchange") or "").strip().upper()
+        primary_exchange = str(
+            contract.get("primary_exchange")
+            or cycle.get("primary_exchange")
+            or ""
+        ).strip().upper()
+        currency = str(contract.get("currency") or cycle.get("currency") or "").strip().upper()
+        con_id = contract.get("con_id") if contract.get("con_id") not in (None, "") else cycle.get("con_id")
+        local_symbol = str(contract.get("local_symbol") or "").strip()
+        trading_class = str(contract.get("trading_class") or "").strip()
+
+        if sec_type:
+            identity_parts.append(sec_type)
+        if exchange:
+            identity_parts.append(exchange)
+        if primary_exchange:
+            identity_parts.append(f"primary {primary_exchange}")
+        if currency:
+            identity_parts.append(currency)
+        if con_id not in (None, "", 0, "0"):
+            identity_parts.append(f"conId {con_id}")
+        if local_symbol and local_symbol.upper() != ticker:
+            identity_parts.append(f"local {local_symbol}")
+        if trading_class and trading_class.upper() not in {ticker, local_symbol.upper()}:
+            identity_parts.append(f"class {trading_class}")
+
+        classification: list[str] = []
+        classification_keys: set[str] = set()
+        for value in (
+            contract.get("industry"),
+            contract.get("category"),
+            contract.get("subcategory"),
+        ):
+            text = str(value or "").strip()
+            key = text.casefold()
+            if text and key not in classification_keys:
+                classification.append(text)
+                classification_keys.add(key)
+
+        segments: list[str] = []
+        if description and description.casefold() != ticker.casefold():
+            segments.append(description)
+        if identity_parts:
+            segments.append(" / ".join(identity_parts))
+        if classification:
+            segments.append(" / ".join(classification))
+        if not segments:
+            segments.append("Contract details will appear after IBKR qualification.")
+        return ticker, " • ".join(segments)
 
     def _update_summary_cards(self, price_snapshot: dict[str, Any]) -> None:
         if not hasattr(self, "price_summary_cards"):
@@ -4388,6 +4521,92 @@ class PricePanel(QGroupBox):
                     self.fields_table.setItem(r, value_col, QTableWidgetItem(""))
         _auto_size_table_columns(self.fields_table, minimum=70, maximum=260, last_maximum=320)
         _fit_table_height_to_rows(self.fields_table, min_rows=4, max_visible_rows=10, min_height=220, max_fit_height=360)
+
+
+class AboutInfoDialog(QDialog):
+    """Project information, links, and the README support details."""
+
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setWindowTitle("About BouncyBot - Info")
+        self.setMinimumSize(700, 650)
+        self.resize(760, 760)
+
+        icon_path = resource_path("Images", "BouncyBot_app_icon.png")
+        if icon_path.is_file():
+            self.setWindowIcon(QIcon(str(icon_path)))
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(12)
+
+        self.logo_label = QLabel()
+        self.logo_label.setAlignment(Qt.AlignCenter)
+        self.logo_label.setObjectName("AboutLogo")
+        logo_path = resource_path("Images", "BouncyBot_logo.png")
+        if logo_path.is_file():
+            pixmap = QPixmap(str(logo_path))
+            if not pixmap.isNull():
+                self.logo_label.setPixmap(
+                    pixmap.scaled(620, 360, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                )
+        layout.addWidget(self.logo_label)
+
+        self.title_label = QLabel("BouncyBot - IBKR Portable Trading Bot")
+        self.title_label.setObjectName("AboutTitle")
+        self.title_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.title_label)
+
+        self.version_label = QLabel("Version 3.2.2")
+        self.version_label.setObjectName("Muted")
+        self.version_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.version_label)
+
+        self.repository_link = QLabel(
+            f'<a href="{BOUNCYBOT_GITHUB_URL}">{BOUNCYBOT_GITHUB_URL}</a>'
+        )
+        self.repository_link.setOpenExternalLinks(True)
+        self.repository_link.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        self.repository_link.setAlignment(Qt.AlignCenter)
+        self.repository_link.setToolTip("Open the BouncyBot project page on GitHub.")
+        layout.addWidget(self.repository_link)
+
+        support_box = QGroupBox("Thank me")
+        support_layout = QFormLayout(support_box)
+        support_layout.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        self.referral_link = QLabel(
+            f'<a href="{BOUNCYBOT_REFERRAL_URL}">'
+            "IBKR referral (get up to $1000 in IBKR stock)</a>"
+        )
+        self.referral_link.setOpenExternalLinks(True)
+        self.referral_link.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        self.referral_link.setToolTip("Open the IBKR referral link in the default browser.")
+        support_layout.addRow("IBKR", self.referral_link)
+
+        self.support_address_fields: dict[str, QLineEdit] = {}
+        for label, address in BOUNCYBOT_SUPPORT_ADDRESSES:
+            field = QLineEdit(address)
+            field.setReadOnly(True)
+            field.setCursorPosition(0)
+            field.setToolTip("Read-only address. Select and copy it when needed.")
+            self.support_address_fields[label] = field
+            support_layout.addRow(label, field)
+        layout.addWidget(support_box)
+
+        note = QTextBrowser()
+        note.setObjectName("AboutNotice")
+        note.setOpenExternalLinks(True)
+        note.setMaximumHeight(90)
+        note.setHtml(
+            "<p>BouncyBot is source-available software for noncommercial use. "
+            "It can transmit live orders; validate all settings and use an IBKR paper "
+            "account before live deployment.</p>"
+        )
+        layout.addWidget(note)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
 
 
 class StopDialog(QDialog):
@@ -4673,7 +4892,7 @@ class CycleAuditDialog(QDialog):
         return self._timeline_tab(self.row, self.details)
 
     def _build_orders_tab(self) -> QWidget:
-        return self._records_table(self.details.get("orders") or [], [
+        table = self._records_table(self.details.get("orders") or [], [
             ("created_at", "Created"),
             ("action", "Action"),
             ("order_type", "Type"),
@@ -4684,10 +4903,11 @@ class CycleAuditDialog(QDialog):
             ("order_id", "Order ID"),
             ("perm_id", "permId"),
             ("order_ref", "OrderRef"),
-        ], "No order rows found for this cycle.")
+        ], "No order rows found for this cycle.", expand_when_overflow=False)
+        return self._top_aligned_table_tab(table)
 
     def _build_executions_tab(self) -> QWidget:
-        return self._records_table(self.details.get("executions") or [], [
+        table = self._records_table(self.details.get("executions") or [], [
             ("executed_at", "Executed"),
             ("side", "Side"),
             ("shares", "Shares"),
@@ -4696,14 +4916,15 @@ class CycleAuditDialog(QDialog):
             ("commission", "Commission"),
             ("execution_id", "Execution ID"),
             ("order_ref", "OrderRef"),
-        ], "No execution rows found for this cycle.")
+        ], "No execution rows found for this cycle.", expand_when_overflow=False)
+        return self._top_aligned_table_tab(table)
 
     def _build_market_capture_tab(self) -> QWidget:
         self._ensure_market_capture_loaded()
         return self._market_capture_tab(self.row, self.details)
 
     def _build_decision_events_tab(self) -> QWidget:
-        return self._records_table(self.details.get("decision_events") or [], [
+        table = self._records_table(self.details.get("decision_events") or [], [
             ("created_at", "Created"),
             ("event_type", "Event"),
             ("stage_before", "Before"),
@@ -4712,7 +4933,8 @@ class CycleAuditDialog(QDialog):
             ("broker_order_id", "Order ID"),
             ("perm_id", "permId"),
             ("message", "Message"),
-        ], "No structured decision events found for this cycle.")
+        ], "No structured decision events found for this cycle.", expand_when_overflow=False)
+        return self._top_aligned_table_tab(table)
 
     def _build_raw_log_tab(self) -> QWidget:
         self.text = QTextEdit()
@@ -4724,6 +4946,17 @@ class CycleAuditDialog(QDialog):
         self.text.setMinimumHeight(520)
         self.text.setPlainText(self._format(self.row, self.details))
         return self.text
+
+    @staticmethod
+    def _top_aligned_table_tab(table: QTableWidget) -> QWidget:
+        """Keep compact audit tables at the top instead of vertically centering them."""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(table, 0, Qt.AlignTop)
+        layout.addStretch(1)
+        return tab
 
     @classmethod
     def _enriched_details(cls, row: dict[str, Any], details: dict[str, Any]) -> dict[str, Any]:
@@ -5171,20 +5404,24 @@ class CycleAuditDialog(QDialog):
         info.setWordWrap(True)
         layout.addWidget(info)
         split = QHBoxLayout()
-        split.addWidget(cls._records_table(transition_rows, [
+        split.setSpacing(12)
+        transition_table = cls._records_table(transition_rows, [
             ("created_at", "Time"),
             ("stage_before", "Before"),
             ("stage_after", "After"),
             ("event_type", "Event"),
             ("decision_result", "Result"),
             ("message", "Message"),
-        ], "No stage transitions were recorded for this cycle.", max_visible_rows=4, expand_when_overflow=False), 1)
-        split.addWidget(cls._records_table(risk_rows, [
+        ], "No stage transitions were recorded for this cycle.", max_visible_rows=4, expand_when_overflow=False)
+        risk_table = cls._records_table(risk_rows, [
             ("created_at", "Time"),
             ("event_type", "Guard / risk event"),
             ("decision_result", "Result"),
             ("message", "Message"),
-        ], "No guard/risk blocks were recorded for this cycle.", max_visible_rows=4, expand_when_overflow=False), 1)
+        ], "No guard/risk blocks were recorded for this cycle.", max_visible_rows=4, expand_when_overflow=False)
+        _fit_table_width_to_columns(risk_table, minimum=300, maximum=480)
+        split.addWidget(transition_table, 1, Qt.AlignTop)
+        split.addWidget(risk_table, 0, Qt.AlignTop)
         layout.addLayout(split, 0)
         return tab
 
@@ -5377,13 +5614,19 @@ class CycleAuditDialog(QDialog):
             records = [{columns[0][0]: empty_message}]
         table = QTableWidget(len(records), len(columns))
         table.setHorizontalHeaderLabels([label for _key, label in columns])
-        _polish_table_widget(table, stretch_last=True, horizontal_scroll=Qt.ScrollBarAsNeeded, vertical_scroll=Qt.ScrollBarAlwaysOn, expanding=True)
+        _polish_table_widget(
+            table,
+            stretch_last=False,
+            horizontal_scroll=Qt.ScrollBarAsNeeded,
+            vertical_scroll=Qt.ScrollBarAlwaysOn,
+            expanding=True,
+        )
         for row_idx, record in enumerate(records):
             for col_idx, (key, _label) in enumerate(columns):
                 item = QTableWidgetItem(_format_field_value(key, record.get(key)))
                 item.setToolTip(str(record.get("raw_json") or ""))
                 table.setItem(row_idx, col_idx, item)
-        _resize_table_columns_for_available_width(table)
+        _auto_size_table_columns(table, minimum=64, maximum=320, last_maximum=420)
         _fit_table_height_to_rows(
             table,
             min_rows=min(4, len(records)),
@@ -5406,7 +5649,7 @@ class CycleAuditDialog(QDialog):
             lines.extend([
                 "BUILT-IN EXAMPLE CYCLE",
                 "=" * 80,
-                "This is synthetic v3.2.0 paper-trading example data. It is not an actual market record, is not stored in SQLite, and cannot affect trading or risk totals.",
+                "This is synthetic v3.2.2 paper-trading example data. It is not an actual market record, is not stored in SQLite, and cannot affect trading or risk totals.",
                 "The scenario models a liquid U.S. stock pullback, a multi-execution trailing BUY fill, a temporary protective SELL, and a modest trailing-stop profit exit.",
                 "",
             ])
@@ -5518,7 +5761,10 @@ class MainWindow(QMainWindow):
         )
         self._system_shutdown_in_progress = False
         self._last_system_shutdown_session_key = ""
-        self.setWindowTitle("BouncyBot - IBKR Portable Trading Bot v3.2.0")
+        self.setWindowTitle("BouncyBot - IBKR Portable Trading Bot v3.2.2")
+        icon_path = resource_path("Images", "BouncyBot_app_icon.png")
+        if icon_path.is_file():
+            self.setWindowIcon(QIcon(str(icon_path)))
         self.resize(1440, 950)
 
         self._autosave_timer = QTimer(self)
@@ -5687,6 +5933,14 @@ class MainWindow(QMainWindow):
         exit_action = QAction("Exit", self)
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
+
+        about_menu = self.menuBar().addMenu("About")
+        self.about_info_action = QAction("Info", self)
+        self.about_info_action.triggered.connect(self._show_about_info)
+        about_menu.addAction(self.about_info_action)
+
+    def _show_about_info(self) -> None:
+        AboutInfoDialog(self).exec()
 
     def _build_command_bar(self) -> QFrame:
         bar = QFrame()
@@ -10660,11 +10914,35 @@ class MainWindow(QMainWindow):
                 padding: 7px 9px;
                 font-weight: 600;
             }
+            QLabel#AboutLogo {
+                background-color: #000000;
+                border: 1px solid #c7cbd1;
+                border-radius: 8px;
+                padding: 6px;
+            }
+            QLabel#AboutTitle {
+                color: #111827;
+                font-size: 22px;
+                font-weight: 800;
+            }
+            QTextBrowser#AboutNotice {
+                color: #3d4552;
+                background-color: #f8fafc;
+                border: 1px solid #d1d5db;
+                border-radius: 6px;
+                padding: 6px;
+            }
             QLabel#BigPrice {
                 color: #111827;
                 font-size: 34px;
                 font-weight: 800;
                 padding: 4px 0px;
+            }
+            QLabel#PriceInstrumentInfo {
+                color: #5b6270;
+                font-size: 12px;
+                font-weight: 600;
+                padding: 0px 0px 4px 0px;
             }
             QLabel#PriceStatus {
                 color: #111827;

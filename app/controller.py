@@ -156,6 +156,7 @@ class TradingController:
     MAINTENANCE_CADENCE_SECONDS = 1.00
     MAX_IDLE_WAIT_SECONDS = 0.25
     RECONNECT_INTERVAL_SECONDS = 10.0
+    BUY_PREFLIGHT_AUDIT_THROTTLE_SECONDS = 60.0
 
     # Zero means do not add a second rate limit inside the strategy cadence when
     # reading the cached TWS subscription handle. The adapter stamps actual
@@ -4261,6 +4262,10 @@ class TradingController:
                 "primary_exchange": contract.primary_exchange,
                 "local_symbol": contract.local_symbol,
                 "trading_class": contract.trading_class,
+                "description": getattr(contract, "description", ""),
+                "industry": getattr(contract, "industry", ""),
+                "category": getattr(contract, "category", ""),
+                "subcategory": getattr(contract, "subcategory", ""),
                 "min_tick": getattr(contract, "min_tick", 0.01),
                 "exchange": str(
                     getattr(contract, "exchange", "")
@@ -4521,13 +4526,13 @@ class TradingController:
     ) -> None:
         key = throttle_key or f"{cycle.ticker}|{cycle.stage.value}|{message}"
         now = time.monotonic()
-        last = self._last_price_warning_at.get(key, 0.0)
+        last = self._last_price_warning_at.get(key)
         # Long-running bots can see many transient ticker/stage/error combinations.
         # Keep the warning-throttle cache bounded so it cannot grow indefinitely.
         if len(self._last_price_warning_at) > 512:
             for old_key in list(self._last_price_warning_at)[:256]:
                 self._last_price_warning_at.pop(old_key, None)
-        if now - last >= interval_seconds:
+        if last is None or now - last >= interval_seconds:
             self._last_price_warning_at[key] = now
             self._log("WARN", message, cycle)
 
@@ -5137,6 +5142,24 @@ class TradingController:
                 self._handle_broker_connection_problem(exc)
                 self._log("WARN", message, self.active_cycle or cycle)
 
+    def _apply_buy_preflight_block(
+        self,
+        cycle: CycleState,
+        message: str,
+        blocker_code: str,
+    ) -> None:
+        """Persist a local BUY block and audit it at a stable bounded cadence."""
+        blocked = StrategyEngine.rollback_preflight_blocked_order(cycle, "BUY", message)
+        self.active_cycle = blocked
+        self.storage.upsert_cycle(blocked)
+        normalized_code = str(blocker_code or "preflight").strip().lower() or "preflight"
+        self._log_price_warning_throttled(
+            blocked,
+            message,
+            interval_seconds=self.BUY_PREFLIGHT_AUDIT_THROTTLE_SECONDS,
+            throttle_key=f"buy_preflight_block|{cycle.id}|{normalized_code}",
+        )
+
     @staticmethod
     def _snapshot_field(snapshot: Optional[dict[str, Any]], *names: str) -> Optional[float]:
         fields = (snapshot or {}).get("fields") or {}
@@ -5546,18 +5569,11 @@ class TradingController:
                 return blockers
 
         snapshot = self.price_snapshot or {}
-        if delayed_live_guard_enabled and self.connection.trading_mode == "live":
-            selected = snapshot.get("selected_market_data_type")
-            actual = snapshot.get("subscription_market_data_type")
-            mode = actual if actual is not None else selected
-            if mode is None:
-                message = "Hard risk limit blocked BUY: live profile market-data mode is not confirmed as live."
-                if add("live_data_unconfirmed", message, "Live data unconfirmed"):
-                    return blockers
-            elif int(mode) != 1:
-                message = f"Hard risk limit blocked BUY: live profile is using non-live market data mode {mode}."
-                if add("non_live_data", message, "Non-live data"):
-                    return blockers
+        delayed_blocker = self._delayed_live_data_blocker_for_buy(cycle)
+        if delayed_blocker is not None:
+            blockers.append(delayed_blocker)
+            if stop_after_first:
+                return blockers
 
         atr_blocker = self._atr_warmup_guard_blocker_for_buy(cycle)
         if atr_blocker is not None:
@@ -5607,10 +5623,46 @@ class TradingController:
                         return blockers
         return blockers
 
-    def _risk_guard_message_for_buy(self, cycle: CycleState, payload: dict[str, Any]) -> Optional[str]:
+    def _delayed_live_data_blocker_for_buy(
+        self,
+        cycle: CycleState,
+    ) -> Optional[dict[str, str]]:
+        if not bool(getattr(cycle, "block_delayed_data_in_live", False)):
+            return None
+        if str(getattr(self.connection, "trading_mode", "") or "").strip().lower() != "live":
+            return None
+        snapshot = self.price_snapshot or {}
+        selected = snapshot.get("selected_market_data_type")
+        actual = snapshot.get("subscription_market_data_type")
+        mode = actual if actual is not None else selected
+        if mode is None:
+            return self._trading_blocker(
+                "BUY",
+                "live_data_unconfirmed",
+                "Hard risk limit blocked BUY: live profile market-data mode is not confirmed as live.",
+                "Live data unconfirmed",
+            )
+        if int(mode) != 1:
+            return self._trading_blocker(
+                "BUY",
+                "non_live_data",
+                f"Hard risk limit blocked BUY: live profile is using non-live market data mode {mode}.",
+                "Non-live data",
+            )
+        return None
+
+    def _risk_guard_blocker_for_buy(
+        self,
+        cycle: CycleState,
+        payload: dict[str, Any],
+    ) -> Optional[dict[str, Any]]:
         """Return the first configured BUY blocker in fail-closed priority order."""
         blockers = self._risk_guard_blockers_for_buy(cycle, payload, stop_after_first=True)
-        return blockers[0]["message"] if blockers else None
+        return blockers[0] if blockers else None
+
+    def _risk_guard_message_for_buy(self, cycle: CycleState, payload: dict[str, Any]) -> Optional[str]:
+        blocker = self._risk_guard_blocker_for_buy(cycle, payload)
+        return str(blocker["message"]) if blocker else None
 
     def _buy_submission_preflight_message(self, cycle: CycleState, payload: dict[str, Any]) -> Optional[str]:
         connectivity_message = self._order_submission_connectivity_message("BUY")
@@ -5705,9 +5757,12 @@ class TradingController:
         rollback_side = "PROTECTIVE_SELL" if role == "PROTECTIVE_SELL" else side.upper()
         connectivity_message = self._order_submission_connectivity_message(rollback_side)
         if connectivity_message:
-            self.active_cycle = StrategyEngine.rollback_unsubmitted_order(cycle, rollback_side, connectivity_message)
-            self.storage.upsert_cycle(self.active_cycle)
-            self._log("WARN", connectivity_message, self.active_cycle)
+            if rollback_side == "BUY":
+                self._apply_buy_preflight_block(cycle, connectivity_message, "connectivity")
+            else:
+                self.active_cycle = StrategyEngine.rollback_unsubmitted_order(cycle, rollback_side, connectivity_message)
+                self.storage.upsert_cycle(self.active_cycle)
+                self._log("WARN", connectivity_message, self.active_cycle)
             return
         if self.contract is None:
             self.contract = self._adapter_qualify_stock(cycle.ticker, cycle.exchange, cycle.currency, cycle.primary_exchange, cycle.con_id)
@@ -5716,25 +5771,47 @@ class TradingController:
             if not bool(rth_status.get("is_open", True)):
                 detail = str(rth_status.get("message") or rth_status.get("source") or "regular trading hours are closed")
                 message = f"RTH guard blocked {side} order submission: {detail}"
-                self.active_cycle = StrategyEngine.rollback_unsubmitted_order(cycle, side, message)
-                self.storage.upsert_cycle(self.active_cycle)
-                self._log("WARN", message, self.active_cycle)
+                if side.upper() == "BUY":
+                    self._apply_buy_preflight_block(cycle, message, "rth_closed")
+                else:
+                    self.active_cycle = StrategyEngine.rollback_unsubmitted_order(cycle, side, message)
+                    self.storage.upsert_cycle(self.active_cycle)
+                    self._log("WARN", message, self.active_cycle)
+                return
+        if side.upper() == "BUY":
+            delayed_blocker = self._delayed_live_data_blocker_for_buy(cycle)
+            if delayed_blocker is not None:
+                self._apply_buy_preflight_block(
+                    cycle,
+                    str(delayed_blocker["message"]),
+                    str(delayed_blocker.get("code") or "non_live_data"),
+                )
                 return
         payload = dict(action.payload)
         payload, normalization_message = self._normalize_trailing_order_payload(cycle, payload, side, role=role)
         if normalization_message:
             if normalization_message.startswith(("SELL stop", "Order-price validation blocked")):
-                self.active_cycle = StrategyEngine.rollback_unsubmitted_order(cycle, side, normalization_message)
-                self.storage.upsert_cycle(self.active_cycle)
-                self._log("WARN", normalization_message, self.active_cycle)
+                if side.upper() == "BUY":
+                    self._apply_buy_preflight_block(
+                        cycle,
+                        normalization_message,
+                        "price_normalization",
+                    )
+                else:
+                    self.active_cycle = StrategyEngine.rollback_unsubmitted_order(cycle, side, normalization_message)
+                    self.storage.upsert_cycle(self.active_cycle)
+                    self._log("WARN", normalization_message, self.active_cycle)
                 return
             self._log("INFO", normalization_message, cycle)
         payload, quantity_message = self._normalize_contract_quantity(cycle, payload, side)
         if quantity_message:
             if quantity_message.startswith(("Order quantity", "Calculated quantity", "SELL quantity")):
-                self.active_cycle = StrategyEngine.rollback_unsubmitted_order(cycle, rollback_side, quantity_message)
-                self.storage.upsert_cycle(self.active_cycle)
-                self._log("WARN", quantity_message, self.active_cycle)
+                if rollback_side == "BUY":
+                    self._apply_buy_preflight_block(cycle, quantity_message, "quantity")
+                else:
+                    self.active_cycle = StrategyEngine.rollback_unsubmitted_order(cycle, rollback_side, quantity_message)
+                    self.storage.upsert_cycle(self.active_cycle)
+                    self._log("WARN", quantity_message, self.active_cycle)
                 return
             self._log("INFO", quantity_message, cycle)
         if side.upper() == "BUY":
@@ -5746,9 +5823,7 @@ class TradingController:
                 pass
             if int(payload.get("quantity") or 0) <= 0:
                 message = "Calculated quantity is zero after contract tick/slippage order-price normalization."
-                self.active_cycle = StrategyEngine.rollback_unsubmitted_order(cycle, "BUY", message)
-                self.storage.upsert_cycle(self.active_cycle)
-                self._log("WARN", message, self.active_cycle)
+                self._apply_buy_preflight_block(cycle, message, "quantity")
                 return
         elif side.upper() == "SELL":
             try:
@@ -5760,31 +5835,36 @@ class TradingController:
             except Exception:
                 pass
         if side.upper() == "BUY":
-            risk_message = self._risk_guard_message_for_buy(cycle, payload)
-            if risk_message:
-                self.active_cycle = StrategyEngine.rollback_unsubmitted_order(cycle, "BUY", risk_message)
-                self.storage.upsert_cycle(self.active_cycle)
-                self._log("WARN", risk_message, self.active_cycle)
+            risk_blocker = self._risk_guard_blocker_for_buy(cycle, payload)
+            if risk_blocker:
+                self._apply_buy_preflight_block(
+                    cycle,
+                    str(risk_blocker["message"]),
+                    str(risk_blocker.get("code") or "risk_guard"),
+                )
                 return
         if side.upper() == "BUY":
             what_if_message = self._what_if_guard_message_for_buy(cycle, payload)
             if what_if_message:
-                self.active_cycle = StrategyEngine.rollback_unsubmitted_order(cycle, "BUY", what_if_message)
-                self.storage.upsert_cycle(self.active_cycle)
-                self._log("WARN", what_if_message, self.active_cycle)
+                self._apply_buy_preflight_block(cycle, what_if_message, "what_if")
                 return
         if side.upper() == "BUY":
             preflight_message = self._buy_submission_preflight_message(cycle, payload)
             if preflight_message:
-                self.active_cycle = StrategyEngine.rollback_unsubmitted_order(cycle, "BUY", preflight_message)
-                self.storage.upsert_cycle(self.active_cycle)
-                self._log("WARN", preflight_message, self.active_cycle)
+                self._apply_buy_preflight_block(
+                    cycle,
+                    preflight_message,
+                    "submission_preflight",
+                )
                 return
         connectivity_message = self._order_submission_connectivity_message(rollback_side)
         if connectivity_message:
-            self.active_cycle = StrategyEngine.rollback_unsubmitted_order(cycle, rollback_side, connectivity_message)
-            self.storage.upsert_cycle(self.active_cycle)
-            self._log("WARN", connectivity_message, self.active_cycle)
+            if rollback_side == "BUY":
+                self._apply_buy_preflight_block(cycle, connectivity_message, "connectivity")
+            else:
+                self.active_cycle = StrategyEngine.rollback_unsubmitted_order(cycle, rollback_side, connectivity_message)
+                self.storage.upsert_cycle(self.active_cycle)
+                self._log("WARN", connectivity_message, self.active_cycle)
             return
         try:
             self.storage.backup_database("before_order_submit")
@@ -5838,9 +5918,12 @@ class TradingController:
         rollback_side = side.upper()
         connectivity_message = self._order_submission_connectivity_message(rollback_side)
         if connectivity_message:
-            self.active_cycle = StrategyEngine.rollback_unsubmitted_order(cycle, rollback_side, connectivity_message)
-            self.storage.upsert_cycle(self.active_cycle)
-            self._log("WARN", connectivity_message, self.active_cycle)
+            if rollback_side == "BUY":
+                self._apply_buy_preflight_block(cycle, connectivity_message, "connectivity")
+            else:
+                self.active_cycle = StrategyEngine.rollback_unsubmitted_order(cycle, rollback_side, connectivity_message)
+                self.storage.upsert_cycle(self.active_cycle)
+                self._log("WARN", connectivity_message, self.active_cycle)
             return
         if self.contract is None:
             self.contract = self._adapter_qualify_stock(cycle.ticker, cycle.exchange, cycle.currency, cycle.primary_exchange, cycle.con_id)
@@ -5849,47 +5932,67 @@ class TradingController:
             if not bool(rth_status.get("is_open", True)):
                 detail = str(rth_status.get("message") or rth_status.get("source") or "regular trading hours are closed")
                 message = f"RTH guard blocked {side} market order submission: {detail}"
-                self.active_cycle = StrategyEngine.rollback_unsubmitted_order(cycle, side, message)
-                self.storage.upsert_cycle(self.active_cycle)
-                self._log("WARN", message, self.active_cycle)
+                if side.upper() == "BUY":
+                    self._apply_buy_preflight_block(cycle, message, "rth_closed")
+                else:
+                    self.active_cycle = StrategyEngine.rollback_unsubmitted_order(cycle, side, message)
+                    self.storage.upsert_cycle(self.active_cycle)
+                    self._log("WARN", message, self.active_cycle)
+                return
+        if side.upper() == "BUY":
+            delayed_blocker = self._delayed_live_data_blocker_for_buy(cycle)
+            if delayed_blocker is not None:
+                self._apply_buy_preflight_block(
+                    cycle,
+                    str(delayed_blocker["message"]),
+                    str(delayed_blocker.get("code") or "non_live_data"),
+                )
                 return
         payload = dict(action.payload)
         payload, quantity_message = self._normalize_contract_quantity(cycle, payload, side)
         if quantity_message:
             if quantity_message.startswith(("Order quantity", "Calculated quantity", "SELL quantity")):
-                self.active_cycle = StrategyEngine.rollback_unsubmitted_order(cycle, rollback_side, quantity_message)
-                self.storage.upsert_cycle(self.active_cycle)
-                self._log("WARN", quantity_message, self.active_cycle)
+                if rollback_side == "BUY":
+                    self._apply_buy_preflight_block(cycle, quantity_message, "quantity")
+                else:
+                    self.active_cycle = StrategyEngine.rollback_unsubmitted_order(cycle, rollback_side, quantity_message)
+                    self.storage.upsert_cycle(self.active_cycle)
+                    self._log("WARN", quantity_message, self.active_cycle)
                 return
             self._log("INFO", quantity_message, cycle)
         if side.upper() == "BUY":
             cycle.quantity = int(payload.get("quantity") or cycle.quantity)
             self.storage.upsert_cycle(cycle)
         if side.upper() == "BUY":
-            risk_message = self._risk_guard_message_for_buy(cycle, payload)
-            if risk_message:
-                self.active_cycle = StrategyEngine.rollback_unsubmitted_order(cycle, "BUY", risk_message)
-                self.storage.upsert_cycle(self.active_cycle)
-                self._log("WARN", risk_message, self.active_cycle)
+            risk_blocker = self._risk_guard_blocker_for_buy(cycle, payload)
+            if risk_blocker:
+                self._apply_buy_preflight_block(
+                    cycle,
+                    str(risk_blocker["message"]),
+                    str(risk_blocker.get("code") or "risk_guard"),
+                )
                 return
             what_if_message = self._what_if_guard_message_for_buy(cycle, payload)
             if what_if_message:
-                self.active_cycle = StrategyEngine.rollback_unsubmitted_order(cycle, "BUY", what_if_message)
-                self.storage.upsert_cycle(self.active_cycle)
-                self._log("WARN", what_if_message, self.active_cycle)
+                self._apply_buy_preflight_block(cycle, what_if_message, "what_if")
                 return
         if side.upper() == "BUY":
             preflight_message = self._buy_submission_preflight_message(cycle, payload)
             if preflight_message:
-                self.active_cycle = StrategyEngine.rollback_unsubmitted_order(cycle, "BUY", preflight_message)
-                self.storage.upsert_cycle(self.active_cycle)
-                self._log("WARN", preflight_message, self.active_cycle)
+                self._apply_buy_preflight_block(
+                    cycle,
+                    preflight_message,
+                    "submission_preflight",
+                )
                 return
         connectivity_message = self._order_submission_connectivity_message(rollback_side)
         if connectivity_message:
-            self.active_cycle = StrategyEngine.rollback_unsubmitted_order(cycle, rollback_side, connectivity_message)
-            self.storage.upsert_cycle(self.active_cycle)
-            self._log("WARN", connectivity_message, self.active_cycle)
+            if rollback_side == "BUY":
+                self._apply_buy_preflight_block(cycle, connectivity_message, "connectivity")
+            else:
+                self.active_cycle = StrategyEngine.rollback_unsubmitted_order(cycle, rollback_side, connectivity_message)
+                self.storage.upsert_cycle(self.active_cycle)
+                self._log("WARN", connectivity_message, self.active_cycle)
             return
         try:
             self.storage.backup_database("before_order_submit")

@@ -593,7 +593,12 @@ def test_unresolved_market_rule_blocks_before_order_intent_or_submission(
     controller.adapter = adapter
     controller.contract = contract
     controller.connected = True
-    controller.price_snapshot = {"price": 42.50, "fields": {"ask": 42.51, "last": 42.50}}
+    controller.price_snapshot = {
+        "price": 42.50,
+        "selected_market_data_type": 1,
+        "subscription_market_data_type": 1,
+        "fields": {"ask": 42.51, "last": 42.50},
+    }
     controller._latest_connectivity = {
         "local_connected": True,
         "upstream_connected": True,
@@ -613,7 +618,7 @@ def test_unresolved_market_rule_blocks_before_order_intent_or_submission(
     controller._place_trailing_order(cycle, action, "BUY")
 
     assert controller.active_cycle.stage == Stage.WAIT_INITIAL_DROP
-    assert controller.active_cycle.buy_status == "SubmitFailed"
+    assert controller.active_cycle.buy_status == "PreflightBlocked"
     assert "Order-price validation blocked" in controller.active_cycle.error_message
     assert ib.placed_orders == []
     with controller.storage.connect() as con:

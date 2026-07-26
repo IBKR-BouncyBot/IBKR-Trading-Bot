@@ -1,6 +1,6 @@
 # Limitations and non-goals
 
-This document states the boundaries of v3.2.0. Treat each limitation as an operational constraint, not as a future guarantee.
+This document states the boundaries of v3.2.2. Treat each limitation as an operational constraint, not as a future guarantee.
 
 ## Strategy scope
 
@@ -42,11 +42,11 @@ Use separate accounts or deliberate operating procedures when strict position se
 - Freshness is tracked at the ticker-update event level, not as an exchange timestamp for every individual field; a fresh callback can contain an unchanged value.
 - ATR uses prices observed while this application is running and RTH is open. Observation/bar collection continues when adaptation is disabled, but the buffer is not persisted. It resets on restart, is not exchange-native historical ATR, and does not warm up while the application is closed.
 - The recent-volatility filter uses the application’s observed sample range, not a broker historical-volatility product.
-- Normal RTH and session-timing guards use date-specific IBKR contract `liquidHours`, including early closes. The 09:30–16:00 New York fallback is permitted only for recognized U.S. primary exchanges and may not represent holidays, halts, or special sessions perfectly. Non-U.S. or unknown contracts with missing/unusable session metadata fail closed.
+- Normal RTH and session-timing guards use date-specific IBKR contract `liquidHours`, including early closes. `LSE` and `LSEETF` additionally use a verified 08:00-16:30 `Europe/London` continuous-session cap. The cap is not an independently maintained LSE holiday or special early-close calendar: an IBKR late open, earlier close, or closed day remains authoritative. This release does not provide an independent continuous-session calendar for every SMART-routable venue. The 09:30-16:00 New York fallback is permitted only for recognized U.S. primary exchanges and may not represent holidays, halts, or special sessions perfectly. Non-U.S. or unknown contracts with missing/unusable session metadata fail closed.
 
 ## Contract, route, currency, and quantity limits
 
-- v3.2.0 supports only USD and EUR ordinary `STK` contracts selected from an exact IBKR API result. Other currencies and security types remain unsupported.
+- v3.2.2 supports only USD and EUR ordinary `STK` contracts selected from an exact IBKR API result. Other currencies and security types remain unsupported.
 - Order routing is `SMART` only. The primary exchange identifies the selected native listing; direct-routing workflows are not implemented.
 - “SMART supported” is capability-driven, not a guarantee for every listing or venue. BouncyBot requires the selected contract to advertise or accept SMART, `MKT`, `TRAIL`, market-rule pricing, whole-share quantity rules, and usable regular-session metadata. A missing capability blocks the contract.
 - Each portable SQLite database is single-currency. A zero-cycle draft can switch between USD and EUR, but the first persisted cycle locks the database. Mixed USD/EUR history and automatic FX conversion are not supported.
@@ -98,4 +98,4 @@ Use separate accounts or deliberate operating procedures when strict position se
 
 ## Multi-instance ownership boundary
 
-Multiple BouncyBot copies can share a Master API feed. v3.2.0 rejects attribution of any order or callback whose complete `OrderRef` is not already persisted locally. This prevents one installation from acting on another installation's app-prefixed order, but it also means a lost or replaced local database can require manual recovery instead of broad prefix-based discovery.
+Multiple BouncyBot copies can share a Master API feed. v3.2.2 rejects attribution of any order or callback whose complete `OrderRef` is not already persisted locally. This prevents one installation from acting on another installation's app-prefixed order, but it also means a lost or replaced local database can require manual recovery instead of broad prefix-based discovery.

@@ -111,11 +111,11 @@ qtcore.Qt = _Qt()
 qtcore.Signal = lambda *args, **kwargs: _Signal()
 
 qtgui = sys.modules["PySide6.QtGui"]
-for name in "QAction QColor QFont QPainter QPen QBrush".split():
+for name in "QAction QColor QFont QIcon QPainter QPen QBrush QPixmap".split():
     setattr(qtgui, name, Dummy)
 
 qtwidgets = sys.modules["PySide6.QtWidgets"]
-for name in "QApplication QCheckBox QComboBox QDialog QDialogButtonBox QFileDialog QFormLayout QFrame QGridLayout QGroupBox QHeaderView QHBoxLayout QLabel QLineEdit QMainWindow QMessageBox QPushButton QProgressBar QScrollArea QSizePolicy QSpinBox QTabWidget QTableWidget QTableWidgetItem QTextEdit QToolTip QVBoxLayout QWidget QDoubleSpinBox QAbstractSpinBox".split():
+for name in "QApplication QCheckBox QComboBox QDialog QDialogButtonBox QFileDialog QFormLayout QFrame QGridLayout QGroupBox QHeaderView QHBoxLayout QLabel QLineEdit QMainWindow QMessageBox QPushButton QProgressBar QScrollArea QSizePolicy QSpinBox QTabWidget QTableWidget QTableWidgetItem QTextBrowser QTextEdit QToolTip QVBoxLayout QWidget QDoubleSpinBox QAbstractSpinBox".split():
     setattr(qtwidgets, name, Dummy)
 
 module = importlib.import_module("app.gui")

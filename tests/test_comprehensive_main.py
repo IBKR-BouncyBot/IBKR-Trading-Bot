@@ -32,12 +32,16 @@ class FakeApplication:
         self.exit_code = exit_code
         self.styles: list[Any] = []
         self.palette: Any = None
+        self.window_icons: list[Any] = []
 
     def setStyle(self, style: Any) -> None:
         self.styles.append(style)
 
     def setPalette(self, palette: Any) -> None:
         self.palette = palette
+
+    def setWindowIcon(self, icon: Any) -> None:
+        self.window_icons.append(icon)
 
     def exec(self) -> int:
         return self.exit_code

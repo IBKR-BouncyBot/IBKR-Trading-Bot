@@ -1,183 +1,161 @@
-BouncyBot - IBKR Portable Trading Bot v3.2.0
-Exact USD/EUR SMART contracts, indefinite ten-second reconnect, and same-release bugscan correction
-Implementation and verification report
-Date: 2026-07-24
-
-BASELINE
-========
-
-This release was produced from the corrected v3.1.2 source archive:
-
-  IBKR_Trading_Bot_3.1.2_Fill_Reconciliation_Isolation_Stage3_Close_Ruff_Fixed_Source.zip
-
-The v3.1.2 fill reconciliation, late execution/commission handling, strict
-full-OrderRef ownership, diagnostic throttling, execution-time correction,
-Stage-3 profitable pre-close liquidation, documentation, tests, and portable
-build layout were retained. The release version was advanced to 3.2.0.
+BouncyBot - IBKR Portable Trading Bot v3.2.2
+Same-release BouncyBot branding, About information, and documentation maintenance
+Date: 2026-07-26
 
 IMPLEMENTED SCOPE
 =================
 
-1. EXACT USD/EUR ORDINARY-STOCK CONTRACTS OVER SMART
+1. BouncyBot application artwork
+--------------------------------
 
-- Supported contract currencies are USD and EUR.
-- Supported security type is ordinary STK only.
-- Routing is SMART only.
-- Production use requires an exact positive IBKR conId selected from the API
-  contract-search results. Editing the ticker invalidates the prior selection.
-- Qualification rechecks conId, symbol, currency, security type, SMART route,
-  primary exchange, and contract details before monitoring or order submission.
-- ContractDetails capability checks require SMART availability plus the MKT and
-  TRAIL order types used by BouncyBot when those broker fields are supplied.
-- Existing price-dependent market-rule normalization remains authoritative.
-- Whole-share minimum-size and size-increment metadata is validated. BUY size
-  may be rounded down before intent persistence; SELL size is never rounded
-  down because doing so could leave an untracked app-owned remainder.
+The user-supplied BouncyBot artwork is stored as a real PNG at:
 
-2. ONE CONTRACT CURRENCY PER PORTABLE SQLITE DATABASE
+- Images/BouncyBot_logo.png
 
-- The existing app_settings table stores a database_contract_currency key.
-- A zero-cycle draft database may switch between USD and EUR.
-- The first persisted cycle locks the database currency.
-- Existing v3.1.2 databases infer the lock from historical cycles. Legacy blank
-  cycle currencies are interpreted as USD because earlier supported releases
-  were USD-only.
-- Mixed-currency evidence fails closed. BouncyBot does not perform FX
-  conversion for budgets, P/L, risk totals, or reinvestment.
-- A non-zero commission reported in a different currency is retained as a raw
-  broker fact but excluded from local net P/L. Auto-repeat is disabled and a
-  decision event identifies the mismatch.
-- Position, risk, and reinvestment queries use the exact selected conId while
-  retaining conservative compatibility with legacy same-ticker rows that lack
-  a conId. Live account-position lookup does not fall back to another positive
-  conId merely because the ticker symbol matches.
+A square icon derived from the same artwork is stored at:
 
-3. CONTRACT-SPECIFIC SESSION AND QUANTITY SAFETY
+- Images/BouncyBot_app_icon.png
+- Images/BouncyBot_app_icon.ico
 
-- Date-specific liquidHours and timeZoneId from the exact contract drive RTH
-  status and timing guards.
-- The historical New York fallback is allowed only for recognized U.S. equity
-  primary exchanges.
-- A non-U.S. contract with missing, invalid, or unparseable session metadata
-  fails closed instead of inheriting U.S. hours.
-- GUI currency formatting, previews, confirmations, Trade History, audit views,
-  and example data are contract-currency aware.
+The ICO contains 16, 24, 32, 48, 64, 128, and 256 pixel entries. The source
+application, main window, and About dialog load the PNG icon through a resource
+helper that works from both the repository and a PyInstaller one-directory
+bundle.
 
-4. INDEFINITE FIXED-CADENCE LOCAL API RECONNECT
+The Windows build script now:
 
-- A user-requested Connect enables automatic retries before the first socket
-  attempt, so an initial failure does not require another click.
-- A lost local TWS/IB Gateway API socket is retried every 10 seconds.
-- There is no retry limit and no exponential backoff.
-- A successful reconnect resets the failure count and invokes the existing
-  order, execution, position, market-data, and recovery reconciliation paths.
-- Manual Disconnect and application shutdown disable retries.
-- A healthy local API socket with a separate Gateway/TWS-to-IBKR server outage
-  remains under the existing upstream-connectivity recovery logic and is not
-  repeatedly torn down.
+- supplies Images/BouncyBot_app_icon.ico to PyInstaller as the executable icon;
+- bundles the runtime icon and full logo under Images/;
+- validates that all required branding files exist before packaging; and
+- copies the complete Images directory into the versioned release root so the
+  packaged README keeps working.
 
-5. SAME-RELEASE BUGSCAN CORRECTIONS
+2. About > Info screen
+----------------------
 
-- Qualification now verifies the broker-returned symbol, SMART order route, and
-  selected primary exchange instead of relying on conId/currency/security type
-  alone. The selected primary exchange is retained if IBKR returns that field
-  blank.
-- SMART/direct market-data fallback variants use the qualified contract's EUR
-  or USD currency when the raw contract object omits currency. EUR contracts no
-  longer produce a USD fallback request or cache key.
-- Resume checkpoints validate/claim database currency in the same SQLite
-  transaction as the settings and active cycle, closing a shutdown-only path
-  that could otherwise bypass the one-currency lock.
-- Reconnect attempts now observe the full ten-second interval even when a
-  deterministic monotonic clock starts at 0.0.
-- An exactly zero commission is currency-neutral. Non-zero cross-currency
-  mismatch events are deduplicated persistently across controller restarts,
-  including events written by the earlier v3.2.0 build without a dedupe_key.
-- The two supplied Ruff 0.16.0 I001 findings were corrected by using the exact
-  required import-boundary spacing in app/ib_adapter.py and app/storage.py. No
-  imports or runtime bindings changed.
+A new top-level About menu contains an Info action. The dialog shows:
 
-DATABASE COMPATIBILITY
-======================
+- the full BouncyBot logo;
+- the product name and v3.2.2 version;
+- a clickable project link to
+  https://github.com/IBKR-BouncyBot/IBKR-Trading-Bot;
+- the IBKR referral link from README.md;
+- the Cardano/ADA, Midnight/NIGHT, Ethereum/ETH, and Solana/SOL support
+  addresses from the README Thank me section; and
+- a compact live-order/noncommercial-use notice.
 
-v3.2.0 adds no SQLite table or column. The currency lock uses the existing
-app_settings table and is created lazily.
+The support addresses are read-only selectable fields so the operator can copy
+without editing them. The external links use Qt's normal browser handling.
 
-A database created by the corrected v3.1.2 source was populated with:
+3. README and documentation maintenance
+---------------------------------------
 
-- saved connection and strategy settings;
-- one active Stage-4 cycle with an exact conId;
-- one completed BUY and one working SELL order record;
-- one BUY execution; and
-- one audit event.
+README.md now places the full logo immediately below its initial title. It also
+documents the About > Info screen, updates the v3.2.2 release-history summary,
+and keeps the Thank me links and support addresses consistent with the dialog.
 
-Opening that database with v3.2.0 preserved all tables, columns, indexes, core
-rows, settings, cycle state, orders, execution, and audit event byte-for-byte at
-the SQLite value level. One app_settings row was added with the inferred USD
-currency lock. The compatibility check passed.
+The root docs directory now contains only the current v3.2.2 release-specific
+note. Superseded v3.0.17, v3.0.18, and v3.0.19 notes are retained under
+`docs/legacy/` and indexed by `docs/legacy/README.md`. Current documentation
+links were updated to point to those archival paths.
 
-AUTOMATED VERIFICATION
-======================
+4. Existing v3.2.2 GUI scope retained
+-------------------------------------
 
-Final working-source results:
+The same-release source still includes the earlier v3.2.2 presentation changes:
 
-- 971/971 collected pytest cases passed.
-- 966 non-soak tests passed.
-- 5/5 bounded soak tests passed.
-- ResourceWarning was promoted to an error for every test group.
-- 11 focused same-release bugscan tests and 49 combined v3.2.0/current-release
-  tests passed after the final documentation update.
-- 77.5% combined statement/branch coverage passed the 75% repository gate.
-- 917/917 executable application callables were entered, including main.py.
-- 6/6 safety mutation probes were killed.
-- 58/58 deterministic simulation contracts passed across 54 CSV price paths.
-- The two large-database timing tests passed in the complete non-instrumented
-  collection; they were intentionally omitted from Coverage.py instrumentation
-  to keep the release-host run bounded.
-- 139 Python files under app, tests, scripts, and main.py compiled and parsed.
-- The duplicate-definition audit found no duplicate function/class definitions
-  within a scope.
-- 301 relative links across 84 Markdown files resolved successfully.
-- git diff whitespace validation passed.
+- ticker and exact contract information above the current price;
+- content-sized Cycle Audit Timeline columns;
+- an asymmetric Timeline allocation that gives the stage-transition table the
+  remaining width and limits the guard/risk table to its required width; and
+- top-aligned Orders, Executions, and Decision events tables.
 
-RELEASE ARTIFACT VERIFICATION
-=============================
+5. Safety and compatibility
+---------------------------
 
-- The v3.1.2-to-v3.2.0 unified patch applies cleanly to the baseline source.
-- Applying the patch reconstructs the final release tree byte-for-byte.
-- The source ZIP contains all 314 final source files, including the complete
-  application, tests, documentation, images, build scripts, and this report,
-  under the established IBKR-Trading-Bot-main root directory.
-- ZIP integrity testing passed.
-- Databases, logs, captures, backups, exports, caches, compiled Python files,
-  virtual environments, coverage output, build output, and Git metadata are
-  excluded.
-- A clean extraction compiled successfully and independently passed all 971
-  pytest cases with ResourceWarning promoted to an error.
-- SHA-256 checksums are supplied beside the release artifacts.
+No strategy, order-construction, price-selection, risk, RTH/session, recovery,
+fill, commission, P/L, reconnect, or persistence decision changed.
 
-QUALITY-TOOL AND EXTERNAL LIMITS
-================================
+No SQLite table, column, index, or migration was added. Existing v3.2.1 and
+v3.2.2 portable databases, active cycles, orders, executions, settings, audit
+events, and market-capture files remain compatible.
 
-Ruff and Pyright were not installed in the offline Linux release environment,
-so this report does not claim a local execution of either tool against the
-corrected tree. The supplied Windows run used Ruff 0.16.0 and Pyright 1.1.411:
-all 960 then-current tests and Pyright passed, while Ruff identified exactly the
-two import-boundary spacing findings corrected in this same-release update.
-Python compilation, AST checks, exact source assertions for both Ruff fixes, the
-full expanded pytest collection, and the configured repository gates above
-passed. The Windows run_all_tests.bat command remains the direct final
-Ruff/Pyright confirmation before producing the production executable.
+TEST CHANGES
+============
 
-The automated suite uses deterministic adapters and does not prove live IBKR
-behavior. A Windows PyInstaller build, clean-machine executable launch, and
-TWS/IB Gateway paper-account exercise remain external checks. Paper validation
-should include one USD NASDAQ stock, one EUR stock on a European primary
-exchange, exact contract selection, live market data, what-if validation, BUY
-and SELL lifecycles, commission currency, RTH guards, initial-connect failure,
-local socket loss, repeated ten-second retries, and successful reconciliation.
+Focused regressions cover:
 
-This validation is not a claim of exhaustive branch, timing-interleaving,
-exchange, broker, or profitability coverage. It verifies the complete
-repository test collection and the specific v3.2.0 contract/currency/reconnect
-requirements.
+- the submitted full-logo PNG and multi-resolution Windows ICO;
+- README logo placement immediately below the title;
+- source and PyInstaller resource-path resolution;
+- QApplication and MainWindow icon loading;
+- About menu wiring and dialog construction;
+- GitHub/referral link values and parity between README and dialog support
+  addresses;
+- PyInstaller icon/data arguments and release-folder image copying;
+- current-only release-note placement in docs/;
+- retained archival links under docs/legacy/;
+- long-name and classification propagation from ContractDetails;
+- exact price-monitor identity formatting and styling;
+- content-sized Timeline columns and asymmetric table allocation; and
+- top-aligned Orders, Executions, and Decision events tabs.
+
+VERIFICATION RESULTS
+====================
+
+The exact final working tree produced:
+
+- 1,041/1,041 collected pytest cases passed;
+- 0 failures, expected failures, or unexpected passes;
+- ResourceWarning promoted to an error in every complete test partition;
+- 77.9% combined statement/branch coverage against the 75% gate;
+- 927/927 executable application callables entered, including main.py;
+- 17/17 targeted safety mutants killed;
+- 58/58 deterministic strategy simulations passed across 54 CSV paths;
+- 5/5 bounded soak tests passed;
+- all changed application and test modules compiled successfully.
+
+The 1,041 tests were executed in eight mutually exclusive file partitions due
+to the Linux host command-duration limit. The partition results were:
+
+- 216 passed;
+- 45 passed;
+- 212 passed;
+- 48 passed;
+- 212 passed;
+- 48 passed;
+- 211 passed;
+- 49 passed.
+
+The same eight partitions were appended into one Coverage.py data set before
+the final report and callable-entry gate were generated.
+
+Ruff and Pyright were unavailable as runnable tools in the offline Linux
+validation environment. The changed import blocks were manually reviewed and
+all Python files compiled. The authoritative Windows `run_all_tests.bat`
+Ruff/Pyright gate must still be run before producing the production executable.
+
+A native Windows/PySide6 visual and packaging smoke test remains external. It
+should verify the taskbar/title-bar/executable icon at normal Windows icon
+sizes, the About dialog at the intended DPI settings, external browser links,
+and the packaged README logo.
+
+RELEASE ARTIFACT VALIDATION
+===========================
+
+The final release artifacts were validated as follows:
+
+- the source ZIP contains exactly 339 intended source, image, documentation,
+  and test files under one `IBKR-Trading-Bot-main/` root;
+- SQLite databases, logs, captures, backups, caches, coverage output, virtual
+  environments, build output, and Git metadata are excluded;
+- the ZIP passed full compressed-data integrity validation;
+- a clean extraction matched the final working tree byte-for-byte across all
+  339 packaged files;
+- the clean extraction independently passed all 1,041 pytest cases, 17/17
+  mutation probes, 58/58 simulation contracts, and Python compilation;
+- the binary unified patch applies cleanly to the pristine v3.2.2 baseline and
+  reconstructs all 339 final files byte-for-byte, including PNG/ICO assets and
+  the moved v3.0.19 release note; and
+- SHA-256 hashes for the source ZIP, patch, and external verification report
+  are recorded in the release checksum manifest.

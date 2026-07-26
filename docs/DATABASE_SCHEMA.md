@@ -181,7 +181,7 @@ Normal application operation does not delete completed cycle history as part of 
 
 The migration path does not drop tables or rewrite trading history.
 
-v3.1.2 added one defaulted cycle-state column: `buy_remainder_cancel_requested INTEGER NOT NULL DEFAULT 0`. v3.2.0 adds no table or column. Its one-database currency lock uses the existing `app_settings` table and is inferred from historical cycles when upgrading. Existing v3.1.2, v3.1.1, v3.1.0, and v3.0.19 databases open through the normal additive path; a database with valid single-currency history keeps all existing rows.
+v3.1.2 added one defaulted cycle-state column: `buy_remainder_cancel_requested INTEGER NOT NULL DEFAULT 0`. v3.2.0 added no table or column; its one-database currency lock uses the existing `app_settings` table and is inferred from historical cycles when upgrading. v3.2.1 also adds no table, column, or index. The new `PreflightBlocked` value is stored in the existing text status fields. v3.2.2 is GUI-only and likewise adds no table, column, index, or persisted contract-description field. Existing v3.2.0, v3.1.2, v3.1.1, v3.1.0, and v3.0.19 databases open through the normal additive path; a database with valid single-currency history keeps all existing rows.
 
 ## Backups
 

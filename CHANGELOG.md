@@ -2,6 +2,50 @@
 
 This file summarizes behavior-changing and maintenance releases represented by the repository. Historical implementation notes remain in `docs/legacy/` for traceability. Current behavior is documented in `README.md` and the current guides linked from `docs/README.md`.
 
+## v3.2.2
+
+### Changed
+
+- Expanded the Live Strategy price-data monitor so the selected ticker appears above the current price in the same large type. A smaller line now shows the IBKR long name and available exact-contract information, including security type, SMART route, primary exchange, currency, `conId`, local symbol/trading class when useful, and available classification fields.
+- Made Cycle Audit Timeline table columns content-sized instead of allowing a final column to stretch across unused width.
+- Gave the stage-transition table the remaining Timeline width while limiting the guard/risk table to a bounded content width instead of an automatic 50/50 split.
+- Top-aligned the Orders, Executions, and Decision events tables so compact records begin at the top of their tabs.
+- Applied the supplied BouncyBot artwork as the source/runtime window icon and the Windows executable icon; the PyInstaller build now bundles the runtime logo/icon assets and copies `Images/` into the versioned release folder.
+- Added an **About > Info** dialog with the BouncyBot logo, project GitHub link, current version, referral link, and the support addresses listed in the README.
+- Added the BouncyBot logo immediately below the root README title and normalized the `Thank me` links and address labels.
+- Moved the remaining superseded v3.0.17, v3.0.18, and v3.0.19 release-note files out of the root `docs/` directory and retained them under `docs/legacy/`.
+
+### Safety and compatibility
+
+- No strategy, order, risk, recovery, session, persistence, or P/L behavior changed.
+- No SQLite schema object changed. Existing v3.2.1 databases remain forward-compatible.
+- Contract name/classification values are read from the same `ContractDetails` response already required for qualification and are exposed only as read-only price-monitor metadata.
+- Branding assets, the About dialog, build-resource inclusion, and documentation relocation do not change trading state, broker behavior, or the SQLite schema.
+
+### Documentation and tests
+
+- Added focused tests for contract-description propagation, price-monitor identity formatting and styling, content-sized Timeline columns, asymmetric Timeline table allocation, top-aligned audit record tabs, branding assets, application icon loading, About information, build resource inclusion, and legacy-document placement.
+- Added [`docs/V3_2_2_GUI_INFORMATION_AND_AUDIT_LAYOUT.md`](docs/V3_2_2_GUI_INFORMATION_AND_AUDIT_LAYOUT.md) and archived the v3.2.1 release note under `docs/legacy/`.
+
+## v3.2.1
+
+### Fixed
+
+- Added a conservative continuous-session overlay for `LSE` and `LSEETF`. Date-specific IBKR `liquidHours` still determine holidays, late opens, and earlier closes, but the effective session can no longer extend beyond 08:00-16:30 `Europe/London`. The corrected boundary drives RTH state, entry timing, active-BUY cancellation, Stage-3/Stage-4 pre-close liquidation, and RTH-only ATR collection.
+- Prevented the 30-second RTH metadata cache from leaving an LSE/LSEETF contract marked open after its effective continuous close.
+- Throttled repeated unchanged BUY preflight warnings by cycle and blocker category. The first warning is written immediately, repeated warnings are limited to one per 60 seconds, and the blocker continues to be enforced on every cadence.
+- Added the distinct `PreflightBlocked` BUY status for conditions that prevent a live broker submission. `SubmitFailed` remains reserved for an actual submission attempt that fails before broker acceptance can be confirmed.
+
+### Safety and compatibility
+
+- The LSE/LSEETF policy only narrows IBKR's supplied session and fails closed if its verified continuous-session boundary cannot be applied. Other SMART primary exchanges continue to use their IBKR session metadata unless a separately verified venue policy is added.
+- No SQLite schema object changes. Existing v3.2.0 databases remain forward-compatible; the new status value is stored in existing text fields.
+
+### Documentation and tests
+
+- Converted the three production-incident strict expected failures into ordinary passing regressions and added focused coverage for the VWRA continuous-close incident, earlier IBKR closes, non-LSE behavior, cache-boundary closure, malformed policy metadata, monotonic-time-zero audit logging, audit re-emission after the throttle interval, and `PreflightBlocked` persistence without an order intent.
+- Added [`docs/V3_2_1_INCIDENT_GAP_CORRECTIONS.md`](docs/legacy/V3_2_1_INCIDENT_GAP_CORRECTIONS.md) and archived the v3.2.0 release note under `docs/legacy/`.
+
 ## v3.2.0
 
 ### Same-release bugscan correction
@@ -32,7 +76,7 @@ This file summarizes behavior-changing and maintenance releases represented by t
 ### Documentation and tests
 
 - Added deterministic coverage for USD/EUR validation, exact contract search and qualification, SMART/order-type capability checks, European session parsing, non-U.S. RTH failure, size-step normalization, database currency inference and locking, cross-currency commission handling, GUI currency display, active-cycle recovery boundaries, and unlimited ten-second reconnect attempts.
-- Added [`docs/V3_2_0_EUR_SMART_AND_RECONNECT.md`](docs/V3_2_0_EUR_SMART_AND_RECONNECT.md) and archived the v3.1.2 release note under `docs/legacy/`.
+- Added [`docs/V3_2_0_EUR_SMART_AND_RECONNECT.md`](docs/legacy/V3_2_0_EUR_SMART_AND_RECONNECT.md) and archived the v3.1.2 release note under `docs/legacy/`.
 
 ## v3.1.2
 
@@ -123,7 +167,7 @@ This file summarizes behavior-changing and maintenance releases represented by t
 ### Documentation and tests
 
 - Added query-plan, exact-folder discovery, cycle-token isolation, deferred-loading, one-time capture-loading, unrestricted-zoom, realistic-example consistency, product-branding, and potential-loss market-SELL confirmation regressions.
-- Added [`docs/V3_0_19_TRADE_HISTORY_AUDIT_PERFORMANCE.md`](docs/V3_0_19_TRADE_HISTORY_AUDIT_PERFORMANCE.md) and archived the v3.0.18 release note and implementation report under `docs/legacy/`.
+- Added [`docs/legacy/V3_0_19_TRADE_HISTORY_AUDIT_PERFORMANCE.md`](docs/legacy/V3_0_19_TRADE_HISTORY_AUDIT_PERFORMANCE.md) and archived the v3.0.18 release note and implementation report under `docs/legacy/`.
 
 ## v3.0.18
 
@@ -146,7 +190,7 @@ This file summarizes behavior-changing and maintenance releases represented by t
 
 - Added event-driven scheduler, independent-cadence, immediate command wake-up, shutdown preemption, nonblocking market-data and order-polling, database-cache isolation, and live-preflight regression tests.
 - Added a release-metadata consistency regression covering the GUI title, package version, Windows build version, current documentation, changelog, and release-note placement.
-- Added [`docs/V3_0_18_EVENT_DRIVEN_CADENCES.md`](docs/V3_0_18_EVENT_DRIVEN_CADENCES.md) and archived the v3.0.17 release note under `docs/legacy/`.
+- Added [`docs/legacy/V3_0_18_EVENT_DRIVEN_CADENCES.md`](docs/legacy/V3_0_18_EVENT_DRIVEN_CADENCES.md) and archived the v3.0.17 release note under `docs/legacy/`.
 
 ## v3.0.17
 
@@ -168,7 +212,7 @@ This file summarizes behavior-changing and maintenance releases represented by t
 - Added test-infrastructure regressions requiring the Windows full-test path to contain one unfiltered pytest invocation and no separate soak-only pass.
 - Completed a same-version public-repository documentation audit: current guides were corrected, superseded notes moved to `docs/legacy/`, a security policy and archive index were added, and generated/sensitive-file exclusions were expanded.
 - Adopted the PolyForm Noncommercial License 1.0.0 and included `LICENSE` and `SECURITY.md` in assembled Windows release folders.
-- Added [`docs/V3_0_17_FLOWCHART_HISTORY_SELECTOR.md`](docs/legacy/V3_0_17_FLOWCHART_HISTORY_SELECTOR.md).
+- Added [`docs/legacy/V3_0_17_FLOWCHART_HISTORY_SELECTOR.md`](docs/legacy/V3_0_17_FLOWCHART_HISTORY_SELECTOR.md).
 
 ## v3.0.16
 

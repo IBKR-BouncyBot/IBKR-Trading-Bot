@@ -18,7 +18,8 @@ def test_v213_tables_use_shared_space_polish_helpers():
     assert "def _cap_table_columns_for_horizontal_scroll" in GUI
     assert "_cap_table_columns_for_horizontal_scroll(self.history_table" in GUI
     assert "_polish_table_widget(self.recovery_compare_table" in GUI
-    assert "_polish_table_widget(table, stretch_last=True" in GUI
+    assert "stretch_last=False" in GUI
+    assert "_auto_size_table_columns(table" in GUI
 
 
 def test_v213_zoomable_timeline_scrollbars_are_visible():

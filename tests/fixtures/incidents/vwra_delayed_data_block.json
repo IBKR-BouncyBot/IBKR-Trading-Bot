@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "incident_id": "vwra_delayed_data_block_20260724",
+  "title": "VWRA entry condition repeated while the live profile received delayed type-3 quotes",
+  "sanitized": true,
+  "source_evidence": [
+    {
+      "kind": "audit_bundle",
+      "sha256": "acb3012ded3ecb82c1898c094235a38685caa4dc93ae92fdfeceb75baaa6c867"
+    }
+  ],
+  "contract": {
+    "ticker": "VWRA",
+    "con_id": 375855577,
+    "sec_type": "STK",
+    "exchange": "SMART",
+    "primary_exchange": "LSEETF",
+    "currency": "USD",
+    "market_rule_id": 1874,
+    "price_increment": 0.02
+  },
+  "market_data": {
+    "requested_type": 0,
+    "selected_type": 3,
+    "subscription_type": 3,
+    "selected_price": 186.66,
+    "bid": 186.64,
+    "ask": 186.66,
+    "recent_receipt_age_seconds": 0.05
+  },
+  "observed": {
+    "buy_preflight_attempts": 725,
+    "normalized_stop_events": 725,
+    "delayed_data_block_events": 725,
+    "orders_created": 0,
+    "executions_created": 0,
+    "persisted_status": "SubmitFailed"
+  },
+  "expected": {
+    "buy_submission_allowed": false,
+    "order_intent_count": 0,
+    "broker_order_count": 0,
+    "terminal_stage": "1_WAIT_INITIAL_DROP"
+  }
+}

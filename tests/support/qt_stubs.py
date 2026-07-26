@@ -667,7 +667,7 @@ def install_qt_stubs(root: Path) -> dict[str, types.ModuleType]:
     qtcore.Qt = QtNamespace()
     qtcore.Signal = lambda *args, **kwargs: SignalStub(*args, **kwargs)
 
-    for name in ("QAction", "QBrush", "QColor", "QFont", "QPainter", "QPen"):
+    for name in ("QAction", "QBrush", "QColor", "QFont", "QIcon", "QPainter", "QPen", "QPixmap"):
         setattr(qtgui, name, Dummy)
     qtgui.QPalette = PaletteStub
 
@@ -701,6 +701,7 @@ def install_qt_stubs(root: Path) -> dict[str, types.ModuleType]:
         "QSpinBox",
         "QTabWidget",
         "QTableWidget",
+        "QTextBrowser",
         "QTextEdit",
         "QToolTip",
         "QVBoxLayout",

@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "incident_id": "vwra_stage3_market_rule_rounding_20260724",
+  "title": "VWRA displayed trigger crossed before a broker-valid SELL stop protected minimum profit",
+  "sanitized": true,
+  "source_evidence": [
+    {
+      "kind": "audit_bundle",
+      "sha256": "19ca6430eaa7c38940ab03c2838ff76fe4a2a07ba49a8a1c4a7a0caaf7152dd8"
+    }
+  ],
+  "contract": {
+    "ticker": "VWRA",
+    "con_id": 375855577,
+    "sec_type": "STK",
+    "exchange": "SMART",
+    "primary_exchange": "LSEETF",
+    "currency": "USD",
+    "market_rule_id": 1874,
+    "price_increment": 0.02
+  },
+  "cycle": {
+    "stage": "3_WAIT_RISE_TRIGGER",
+    "quantity": 53,
+    "average_buy_price": 186.7349,
+    "minimum_profit_percent": 0.1,
+    "sell_trailing_percent": 0.1,
+    "displayed_trigger": 187.1087
+  },
+  "first_quote": {
+    "selected_price": 187.12,
+    "bid": 187.07,
+    "ask": 187.13,
+    "last": 187.1,
+    "expected_normalized_sell_stop": 186.88,
+    "expected_normalized_minimum_stop": 186.94,
+    "submission_allowed": false
+  },
+  "later_quote": {
+    "selected_price": 187.2,
+    "bid": 187.15,
+    "ask": 187.21,
+    "last": 187.18,
+    "expected_normalized_sell_stop": 186.96,
+    "expected_normalized_minimum_stop": 186.94,
+    "submission_allowed": true
+  }
+}

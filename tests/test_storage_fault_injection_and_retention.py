@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import zipfile
 from contextlib import closing
@@ -107,7 +108,17 @@ def test_rotation_retains_exactly_newest_requested_count(
         lambda: f"20260711T1200{next(counter):02d}000000Z",
     )
 
-    created = [storage.backup_database(f"rotation_{index}", keep=keep) for index in range(8)]
+    created: list[Path | None] = []
+    base_mtime_ns = 1_700_000_000_000_000_000
+    for index in range(8):
+        backup = storage.backup_database(f"rotation_{index}", keep=keep)
+        created.append(backup)
+        if backup is not None:
+            # The production implementation intentionally rotates by mtime.
+            # Give each synthetic backup a distinct filesystem timestamp so
+            # this test is deterministic even on very fast/coarse filesystems.
+            mtime_ns = base_mtime_ns + (index * 1_000_000_000)
+            os.utime(backup, ns=(mtime_ns, mtime_ns))
     backups = storage.list_database_backups()
 
     assert all(path is not None for path in created)

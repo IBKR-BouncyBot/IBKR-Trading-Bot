@@ -46,6 +46,16 @@ _US_EQUITY_PRIMARY_EXCHANGES = frozenset(
     }
 )
 
+# IBKR ``liquidHours`` can describe a broader SMART-routing/liquidity envelope
+# than the continuous session in which an ordinary market order can reliably
+# execute.  Keep venue overrides deliberately narrow and evidence-based.  The
+# LSE publishes an 08:00-16:30 Europe/London continuous trading session; both
+# LSE and LSEETF contracts observed through SMART use that operating boundary.
+_PRIMARY_EXCHANGE_CONTINUOUS_SESSIONS: dict[str, tuple[str, dt.time, dt.time]] = {
+    "LSE": ("Europe/London", dt.time(8, 0), dt.time(16, 30)),
+    "LSEETF": ("Europe/London", dt.time(8, 0), dt.time(16, 30)),
+}
+
 
 class BrokerAdapterError(RuntimeError):
     """Raised for broker/API failures that should pause trading and reconnect."""
@@ -120,6 +130,10 @@ class QualifiedContract:
     time_zone: str = ""
     min_size: float = 1.0
     size_increment: float = 1.0
+    description: str = ""
+    industry: str = ""
+    category: str = ""
+    subcategory: str = ""
 
 
 @dataclass(slots=True)
@@ -251,6 +265,12 @@ class RthStatus:
     session_open: str = ""
     session_close: str = ""
     session_date: str = ""
+    primary_exchange: str = ""
+    effective_session_policy: str = ""
+    ibkr_session_open: str = ""
+    ibkr_session_close: str = ""
+    continuous_session_open: str = ""
+    continuous_session_close: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -1629,6 +1649,14 @@ class IbAsyncTwsAdapter(BrokerAdapter):
             time_zone=time_zone,
             min_size=min_size,
             size_increment=size_increment,
+            description=str(
+                getattr(detail, "longName", "")
+                or getattr(contract, "description", "")
+                or ""
+            ).strip(),
+            industry=str(getattr(detail, "industry", "") or "").strip(),
+            category=str(getattr(detail, "category", "") or "").strip(),
+            subcategory=str(getattr(detail, "subcategory", "") or "").strip(),
         )
 
     @staticmethod
@@ -1993,6 +2021,10 @@ class IbAsyncTwsAdapter(BrokerAdapter):
                 local_symbol=str(getattr(variant, "localSymbol", "") or ""),
                 trading_class=str(getattr(variant, "tradingClass", "") or ""),
                 min_tick=float(getattr(contract, "min_tick", 0.01) or 0.01),
+                description=str(getattr(contract, "description", "") or ""),
+                industry=str(getattr(contract, "industry", "") or ""),
+                category=str(getattr(contract, "category", "") or ""),
+                subcategory=str(getattr(contract, "subcategory", "") or ""),
             )
             self._variant_cache[key] = result
             return result
@@ -2388,6 +2420,112 @@ class IbAsyncTwsAdapter(BrokerAdapter):
         return primary in _US_EQUITY_PRIMARY_EXCHANGES
 
     @staticmethod
+    def _primary_exchange_for_contract(contract: QualifiedContract) -> str:
+        return str(
+            contract.primary_exchange
+            or getattr(contract.raw, "primaryExchange", "")
+            or ""
+        ).upper().strip()
+
+    @staticmethod
+    def _apply_primary_exchange_continuous_session(
+        status: RthStatus,
+        primary_exchange: str,
+        now_utc: Optional[dt.datetime] = None,
+    ) -> RthStatus:
+        """Clamp known venues to their continuous executable session.
+
+        IBKR ``liquidHours`` remains the date/holiday/early-close source.  A
+        venue policy can only make that window narrower; it never extends an
+        IBKR boundary.  This distinction matters for SMART-routed LSE/LSEETF
+        contracts where observed ``liquidHours`` continued twenty minutes past
+        the published 16:30 London continuous close.
+        """
+        primary = str(primary_exchange or "").upper().strip()
+        status.primary_exchange = primary
+        policy = _PRIMARY_EXCHANGE_CONTINUOUS_SESSIONS.get(primary)
+        if policy is None or not status.session_open or not status.session_close:
+            return status
+
+        try:
+            raw_open = dt.datetime.fromisoformat(str(status.session_open).replace("Z", "+00:00"))
+            raw_close = dt.datetime.fromisoformat(str(status.session_close).replace("Z", "+00:00"))
+            if raw_open.tzinfo is None or raw_close.tzinfo is None:
+                raise ValueError("IBKR session boundary is timezone-naive")
+            policy_zone_name, policy_open_time, policy_close_time = policy
+            policy_zone = ZoneInfo(policy_zone_name)
+            if status.session_date:
+                session_date = dt.datetime.strptime(status.session_date, "%Y%m%d").date()
+            else:
+                session_date = raw_open.astimezone(policy_zone).date()
+            continuous_open = dt.datetime.combine(session_date, policy_open_time, tzinfo=policy_zone)
+            continuous_close = dt.datetime.combine(session_date, policy_close_time, tzinfo=policy_zone)
+            if continuous_close <= continuous_open:
+                continuous_close += dt.timedelta(days=1)
+        except Exception as exc:
+            status.is_open = False
+            status.source = "contract_continuous_session_error"
+            status.message = (
+                f"Could not apply the verified {primary} continuous-session policy "
+                f"({exc}); trading is blocked."
+            )
+            status.session_open = ""
+            status.session_close = ""
+            status.effective_session_policy = f"{primary}_continuous_session"
+            return status
+
+        raw_open_utc = raw_open.astimezone(dt.timezone.utc)
+        raw_close_utc = raw_close.astimezone(dt.timezone.utc)
+        continuous_open_utc = continuous_open.astimezone(dt.timezone.utc)
+        continuous_close_utc = continuous_close.astimezone(dt.timezone.utc)
+        effective_open_utc = max(raw_open_utc, continuous_open_utc)
+        effective_close_utc = min(raw_close_utc, continuous_close_utc)
+        now = now_utc or datetime.now(dt.timezone.utc)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=dt.timezone.utc)
+        else:
+            now = now.astimezone(dt.timezone.utc)
+
+        try:
+            contract_zone = ZoneInfo(status.time_zone) if status.time_zone else dt.timezone.utc
+        except Exception:
+            contract_zone = dt.timezone.utc
+
+        status.ibkr_session_open = raw_open.isoformat()
+        status.ibkr_session_close = raw_close.isoformat()
+        status.continuous_session_open = continuous_open.isoformat()
+        status.continuous_session_close = continuous_close.isoformat()
+        status.effective_session_policy = f"{primary}_continuous_session"
+
+        if effective_close_utc <= effective_open_utc:
+            status.is_open = False
+            status.source = "contract_liquid_hours_continuous_session"
+            status.message = (
+                f"{primary} continuous-session policy has no overlap with the IBKR liquidHours "
+                "window; trading is blocked."
+            )
+            status.session_open = ""
+            status.session_close = ""
+            return status
+
+        status.session_open = effective_open_utc.astimezone(contract_zone).isoformat()
+        status.session_close = effective_close_utc.astimezone(contract_zone).isoformat()
+        # Preserve IBKR split-session gaps and CLOSED results while also ending
+        # eligibility at the venue's continuous close.
+        status.is_open = bool(
+            status.is_open
+            and effective_open_utc <= now < effective_close_utc
+        )
+        status.source = "contract_liquid_hours_continuous_session"
+        state = "open" if status.is_open else "closed"
+        status.message = (
+            f"RTH {state} under {primary} continuous-session policy "
+            f"{policy_open_time:%H:%M}-{policy_close_time:%H:%M} {policy_zone_name}; "
+            f"effective close {status.session_close}, IBKR liquidHours close {raw_close.isoformat()}."
+        )
+        return status
+
+    @staticmethod
     def _missing_contract_rth_status(message: str) -> RthStatus:
         now_utc = datetime.now(dt.timezone.utc)
         return RthStatus(
@@ -2396,6 +2534,38 @@ class IbAsyncTwsAdapter(BrokerAdapter):
             message + " Trading is blocked because a non-US contract cannot use US fallback hours.",
             now_utc.isoformat(),
         )
+
+    @staticmethod
+    def _close_cached_rth_status_at_boundary(
+        status: RthStatus,
+        now_utc: Optional[dt.datetime] = None,
+    ) -> RthStatus:
+        """Never let the short metadata cache extend an ended session."""
+        if not status.session_open or not status.session_close:
+            return status
+        try:
+            session_open = dt.datetime.fromisoformat(
+                str(status.session_open).replace("Z", "+00:00")
+            ).astimezone(dt.timezone.utc)
+            session_close = dt.datetime.fromisoformat(
+                str(status.session_close).replace("Z", "+00:00")
+            ).astimezone(dt.timezone.utc)
+            now = now_utc or datetime.now(dt.timezone.utc)
+            if now.tzinfo is None:
+                now = now.replace(tzinfo=dt.timezone.utc)
+            else:
+                now = now.astimezone(dt.timezone.utc)
+        except Exception:
+            return status
+        if now < session_open or now >= session_close:
+            status.is_open = False
+            status.checked_at = now.isoformat()
+            if status.effective_session_policy:
+                status.message = (
+                    f"RTH closed at the effective session boundary {status.session_close}; "
+                    f"policy {status.effective_session_policy}."
+                )
+        return status
 
     def regular_trading_hours_status(self, contract: QualifiedContract) -> RthStatus:
         if not self.is_connected():
@@ -2410,7 +2580,7 @@ class IbAsyncTwsAdapter(BrokerAdapter):
         cached = self._rth_cache.get(cache_key)
         now_mono = time.monotonic()
         if cached and now_mono - cached[0] < 30.0:
-            return cached[1]
+            return self._close_cached_rth_status_at_boundary(cached[1])
         cached_liquid_hours = str(getattr(contract, "liquid_hours", "") or "")
         cached_time_zone = str(getattr(contract, "time_zone", "") or "")
         if cached_liquid_hours and cached_time_zone:
@@ -2419,6 +2589,10 @@ class IbAsyncTwsAdapter(BrokerAdapter):
                 cached_time_zone,
             )
             if parsed is not None:
+                parsed = self._apply_primary_exchange_continuous_session(
+                    parsed,
+                    self._primary_exchange_for_contract(contract),
+                )
                 self._rth_cache[cache_key] = (now_mono, parsed)
                 return parsed
         try:
@@ -2451,6 +2625,10 @@ class IbAsyncTwsAdapter(BrokerAdapter):
                     return status
             parsed = self._parse_liquid_hours_window(liquid, tz_name)
             if parsed is not None:
+                parsed = self._apply_primary_exchange_continuous_session(
+                    parsed,
+                    self._primary_exchange_for_contract(contract),
+                )
                 self._rth_cache[cache_key] = (now_mono, parsed)
                 return parsed
         if self._may_use_us_equity_rth_fallback(contract):

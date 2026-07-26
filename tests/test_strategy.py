@@ -345,6 +345,23 @@ def test_rollback_unsubmitted_buy_order_clears_active_order_fields():
     assert rolled.buy_status == "SubmitFailed"
 
 
+def test_rollback_preflight_blocked_buy_uses_distinct_local_status():
+    cycle = StrategyEngine.start_cycle(settings(), 1, "", 100.0, 0.0)
+    cycle, actions = StrategyEngine.on_price_update(cycle, 94.0)
+    assert actions
+
+    rolled = StrategyEngine.rollback_preflight_blocked_order(
+        cycle,
+        "BUY",
+        "local guard blocked order",
+    )
+
+    assert rolled.stage == Stage.WAIT_INITIAL_DROP
+    assert rolled.buy_status == "PreflightBlocked"
+    assert rolled.buy_order_ref is None
+    assert rolled.error_message == "local guard blocked order"
+
+
 def test_rollback_unsubmitted_sell_order_returns_to_waiting_for_profit():
     cycle = StrategyEngine.start_cycle(settings(), 1, "", 100.0, 0.0)
     cycle, _ = StrategyEngine.on_price_update(cycle, 94.0)

@@ -51,7 +51,7 @@ The complete GUI blocker list is informational; the order path uses fail-closed 
 - Qualification must return the same conId, USD/EUR currency, ordinary STK type, and SMART route.
 - When IBKR advertises route/order metadata, SMART, `MKT`, and `TRAIL` must be supported.
 - The first persisted cycle locks the portable database to one contract currency. A zero-cycle draft may be rebound; a database with cycles may not.
-- A non-U.S. or unknown contract without usable `liquidHours` and `timeZoneId` is closed/blocked rather than assigned U.S. fallback hours.
+- A non-U.S. or unknown contract without usable `liquidHours` and `timeZoneId` is closed/blocked rather than assigned U.S. fallback hours. `LSE` and `LSEETF` are also capped at their verified 08:00-16:30 `Europe/London` continuous session; the cap may narrow but never extend IBKR's date-specific window.
 - A commission in another currency is not subtracted from local net P/L and disables Auto-repeat because no FX conversion is implemented.
 
 ## Broker rejection invariants

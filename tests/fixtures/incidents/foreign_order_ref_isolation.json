@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "incident_id": "foreign_order_ref_isolation_20260723",
+  "title": "Master-client callback feed exposed orders owned by other bot databases",
+  "sanitized": true,
+  "source_evidence": [
+    {
+      "kind": "audit_bundle",
+      "sha256": "6d176e46b14c0bc5da377d79c2ad247d9732e062005b8697ec9916bb07cab511"
+    }
+  ],
+  "local_cycle": {
+    "ticker": "IREN",
+    "order_ref": "IBKRBOT|IREN|CYCLE-000040|LOCAL001|BUY_TRAIL",
+    "stage": "3_WAIT_RISE_TRIGGER",
+    "buy_filled_qty": 231,
+    "buy_commission": 0.855987
+  },
+  "foreign_events": [
+    {
+      "event_type": "COMMISSION_REPORT",
+      "ticker": "NBIS",
+      "order_ref": "IBKRBOT|NBIS|CYCLE-000025|FOREIGN1|SELL_TRAIL",
+      "execution_id": "FOREIGN-NBIS-SELL",
+      "commission": 0.597084,
+      "currency": "USD"
+    },
+    {
+      "event_type": "COMMISSION_REPORT",
+      "ticker": "LAC",
+      "order_ref": "IBKRBOT|LAC|CYCLE-000001|FOREIGN2|FORCED_SELL_MARKET",
+      "execution_id": "FOREIGN-LAC-SELL",
+      "commission": 0.5,
+      "currency": "USD"
+    },
+    {
+      "event_type": "ORDER_ERROR",
+      "ticker": "NBIS",
+      "order_ref": "IBKRBOT|NBIS|CYCLE-000025|FOREIGN1|SELL_TRAIL",
+      "error_code": 201,
+      "message": "Synthetic foreign rejection"
+    }
+  ],
+  "expected": {
+    "local_cycle_unchanged": true,
+    "foreign_broker_events_unowned": 3,
+    "foreign_decision_events": 0,
+    "foreign_executions_applied": 0
+  }
+}

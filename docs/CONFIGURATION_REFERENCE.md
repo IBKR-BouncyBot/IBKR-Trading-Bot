@@ -1,6 +1,6 @@
 # Configuration reference
 
-This document describes the persisted connection and strategy settings in v3.2.0. Values shown as defaults are the dataclass defaults used for a new configuration. Saved SQLite settings override them after the first run.
+This document describes the persisted connection and strategy settings in v3.2.2. Values shown as defaults are the dataclass defaults used for a new configuration. Saved SQLite settings override them after the first run.
 
 ## Connection settings
 
@@ -148,7 +148,7 @@ The reinvestment calculation uses completed cycles stored by this application, n
 | Cancel SELL trail and liquidate before close | off | Stage 3: at the cutoff, submits an RTH-only `DAY` market SELL only when selected current price is strictly above average BUY price; commissions are ignored. A working protective SELL is cancelled and confirmed terminal first. Stage 4: cancels the final native SELL trail, waits for terminal status, then sells the remaining app-owned shares. Market execution can still realize a loss. |
 | Liquidate before close | `5 min` | Cutoff before the contract-specific RTH close. Valid range `1-240 min`. The field is active only when the optional policy is enabled. |
 
-The first/last-minute entry windows, BUY cancellation window, and optional Stage-3/Stage-4 liquidation cutoff use the exact contract's IBKR `liquidHours` boundaries and `timeZoneId`. This includes date-specific early closes. The conservative New York fallback is used only for recognized U.S. equity primary exchanges. A non-U.S. contract with missing, invalid, or unparseable session metadata fails closed; BouncyBot does not guess U.S. hours for a European listing.
+The first/last-minute entry windows, BUY cancellation window, and optional Stage-3/Stage-4 liquidation cutoff use the exact contract's effective session boundaries. IBKR `liquidHours` and `timeZoneId` provide the date, holiday, late-open, and early-close facts. For `LSE` and `LSEETF`, BouncyBot additionally caps the window at the verified 08:00-16:30 `Europe/London` continuous session. The conservative New York fallback is used only for recognized U.S. equity primary exchanges. A non-U.S. contract with missing, invalid, or unparseable session metadata fails closed; BouncyBot does not guess U.S. hours for a European listing.
 
 The data-type, what-if, stale-data, ATR, RTH, and controller-state checks are independent of the optional hard-risk master where implemented. Turning off hard limits does not turn off the normal broker/data safety checks. Local socket state, Gateway/TWS upstream IBKR connectivity, post-reconnect reconciliation, and the requirement for an actual post-connect/post-recovery ticker event are controller invariants rather than user-disableable settings.
 

@@ -20,7 +20,7 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
-$version = "3.2.0"
+$version = "3.2.2"
 $appName = "IBKRTradingBot"
 $releaseName = "${appName}_${version}_Windows"
 $releaseDirectory = Join-Path $root "release"
@@ -143,7 +143,25 @@ function Invoke-PyInstallerLogged {
 # Use the pyinstaller.exe entry point first. This is the validated Windows path.
 # PyInstaller already sees the direct imports; forcing a broad dependency walk can
 # make analysis substantially slower in some Python/PyInstaller environments.
-$pyinstallerArgs = @("--clean", "--noconsole", "--onedir", "--name", $appName, "main.py")
+$iconAsset = Join-Path $root "Images\BouncyBot_app_icon.ico"
+$iconPngAsset = Join-Path $root "Images\BouncyBot_app_icon.png"
+$logoAsset = Join-Path $root "Images\BouncyBot_logo.png"
+foreach ($asset in @($iconAsset, $iconPngAsset, $logoAsset)) {
+    if (!(Test-Path $asset)) {
+        throw "Required branding asset not found: $asset"
+    }
+}
+$pyinstallerArgs = @(
+    "--clean",
+    "--noconsole",
+    "--onedir",
+    "--name",
+    $appName,
+    "--icon=Images\BouncyBot_app_icon.ico",
+    "--add-data=Images\BouncyBot_app_icon.png;Images",
+    "--add-data=Images\BouncyBot_logo.png;Images",
+    "main.py"
+)
 if (Test-Path $pyinstallerExe) {
     $pyinstallerExitCode = Invoke-PyInstallerLogged -FilePath $pyinstallerExe -Arguments $pyinstallerArgs -LogPath $buildLog
 } else {
@@ -169,6 +187,7 @@ Copy-Item -Path (Join-Path $root "CHANGELOG.md") -Destination $releaseRoot -Forc
 Copy-Item -Path (Join-Path $root "LICENSE") -Destination $releaseRoot -Force
 Copy-Item -Path (Join-Path $root "SECURITY.md") -Destination $releaseRoot -Force
 Copy-Item -Path (Join-Path $root "docs") -Destination $releaseRoot -Recurse -Force
+Copy-Item -Path (Join-Path $root "Images") -Destination $releaseRoot -Recurse -Force
 
 $quickStart = @"
 BouncyBot - IBKR Portable Trading Bot $version

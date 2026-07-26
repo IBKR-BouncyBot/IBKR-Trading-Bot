@@ -11,12 +11,13 @@ from __future__ import annotations
 import sys
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QPalette
+from PySide6.QtGui import QColor, QIcon, QPalette
 from PySide6.QtWidgets import QApplication, QMessageBox, QStyleFactory
 
 from app.controller import TradingController
 from app.gui import MainWindow
 from app.lockfile import SingleInstanceError, SingleInstanceLock
+from app.paths import resource_path
 
 
 def _force_light_palette(app: QApplication) -> None:
@@ -37,6 +38,13 @@ def _force_light_palette(app: QApplication) -> None:
     palette.setColor(QPalette.HighlightedText, QColor("#ffffff"))
     palette.setColor(QPalette.PlaceholderText, QColor("#6b7280"))
     app.setPalette(palette)
+
+
+def _apply_application_icon(app: QApplication) -> None:
+    """Apply the packaged/source BouncyBot icon when the asset is available."""
+    icon_path = resource_path("Images", "BouncyBot_app_icon.png")
+    if icon_path.is_file():
+        app.setWindowIcon(QIcon(str(icon_path)))
 
 
 def _install_session_shutdown_hook(app: QApplication, window: MainWindow) -> None:
@@ -67,6 +75,7 @@ def main() -> int:
     # changes cannot produce unreadable foreground/background combinations.
     app.setStyle(QStyleFactory.create("Fusion"))
     _force_light_palette(app)
+    _apply_application_icon(app)
     lock = SingleInstanceLock()
     try:
         lock.acquire()

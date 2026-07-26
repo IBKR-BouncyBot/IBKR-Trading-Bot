@@ -1,6 +1,6 @@
 # Deterministic offline behavior tests
 
-This document describes the current non-GUI, non-Windows, non-network test layer in v3.2.0. It covers strategy behavior, controller state transitions, broker-event handling, persistence and recovery, shutdown checkpoints, GUI contracts, and bounded performance behavior.
+This document describes the current non-GUI, non-Windows, non-network test layer in v3.2.2. It covers strategy behavior, controller state transitions, broker-event handling, persistence and recovery, shutdown checkpoints, GUI contracts, and bounded performance behavior.
 
 The suite deliberately avoids:
 
@@ -93,18 +93,33 @@ The deterministic assertions verify that:
 
 The tests check configured deque limits, ATR history limits, price-history limits, sequence deduplication, cycle/reinvestment totals, event draining, subscription generations, and thread-count stability. They are deterministic functional soak tests, not hardware performance benchmarks.
 
+### Sanitized production-incident replay
+
+`tests/test_production_incident_replays.py` uses compact fixtures reduced from the available IREN, NBIS, and VWRA audit evidence. The tests drive production controller, storage, strategy, and adapter-normalization paths for invalid-price rejection, partial-fill cancellation races, late commissions, strict foreign-`OrderRef` isolation, delayed data, broker-valid Stage-3 SELL rounding, and LSE session characterization. `tests/test_v321_incident_gap_fixes.py` verifies the corrected LSE/LSEETF continuous boundary, stable repeated-block throttling, and the distinct `PreflightBlocked` status. `tests/test_incident_fixture_integrity.py` enforces fixture provenance and privacy. See [`PRODUCTION_INCIDENT_REPLAY_TESTS.md`](PRODUCTION_INCIDENT_REPLAY_TESTS.md).
+
 ### Safety mutation smoke gate
 
 `scripts/run_mutation_smoke.py` copies the application package into temporary directories, applies one deliberate defect at a time, and runs an independent probe. Production sources are never edited in place.
 
-The gate currently requires tests to kill six safety mutations:
+The gate currently requires tests to kill seventeen safety mutations:
 
 1. reversing BUY slippage sizing;
 2. excluding an exact BUY trailing-stop boundary;
 3. excluding an exact SELL trailing-stop boundary;
 4. excluding the exact initial-drop boundary;
 5. using the larger instead of overlapping BUY/SELL quantity for P/L;
-6. using the wrong completed-exit leg when calculating app-owned unsold quantity.
+6. using the wrong completed-exit leg when calculating app-owned unsold quantity;
+7. rounding a BUY order price downward instead of upward;
+8. rounding a SELL order price upward instead of downward;
+9. selecting the old market-rule band at an exact low-edge boundary;
+10. sending a what-if trailing order with `transmit=False`;
+11. allowing a second contract currency into a locked database;
+12. changing the automatic reconnect interval away from ten seconds;
+13. counting the same IBKR execution identifier more than once;
+14. allowing a late zero commission to erase an already recorded non-zero commission;
+15. moving the verified LSE continuous close from 16:30 to 16:50 London;
+16. relabelling a local BUY preflight block as `SubmitFailed`; and
+17. suppressing the first throttled warning when monotonic time starts at zero.
 
 A surviving mutant fails the validation run.
 
@@ -125,20 +140,13 @@ The complete Windows launcher runs the deterministic layers in this order:
 3. Enforce the 75% combined statement/branch threshold.
 4. Write `coverage.json` and `coverage.xml`.
 5. Require entry into every effective executable application callable.
-6. Run the six-mutant safety smoke gate.
+6. Run the seventeen-mutant safety smoke gate.
 7. Run all deterministic CSV simulations.
 8. Run Ruff and Pyright through `run_all_tests.bat`.
 
 The Unix `scripts/run_tests.sh` helper still separates non-soak coverage from the soak subset to keep that development-host command practical.
 
-The current v3.2.0 validation inventory is:
-
-- 966 non-soak tests, all expected to pass;
-- 5 bounded soak tests;
-- 917/917 effective executable application callables entered;
-- 77.5% measured combined statement/branch coverage against the 75% minimum;
-- 6/6 safety mutants killed;
-- 58 validated CSV scenario contracts across 54 price-path files.
+The final v3.2.2 verification executed **1,041/1,041** collected pytest cases with no expected failures, measured **77.9%** combined statement/branch coverage, entered **927/927** executable application callables, killed **17/17** targeted safety mutants, and passed **58/58** deterministic simulation contracts across 54 CSV price paths. The three former strict expected failures have been converted into ordinary regressions.
 
 The CSV matrix itself passes cleanly in the offline Linux environment. The full Windows launcher remains the authoritative combined run for Coverage.py, Ruff, Pyright, and native launcher behavior.
 

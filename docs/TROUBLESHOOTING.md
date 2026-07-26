@@ -53,9 +53,11 @@ Inspect Gateway/TWS messages and Internet connectivity. After restoration, wait 
 
 BouncyBot requires usable IBKR `liquidHours` and `timeZoneId` for a non-U.S. or unknown primary exchange. It deliberately does not apply the 09:30–16:00 New York fallback to an EUR listing. Re-select the exact contract, confirm Gateway/TWS returns ContractDetails, and inspect the contract's primary exchange, timezone, holiday, and session metadata. Leave trading blocked when those facts cannot be verified.
 
+For `LSE` and `LSEETF`, the Live Strategy RTH status should show an effective close no later than 16:30 `Europe/London` (for example 17:30 CEST when IBKR reports the contract in `MET`). The audit status retains the later raw IBKR `liquidHours` close for comparison. If the effective policy cannot be applied, trading fails closed rather than reverting to the broader broker window.
+
 ## The bot keeps reconnecting every 10 seconds
 
-After an established local API socket is lost, v3.2.0 retries the saved TWS/Gateway endpoint every 10 seconds without a retry limit. This is expected. Start or log into the selected platform, correct the host/port/client ID, or click **Disconnect** to stop the attempts. Application shutdown also stops them.
+After an established local API socket is lost, v3.2.2 retries the saved TWS/Gateway endpoint every 10 seconds without a retry limit. This is expected. Start or log into the selected platform, correct the host/port/client ID, or click **Disconnect** to stop the attempts. Application shutdown also stops them.
 
 A local reconnect is not enough for trading: the upstream IBKR link, broker reconciliation, exact contract, and a new actual market-data event must recover before strategy processing resumes.
 
@@ -77,9 +79,11 @@ Hover the **Trading** box. It lists all currently evaluated blockers, not only t
 
 A blocker is usually intentional. Do not disable it solely to make the status green; verify the underlying data and operating assumption. A normal guard pause is not a recovery fault, so the Reconciliation tab intentionally disables Reconcile and resume and other broker/local-state-changing buttons while leaving Refresh from IBKR/TWS and audit export available.
 
+When no live order was attempted, the cycle status should read `PreflightBlocked`, not `SubmitFailed`. Repeated identical blocker warnings are intentionally audit-throttled to one event per 60 seconds; the absence of a new row during that interval does not mean the guard stopped running.
+
 ## A BUY becomes Inactive or Rejected
 
-Open the Live Strategy event list or the Cycle Audit broker/decision events and locate the retained IBKR error code and message. In v3.2.0 a definitive no-fill rejection moves the cycle to `ERROR` and does not automatically retry. This is intentional; restarting the same invalid request can produce repeated broker rejections.
+Open the Live Strategy event list or the Cycle Audit broker/decision events and locate the retained IBKR error code and message. In v3.2.2 a definitive no-fill rejection moves the cycle to `ERROR` and does not automatically retry. This is intentional; restarting the same invalid request can produce repeated broker rejections.
 
 For `Invalid Price`, minimum-variation, or invalid-stop errors:
 

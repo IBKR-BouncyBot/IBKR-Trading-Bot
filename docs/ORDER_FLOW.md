@@ -32,6 +32,8 @@ The controller requires, as applicable:
 
 The controller returns the first fail-closed blocker to the submission path while the GUI can display the complete evaluated list.
 
+If one of these checks blocks the action before an order intent is written, the cycle returns to Stage 1 with BUY status `PreflightBlocked`. `SubmitFailed` is reserved for a live submission attempt that raises before broker acceptance can be confirmed. An unchanged preflight blocker is enforced on every cadence but its audit warning is limited to one event per 60 seconds for the same cycle and blocker category.
+
 An account-wide external stock position is not part of this BUY block. Only the local unsold quantity reconstructed from application fills is considered.
 
 ## Connectivity boundary for every order

@@ -1,6 +1,10 @@
 # BouncyBot - an IBKR Portable Trading Bot 
 
-**Current release: v3.2.0**
+<p align="center">
+  <img src="Images/BouncyBot_logo.png" alt="BouncyBot logo" width="640" />
+</p>
+
+**Current release: v3.2.2**
 
 ![Simple-view](Images/Trading-Simple-view.png)
 
@@ -124,6 +128,7 @@ The application records fills, commissions received from IBKR, gross and net P/L
 - Single-instance lock to reduce the risk of two copies using the same database and API client configuration.
 - UTC audit timestamps throughout the application, with live receipt time and broker-decoded execution time preserved separately.
 - CSV trade-history export and diagnostic audit bundles.
+- BouncyBot application branding and an **About > Info** screen with the project repository, referral link, and copyable support addresses.
 
 <img width="1800" height="1880" alt="BouncyBot_extended_GitHub_style_layout_fixed" src="https://github.com/user-attachments/assets/8f964ac5-f5be-4cdf-b425-7955ce2ce1c3" />
 
@@ -189,7 +194,9 @@ After upstream restoration, normal processing remains paused until the applicati
 
 The controller evaluates configured blockers before a BUY is transmitted. The top-right **Trading** status shows a compact blocker summary; its tooltip lists all currently evaluated blockers. Depending on configuration and runtime state, blockers include:
 
-The regular-session open/close window comes from the exact qualified IBKR contract's date-specific `liquidHours` and `timeZoneId`. The same parsed boundaries drive the first-minutes, last-minutes, and cancel-before-close controls, so early closes are respected. The weekday 09:30–16:00 New York fallback is retained only for recognized U.S. equity primary exchanges. A non-U.S. contract with missing or invalid session metadata fails closed instead of inheriting U.S. hours.
+The regular-session open/close window comes from the exact qualified IBKR contract's date-specific `liquidHours` and `timeZoneId`. For `LSE` and `LSEETF`, BouncyBot intersects that broker window with the verified 08:00-16:30 `Europe/London` continuous session, so ordinary timing-sensitive orders do not use a later auction/post-continuous `liquidHours` endpoint. An IBKR holiday or earlier close still wins. The same effective boundaries drive the first-minutes, last-minutes, cancel-before-close, and RTH-only ATR controls. The weekday 09:30-16:00 New York fallback is retained only for recognized U.S. equity primary exchanges. A non-U.S. contract with missing or invalid session metadata fails closed instead of inheriting U.S. hours.
+
+When a BUY is prevented before any live order is submitted, the cycle now records `PreflightBlocked` rather than `SubmitFailed`. Repeated unchanged preflight warnings for the same cycle and blocker category are written to the audit log at most once per 60 seconds; the guard itself is still evaluated and enforced on every strategy cadence.
 
 - a disconnected local API socket, lost Gateway-to-IBKR server link, or incomplete post-reconnect reconciliation;
 - no actual post-connect/post-recovery ticker event, or missing, invalid, cached-only, or stale selected price;
@@ -373,6 +380,10 @@ When Windows requests an orderly session shutdown, such as an update restart, si
 
 The selected connection profile defines paper versus live mode. Live mode adds explicit warnings and guard behavior. Validate the entire workflow with an IBKR paper account and realistic market-data conditions before deciding whether to use live mode.
 
+### About and project information
+
+Use **About > Info** to view the BouncyBot logo, current application version, the project GitHub link, the IBKR referral link, and the same copyable support addresses listed in the [Thank me](#thank-me) section.
+
 ## Data, backups, and diagnostics
 
 The application writes these paths beside the project or packaged executable:
@@ -411,9 +422,9 @@ Run:
 .\run_all_tests.bat
 ```
 
-This performs Python compilation, every collected pytest test (including the bounded soak tests) with `ResourceWarning` checks, statement and branch coverage with a 75% minimum, a generated per-callable coverage check, a six-mutant safety smoke gate, all deterministic CSV simulations, Ruff, and Pyright. The Windows full-test path applies no pytest marker filter. Every effective executable callable under `app/` and in `main.py` must be entered by at least one test. Failure at any required stage produces a nonzero result.
+This performs Python compilation, every collected pytest test (including the bounded soak tests) with `ResourceWarning` checks, statement and branch coverage with a 75% minimum, a generated per-callable coverage check, a seventeen-mutant safety smoke gate, all deterministic CSV simulations, Ruff, and Pyright. The Windows full-test path applies no pytest marker filter. Every effective executable callable under `app/` and in `main.py` must be entered by at least one test. Failure at any required stage produces a nonzero result.
 
-The offline suite includes broker-event permutations, generated controller state sequences, numerical/payload properties, recovery decision matrices, differential simulations, crash/restart and schema-migration cases, storage fault injection, Gateway outage sequences, and multi-instance isolation. The CSV gate validates 58 explicit scenario contracts across 54 price-path files, including threshold edges, gap fills, partial fills, RTH transitions, protective exits, slippage buffers, sizing, reinvestment, and zero-trailing market-order branches. It does not launch the GUI, connect to IBKR, or use real market/account/order data. See [Deterministic offline behavior tests](docs/OFFLINE_BEHAVIOR_TESTS.md).
+The offline suite includes broker-event permutations, generated controller state sequences, numerical/payload properties, recovery decision matrices, differential simulations, crash/restart and schema-migration cases, storage fault injection, Gateway outage sequences, and multi-instance isolation. The CSV gate validates 58 explicit scenario contracts across 54 price-path files, including threshold edges, gap fills, partial fills, RTH transitions, protective exits, slippage buffers, sizing, reinvestment, and zero-trailing market-order branches. It does not launch the GUI, connect to IBKR, or use real market/account/order data. See [Deterministic offline behavior tests](docs/OFFLINE_BEHAVIOR_TESTS.md) and [production incident replay tests](docs/PRODUCTION_INCIDENT_REPLAY_TESTS.md).
 
 ### Direct Python tests
 
@@ -448,16 +459,17 @@ dist\IBKRTradingBot\IBKRTradingBot.exe
 and creates the versioned release folder and final ZIP using the same naming pattern as IBKR Market Replay Lab:
 
 ```text
-release\IBKRTradingBot_3.2.0_Windows\
+release\IBKRTradingBot_3.2.2_Windows\
   GUI\IBKRTradingBot.exe
   docs\
+  Images\
   README.md
   CHANGELOG.md
   LICENSE
   SECURITY.md
   QUICK_START.txt
 
-release\IBKRTradingBot_3.2.0_Windows.zip
+release\IBKRTradingBot_3.2.2_Windows.zip
 release\SHA256SUMS.txt
 ```
 
@@ -494,6 +506,7 @@ app/
   strategy.py              Pure five-stage state machine
   timeline_scaling.py      Audit-chart time and price scaling
 
+Images/                    BouncyBot branding, application icons, and screenshots
 docs/                      Current guides; archived release notes are under docs/legacy/
 scripts/                   Launch, test, simulation, quality, and build utilities
 tests/                     Unit, integration, regression, and simulation tests
@@ -526,21 +539,23 @@ Superseded release-specific documents are indexed under [docs/legacy](docs/legac
 
 ## Release history
 
-- [v3.2.0 release note](docs/V3_2_0_EUR_SMART_AND_RECONNECT.md) — exact USD/EUR ordinary-stock SMART contracts, one contract currency per portable database, contract capability/session checks, and fixed ten-second indefinite local reconnect.
+- [v3.2.2 release note](docs/V3_2_2_GUI_INFORMATION_AND_AUDIT_LAYOUT.md) — richer price-monitor instrument identity, more compact Cycle Audit tables, BouncyBot application branding, and the **About > Info** screen.
+- [v3.2.1 release note](docs/legacy/V3_2_1_INCIDENT_GAP_CORRECTIONS.md) — LSE/LSEETF continuous-session timing, throttled repeated preflight audit warnings, and the distinct `PreflightBlocked` status.
+- [v3.2.0 release note](docs/legacy/V3_2_0_EUR_SMART_AND_RECONNECT.md) — exact USD/EUR ordinary-stock SMART contracts, one contract currency per portable database, contract capability/session checks, and fixed ten-second indefinite local reconnect.
 - [v3.1.2 release note](docs/legacy/V3_1_2_FILL_RECONCILIATION_AND_STAGE3_CLOSE.md) — terminal BUY settlement, idempotent late fills/commissions, strict full-OrderRef isolation, stable diagnostics, corrected execution timestamps, and profitable Stage-3 pre-close liquidation.
 - [v3.1.1 release note](docs/legacy/V3_1_1_IBKR_ORDER_VALIDATION.md) — market-rule order-price normalization, strict what-if validation, broker rejection diagnostics, and no-fill rejection circuit breaker.
 - [v3.1.0 release note](docs/legacy/V3_1_0_CLOSE_BEFORE_RTH_LIQUIDATION.md) — optional Stage-4 cancel-confirm-market liquidation before the contract-specific RTH close.
-- [v3.0.19 release note](docs/V3_0_19_TRADE_HISTORY_AUDIT_PERFORMANCE.md) — faster Trade History audits, unrestricted audit zoom, realistic sample data, the BouncyBot product name, and an explicit potential-loss market-SELL confirmation.
+- [v3.0.19 release note](docs/legacy/V3_0_19_TRADE_HISTORY_AUDIT_PERFORMANCE.md) — faster Trade History audits, unrestricted audit zoom, realistic sample data, the BouncyBot product name, and an explicit potential-loss market-SELL confirmation.
 - [CHANGELOG.md](CHANGELOG.md) — consolidated release history.
-- [Archived release notes](docs/legacy/README.md) — implementation history for v3.0.17 and earlier.
+- [Archived release notes](docs/legacy/README.md) — superseded release-specific implementation history.
 
 ## Thank me
 
-- IBKR Referal (get up to $1000 in IBKR stock) : https://ibkr.com/referral/gerrit585
-- Cardano / ADA : addr1q85w2v474ywzx868s69pghygek3vrhxm69e7c6ysuf28qhv8kmj5wd059grxl82f8h5mtyzl87cvqj8ldv2e0las7tnsdej9ax
-- Midnight / NIGHT: addr1qyre4dsc3xdgcr8w3lmfdy038f9w0statt7q7d8urfvgyh58kmj5wd059grxl82f8h5mtyzl87cvqj8ldv2e0las7tnsu66x8a 
-- Etherium / ETH : 0xe1283022e1166df70092ff3094a1d2bd79102c3a
-- Solana / SOL : 78EG5myV7Xjx4iNWt7mnn3BHULMNhLchFAcggnyeiiyb
+- [IBKR referral (get up to $1000 in IBKR stock)](https://ibkr.com/referral/gerrit585)
+- Cardano / ADA: `addr1q85w2v474ywzx868s69pghygek3vrhxm69e7c6ysuf28qhv8kmj5wd059grxl82f8h5mtyzl87cvqj8ldv2e0las7tnsdej9ax`
+- Midnight / NIGHT: `addr1qyre4dsc3xdgcr8w3lmfdy038f9w0statt7q7d8urfvgyh58kmj5wd059grxl82f8h5mtyzl87cvqj8ldv2e0las7tnsu66x8a`
+- Ethereum / ETH: `0xe1283022e1166df70092ff3094a1d2bd79102c3a`
+- Solana / SOL: `78EG5myV7Xjx4iNWt7mnn3BHULMNhLchFAcggnyeiiyb`
 
 ## License
 

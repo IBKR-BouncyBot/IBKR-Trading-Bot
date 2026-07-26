@@ -1,8 +1,8 @@
 # Automated test coverage specification
 
-This document defines the automated verification scope for v3.2.0. It is the maintainer-facing map between the application modules, test layers, and repository quality gates.
+This document defines the automated verification scope for v3.2.2. It is the maintainer-facing map between the application modules, test layers, and repository quality gates.
 
-The v3.2.0 offline test architecture includes focused coverage for shutdown checkpoints, event-driven worker scheduling, independent cadences, nonblocking broker reads, GUI responsiveness, broker connectivity, reconciliation, flowchart history selection, the optional Stage-3/Stage-4 close-before-RTH workflows, market-rule price normalization, strict what-if interpretation, broker error retention, rejection circuit breaking, exact USD/EUR SMART contract selection, one-currency database enforcement, atomic resume-checkpoint currency validation, qualified-currency market-data fallbacks, persistent commission-mismatch idempotence, contract capability/session validation, and fixed ten-second indefinite reconnect behavior. Tests use temporary databases, deterministic clocks and data, protocol-shaped broker doubles, and headless Qt doubles. They do not connect to IBKR, launch TWS/Gateway, or transmit orders.
+The v3.2.2 offline test architecture includes focused coverage for shutdown checkpoints, event-driven worker scheduling, independent cadences, nonblocking broker reads, GUI responsiveness, broker connectivity, reconciliation, flowchart history selection, the optional Stage-3/Stage-4 close-before-RTH workflows, market-rule price normalization, strict what-if interpretation, broker error retention, rejection circuit breaking, exact USD/EUR SMART contract selection, one-currency database enforcement, atomic resume-checkpoint currency validation, qualified-currency market-data fallbacks, persistent commission-mismatch idempotence, contract capability/session validation, and fixed ten-second indefinite reconnect behavior. Tests use temporary databases, deterministic clocks and data, protocol-shaped broker doubles, and headless Qt doubles. They do not connect to IBKR, launch TWS/Gateway, or transmit orders.
 
 ## Test objectives
 
@@ -12,7 +12,7 @@ The automated suite applies six complementary checks:
 2. **Statement and branch coverage** measures exercised application paths and prevents the combined coverage percentage from dropping below 75%.
 3. **Per-callable entry coverage** requires every executable application function, method, property getter, and nested helper reported by Coverage.py to execute at least one statement.
 4. **Bounded deterministic soak tests** exercise high-volume buffers, histories, cycles, and reconnect sequences. The complete Windows gate includes them in the same Coverage.py run as every other pytest test.
-5. **Safety mutation smoke tests** require focused probes to detect six deliberate financial/state-machine defects in temporary copies.
+5. **Safety mutation smoke tests** require focused probes to detect seventeen deliberate financial/state-machine defects in temporary copies.
 6. **Deterministic CSV simulations** run complete price-path scenarios through the strategy simulator independently of the unit-test fakes.
 
 Per-callable entry coverage is intentionally not described as complete path coverage. A function can contain mutually exclusive branches, external failure modes, timing races, or platform-specific behavior that require additional tests or manual verification. The line/branch report and assertions remain necessary.
@@ -23,10 +23,10 @@ The callable gate is derived from the effective function map in `coverage.json`.
 
 | Application module | Executable callables entered | Primary automated focus |
 |---|---:|---|
-| `app/controller.py` | 202 / 202 | Event-driven command queue, independent broker/strategy/database/GUI/maintenance cadences, lifecycle, connectivity, guards, recovery, execution reconstruction, order-side effects, snapshots |
+| `app/controller.py` | 205 / 205 | Event-driven command queue, independent broker/strategy/database/GUI/maintenance cadences, lifecycle, connectivity, guards, recovery, execution reconstruction, order-side effects, snapshots |
 | `app/flowchart_model.py` | 10 / 10 | Stage-card construction, labels, details, filtering |
-| `app/gui.py` | 345 / 345 | Formatting, blocker/recovery classification, widget state, command gating, timelines, panels, dialogs, layout helpers |
-| `app/ib_adapter.py` | 127 / 127 | Data normalization, event ownership, connectivity, market data, contracts, orders, executions, positions |
+| `app/gui.py` | 348 / 348 | Formatting, blocker/recovery classification, widget state, command gating, timelines, panels, dialogs, layout helpers |
+| `app/ib_adapter.py` | 130 / 130 | Data normalization, event ownership, connectivity, market data, contracts, orders, executions, positions |
 | `app/ib_platform.py` | 11 / 11 | Profiles, path discovery, socket probing, process-launch outcomes |
 | `app/lockfile.py` | 8 / 8 | Acquisition, stale-lock handling, release, context-manager behavior |
 | `app/market_data_capture.py` | 22 / 22 | Bounded buffers, capture lifecycle, serialization, asynchronous write behavior |
@@ -35,12 +35,14 @@ The callable gate is derived from the effective function map in `coverage.json`.
 | `app/paths.py` | 7 / 7 | Source/packaged runtime paths and generated directories |
 | `app/simulation.py` | 5 / 5 | Simulation state, fill assumptions, result serialization |
 | `app/storage.py` | 79 / 79 | Schema migration, CRUD, ledger queries, exports, backup/restore validation |
-| `app/strategy.py` | 22 / 22 | Five-stage transitions, fills, partial fills, editable settings, error states |
+| `app/strategy.py` | 23 / 23 | Five-stage transitions, fills, partial fills, editable settings, error states |
 | `app/timeline_scaling.py` | 28 / 28 | Parsing, filtering, robust bounds, downsampling, marker/time-axis placement |
 | `main.py` | 3 / 3 | Stable palette setup, single-instance startup, window lifecycle, cleanup |
-| **Total** | **917 / 917** | All effective executable application callables |
+| **Total** | **927 / 927** | All effective executable application callables |
 
-The counts are a snapshot of v3.2.0. The gate recalculates them from the current source and coverage report on every full test run. Adding a callable without a test causes the callable-coverage step to fail.
+The counts are a snapshot of v3.2.2. The gate recalculates them from the current source and coverage report on every full test run. Adding a callable without a test causes the callable-coverage step to fail.
+
+The final v3.2.2 release verification executed **1,041/1,041** collected pytest cases with no expected failures, measured **77.9%** combined statement/branch coverage, entered **927/927** executable application callables, killed **17/17** targeted safety mutants, and passed **58/58** deterministic simulation contracts across 54 CSV price paths.
 
 ## Test layers
 
@@ -77,6 +79,11 @@ SQLite, controller, capture, and locking tests use `pytest` temporary directorie
 
 The expanded deterministic layers cover callback permutation, generated controller sequences, numerical/payload properties, recovery decision matrices, simulation equivalence, multi-instance isolation, abrupt subprocess termination, schema migration, backup and filesystem failures, upstream connectivity sequences, and bounded high-volume operation. [`OFFLINE_BEHAVIOR_TESTS.md`](OFFLINE_BEHAVIOR_TESTS.md) maps these tests to their invariants and exclusions.
 
+
+### Production-incident replay and migration layer
+
+Sanitized fixtures derived from the available IREN, NBIS, and VWRA audit evidence drive the real controller, strategy, adapter-normalization, and storage boundaries. They cover market-rule price rejection, partial-fill cancellation races, late commissions, strict cross-instance ownership, delayed market-data blocking, Stage-3 executable-stop rounding, and the LSE continuous-close mismatch. Synthetic databases created by v3.0.19, v3.1.1, and v3.1.2 verify additive, idempotent migration into the current storage layer. Fixture provenance, privacy checks, resolved-incident regressions, and the audit-bundle sanitizer are documented in [`PRODUCTION_INCIDENT_REPLAY_TESTS.md`](PRODUCTION_INCIDENT_REPLAY_TESTS.md).
+
 ### Test-infrastructure self-tests
 
 `tests/test_test_infrastructure.py` verifies the callable gate itself, requires the Windows launcher to run one unfiltered pytest invocation, and confirms that the Unix launcher retains its explicit coverage/soak stages. This prevents a future script edit from silently bypassing a test category.
@@ -96,6 +103,14 @@ Focused tests cover exact positive `conId` selection, USD/EUR ordinary-`STK` val
 ### v3.2.0 same-release bugscan layer
 
 Eleven regressions cover broker-returned symbol/route/primary-exchange mismatches, retention of a selected primary exchange when IBKR omits it, EUR fallback-market-data request identity, atomic shutdown-checkpoint currency enforcement, the reconnect interval at monotonic time zero, zero-valued cross-currency commissions, persistent commission-mismatch deduplication after a controller restart, and compatibility with mismatch events written by the earlier v3.2.0 build. Static release tests also pin the exact Ruff-safe import boundaries reported by Ruff 0.16.0.
+
+### v3.2.1 production-incident correction layer
+
+Focused tests convert the three former strict expected failures into ordinary regressions. They verify the 08:00-16:30 `Europe/London` continuous-session cap for `LSE` and `LSEETF`, preservation of earlier IBKR closes, unchanged behavior for other primary exchanges, fail-closed malformed policy metadata, effective-close enforcement through the short RTH cache, stable one-per-60-second BUY preflight audit throttling including monotonic time zero, no repeated price-normalization audit rows while delayed data is already known to block the BUY, and the distinct `PreflightBlocked` status without an order intent.
+
+### v3.2.2 GUI information and audit-layout layer
+
+Focused tests cover qualified-contract long-name and classification propagation, exact instrument-identity formatting in the price monitor, shared large styling for ticker and selected price, compact content-based Timeline columns, bounded width for the guard/risk table, remaining-width allocation for the stage-transition table, and top-aligned Orders, Executions, and Decision events tabs. The new GUI helpers and all three lazy tab builders are entered through headless Qt doubles.
 
 ## Full validation sequence
 

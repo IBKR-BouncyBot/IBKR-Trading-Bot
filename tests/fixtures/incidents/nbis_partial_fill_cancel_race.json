@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "incident_id": "nbis_partial_fill_cancel_race_20260720",
+  "title": "NBIS second partial BUY fill arrived while cancellation was pending",
+  "sanitized": true,
+  "source_evidence": [
+    {
+      "kind": "audit_bundle",
+      "sha256": "7c092f6f7a935cc1e9a2bd9b6717e1b754cfcb998390aa40ef62cf43582c9de5"
+    }
+  ],
+  "contract": {
+    "ticker": "NBIS",
+    "con_id": 88819736,
+    "sec_type": "STK",
+    "exchange": "SMART",
+    "primary_exchange": "NASDAQ",
+    "currency": "USD"
+  },
+  "order": {
+    "order_ref": "IBKRBOT|NBIS|CYCLE-000023|INCIDENT23|BUY_TRAIL",
+    "quantity": 56,
+    "initial_stop": 186.62,
+    "trailing_percent": 0.71
+  },
+  "events": [
+    {
+      "event_type": "EXEC_DETAILS",
+      "execution_id": "NBIS-PART-1",
+      "shares": 28,
+      "price": 185.04,
+      "commission": 0.355941,
+      "cumulative_filled": 28,
+      "remaining": 28,
+      "status": "Submitted"
+    },
+    {
+      "event_type": "ORDER_STATUS",
+      "status": "PendingCancel",
+      "cumulative_filled": 28,
+      "remaining": 28
+    },
+    {
+      "event_type": "EXEC_DETAILS",
+      "execution_id": "NBIS-PART-2",
+      "shares": 28,
+      "price": 185.04,
+      "commission": 0.005684,
+      "cumulative_filled": 56,
+      "remaining": 0,
+      "status": "Filled"
+    },
+    {
+      "event_type": "COMMISSION_REPORT",
+      "execution_id": "NBIS-PART-1",
+      "commission": 0.355941,
+      "currency": "USD"
+    },
+    {
+      "event_type": "COMMISSION_REPORT",
+      "execution_id": "NBIS-PART-2",
+      "commission": 0.005684,
+      "currency": "USD"
+    }
+  ],
+  "expected": {
+    "buy_filled_qty": 56,
+    "average_buy_price": 185.04,
+    "buy_commission": 0.361625,
+    "execution_count": 2,
+    "terminal_stage": "3_WAIT_RISE_TRIGGER",
+    "sellable_quantity": 56
+  }
+}

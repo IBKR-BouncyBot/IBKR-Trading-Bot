@@ -720,6 +720,24 @@ class StrategyEngine:
         return next_cycle
 
     @staticmethod
+    def rollback_preflight_blocked_order(
+        cycle: CycleState,
+        side: str,
+        message: str,
+    ) -> CycleState:
+        """Roll back a locally blocked order without labelling it a broker failure."""
+        next_cycle = StrategyEngine.rollback_unsubmitted_order(cycle, side, message)
+        side = side.upper().strip()
+        if side == "BUY":
+            next_cycle.buy_status = "PreflightBlocked"
+        elif side == "PROTECTIVE_SELL":
+            next_cycle.protective_sell_status = "PreflightBlocked"
+        elif side == "SELL":
+            next_cycle.sell_status = "PreflightBlocked"
+        next_cycle.touch()
+        return next_cycle
+
+    @staticmethod
     def mark_error(cycle: CycleState, message: str) -> CycleState:
         next_cycle = copy(cycle)
         next_cycle.stage = Stage.ERROR

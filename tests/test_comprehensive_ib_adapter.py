@@ -384,12 +384,20 @@ def test_qualify_stock_sets_identity_and_minimum_tick(live_adapter: tuple[IbAsyn
             orderTypes="MKT,TRAIL",
             liquidHours="20260724:0930-20260724:1600",
             timeZoneId="US/Eastern",
+            longName="APPLE INC",
+            industry="Technology",
+            category="Computers",
+            subcategory="Consumer Electronics",
         )
     ]
     contract = adapter.qualify_stock("aapl", "smart", "usd", "nasdaq", 987)
     assert contract.ticker == "AAPL"
     assert contract.con_id == 987
     assert contract.min_tick == pytest.approx(0.005)
+    assert contract.description == "APPLE INC"
+    assert contract.industry == "Technology"
+    assert contract.category == "Computers"
+    assert contract.subcategory == "Consumer Electronics"
     assert adapter.qualify_stock("AAPL", "SMART", "USD", "NASDAQ", 987).raw is qualified
 
     ib.qualified_contracts = []

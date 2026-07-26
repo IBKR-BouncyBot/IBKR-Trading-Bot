@@ -41,7 +41,8 @@ For Gateway paper/live and TWS paper/live as available:
 - Verify a GBP, CFD, missing-conId, or non-SMART/incompatible result is unavailable or fails closed.
 - Confirm the price and inspect bid, ask, last/market source, previous close, currency, exact conId, contract minimum tick, size rules, data type, and RTH status. At order preflight, inspect the selected route-specific market rule and increment in the order/audit diagnostics.
 - For a contract whose `minTick` is smaller than the valid increment at the current price, verify the submitted stop follows the applicable `reqMarketRule` band rather than the smallest contract-level tick.
-- For a non-U.S. listing, verify the session uses the contract's `liquidHours`/`timeZoneId`, including daylight-saving and early-close behavior where practical. Missing metadata must block rather than use U.S. hours.
+- For a non-U.S. listing, verify the session uses the contract's `liquidHours`/`timeZoneId`, including daylight-saving and early-close behavior where practical. For `LSE`/`LSEETF`, verify the effective close is the earlier of the IBKR close and 16:30 `Europe/London`, and that a cached open status becomes closed at that boundary. Missing metadata must block rather than use U.S. hours.
+- Force a persistent delayed-data or other BUY preflight blocker. Verify the cycle records `PreflightBlocked`, no order intent is created, the first warning is immediate, repeated identical warnings are limited to one per 60 seconds, and the order remains blocked on every evaluation.
 - Disconnect/reconnect and verify actual-update timestamps/counters resume with a fresh subscription; cached fields alone must not clear data-pending state.
 
 ## 5. Workflow lock

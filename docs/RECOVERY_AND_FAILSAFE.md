@@ -47,7 +47,7 @@ The controller does not cancel a native order solely because connectivity was in
 
 For the live adapter, an active cycle without a positive stored conId cannot be resumed automatically. Qualification must return the same conId, contract currency, ordinary `STK` type, and SMART route. A mismatch or a database currency-lock conflict moves the cycle to `MANUAL_REVIEW` or blocks recovery rather than searching by symbol or rewriting the stored identity.
 
-For a recognized U.S. primary exchange, the legacy New York RTH fallback remains available when IBKR session metadata cannot be read. A non-U.S. or unknown contract requires usable `liquidHours` and `timeZoneId`; missing metadata fails closed. BouncyBot does not assign U.S. hours to an EUR contract.
+For a recognized U.S. primary exchange, the legacy New York RTH fallback remains available when IBKR session metadata cannot be read. A non-U.S. or unknown contract requires usable `liquidHours` and `timeZoneId`; missing metadata fails closed. BouncyBot does not assign U.S. hours to an EUR contract. For `LSE` and `LSEETF`, the effective boundary is additionally capped at the verified 08:00-16:30 `Europe/London` continuous session so recovery and pre-close replacement logic do not treat a later broker auction/post-continuous endpoint as ordinary RTH.
 
 The database contains only one contract currency. BouncyBot does not convert P/L, risk limits, reinvestment, or commissions through FX. A commission received in another currency is retained for audit, excluded from local net P/L, and disables Auto-repeat for that cycle.
 

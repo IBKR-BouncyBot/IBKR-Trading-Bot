@@ -1,6 +1,6 @@
 # Testing, simulation, and quality gates
 
-The repository includes pure-model tests, controller/storage integration tests, protocol-shaped broker-boundary tests, generated event/state tests, crash and fault-injection tests, bounded soak tests, mutation smoke tests, headless GUI component tests, deterministic CSV simulations, and Windows build-script checks. The automated suite does not require a live IBKR session. The current module-by-module coverage map and gate semantics are documented in [`AUTOMATED_TEST_COVERAGE.md`](AUTOMATED_TEST_COVERAGE.md).
+The repository includes pure-model tests, controller/storage integration tests, protocol-shaped broker-boundary tests, sanitized production-incident replays, historical migration fixtures, generated event/state tests, crash and fault-injection tests, bounded soak tests, mutation smoke tests, headless GUI component tests, deterministic CSV simulations, and Windows build-script checks. The automated suite does not require a live IBKR session. The current module-by-module coverage map and gate semantics are documented in [`AUTOMATED_TEST_COVERAGE.md`](AUTOMATED_TEST_COVERAGE.md).
 
 ## Windows full validation
 
@@ -109,6 +109,14 @@ The focused release suite verifies market-rule exchange mapping, positional rule
 
 The focused v3.2.0 suite verifies exact API-selected positive `conId` identity, USD/EUR ordinary-stock and SMART-only validation, required contract capability metadata, European exchange-session parsing and fail-closed missing schedules, one-currency database locking and legacy USD inference, exact-conId ledger/risk scoping, no-FX commission mismatch handling, quantity increments, currency-aware presentation, and fixed ten-second reconnect attempts that continue until connection, manual Disconnect, or shutdown.
 
+### v3.2.1 incident-gap correction regressions
+
+The focused v3.2.1 suite verifies the 08:00-16:30 `Europe/London` continuous-session cap for `LSE` and `LSEETF`, preservation of an earlier IBKR close, unchanged non-LSE behavior, fail-closed malformed policy metadata, effective-close enforcement through the short RTH cache, immediate and stable repeated-preflight audit throttling, suppression of redundant price-normalization audit rows while delayed data already blocks a BUY, and the `PreflightBlocked` status without an order intent.
+
+### v3.2.2 GUI information and Cycle Audit layout regressions
+
+The focused v3.2.2 suite verifies propagation of the IBKR long name and classification fields from contract qualification into the price snapshot, formatting of the exact contract identity above the selected price, equal large-font styling for ticker and price, content-sized Timeline columns, asymmetric width allocation for transition and guard/risk tables, and top-aligned Orders, Executions, and Decision events tabs. It also runs the table builders through the headless Qt layer rather than relying only on static source assertions.
+
 ### Controller tests
 
 Use test adapters/headless signals to validate:
@@ -155,9 +163,9 @@ The callable gate proves entry, not exhaustive path coverage. Assertions, branch
 
 ### Deterministic offline behavior expansion
 
-The non-GUI offline expansion adds broker callback permutations, generated controller invariants, numerical/payload properties, recovery decision matrices, differential simulation, multi-instance isolation, subprocess crash/restart tests, schema migration and restore fixtures, storage fault injection, Gateway outage sequences, bounded soak tests, and a six-mutant safety gate. The complete scope and exclusions are in [`OFFLINE_BEHAVIOR_TESTS.md`](OFFLINE_BEHAVIOR_TESTS.md).
+The non-GUI offline expansion adds broker callback permutations, generated controller invariants, numerical/payload properties, recovery decision matrices, differential simulation, multi-instance isolation, subprocess crash/restart tests, schema migration and restore fixtures, sanitized production-incident replays, storage fault injection, Gateway outage sequences, bounded soak tests, and a seventeen-mutant safety gate. The complete scope and exclusions are in [`OFFLINE_BEHAVIOR_TESTS.md`](OFFLINE_BEHAVIOR_TESTS.md). The incident-derived layer is documented in [`PRODUCTION_INCIDENT_REPLAY_TESTS.md`](PRODUCTION_INCIDENT_REPLAY_TESTS.md).
 
-The corrected v3.2.0 inventory contains 966 non-soak tests, five bounded soak tests, and 58 validated CSV scenario contracts across 54 price-path files. The complete collection contains 971 pytest cases. The final repository gate reports 77.5% combined statement/branch coverage, entry into all 917/917 effective executable application callables, 6/6 safety mutants killed, and all 58 simulation contracts passing.
+The final v3.2.2 verification executed **1,041/1,041** collected pytest cases with no expected failures, measured **77.9%** combined statement/branch coverage, entered **927/927** executable application callables, killed **17/17** targeted safety mutants, and passed **58/58** deterministic simulation contracts across 54 CSV price paths. All three former strict expected-failure sentinels are now ordinary passing regressions; no known-gap xfail is retained for these behaviors.
 
 ### Build-script tests
 

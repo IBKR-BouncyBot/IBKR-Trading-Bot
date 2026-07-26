@@ -16,6 +16,13 @@ def app_dir() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
+def resource_path(*parts: str) -> Path:
+    """Return a bundled read-only asset path in source or PyInstaller mode."""
+    bundle_root = getattr(sys, "_MEIPASS", None)
+    base = Path(bundle_root) if bundle_root else Path(__file__).resolve().parents[1]
+    return base.joinpath(*parts)
+
+
 def database_path() -> Path:
     return app_dir() / "bot_state.sqlite"
 

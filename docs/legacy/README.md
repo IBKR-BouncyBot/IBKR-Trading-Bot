@@ -2,13 +2,16 @@
 
 These files document superseded releases and implementation history. They are retained for traceability, but they may describe old labels, defaults, layouts, tests, or limitations.
 
-For current behavior, use the [project README](../../README.md), the [current documentation index](../README.md), the [changelog](../../CHANGELOG.md), and the current [`v3.2.0 release note`](../V3_2_0_EUR_SMART_AND_RECONNECT.md).
+For current behavior, use the [project README](../../README.md), the [current documentation index](../README.md), the [changelog](../../CHANGELOG.md), and the current [`v3.2.2 release note`](../V3_2_2_GUI_INFORMATION_AND_AUDIT_LAYOUT.md).
 
 ## Version 3 release notes
 
+- [`V3_2_1_INCIDENT_GAP_CORRECTIONS.md`](V3_2_1_INCIDENT_GAP_CORRECTIONS.md) — v3.2.1 LSE/LSEETF continuous-session timing, repeated-preflight audit throttling, and the distinct `PreflightBlocked` status
+- [`V3_2_0_EUR_SMART_AND_RECONNECT.md`](V3_2_0_EUR_SMART_AND_RECONNECT.md) — v3.2.0 exact USD/EUR ordinary-stock SMART contracts, one-currency database enforcement, capability/session validation, and fixed ten-second reconnect
 - [`V3_1_2_FILL_RECONCILIATION_AND_STAGE3_CLOSE.md`](V3_1_2_FILL_RECONCILIATION_AND_STAGE3_CLOSE.md) — v3.1.2 terminal BUY settlement, idempotent late fills/commissions, strict full-OrderRef isolation, corrected execution timestamps, and profitable Stage-3 pre-close liquidation
 - [`V3_1_1_IBKR_ORDER_VALIDATION.md`](V3_1_1_IBKR_ORDER_VALIDATION.md) — v3.1.1 IBKR market-rule price validation, strict what-if checks, broker rejection diagnostics, and rejection circuit breaker
 - [`V3_1_0_CLOSE_BEFORE_RTH_LIQUIDATION.md`](V3_1_0_CLOSE_BEFORE_RTH_LIQUIDATION.md) — v3.1.0 optional Stage-4 cancel-confirm-market liquidation before RTH close
+- [`V3_0_19_TRADE_HISTORY_AUDIT_PERFORMANCE.md`](V3_0_19_TRADE_HISTORY_AUDIT_PERFORMANCE.md) — v3.0.19 faster Trade History audits, unrestricted audit zoom, sample data, branding, and market-SELL confirmation
 - [`V3_0_18_EVENT_DRIVEN_CADENCES.md`](V3_0_18_EVENT_DRIVEN_CADENCES.md) — v3.0.18 event-driven controller cadences and nonblocking scheduled reads
 - [`V3_0_18_IMPLEMENTATION_TEST_REPORT.txt`](V3_0_18_IMPLEMENTATION_TEST_REPORT.txt) — retained v3.0.18 implementation and verification report
 - [`V3_0_17_FLOWCHART_HISTORY_SELECTOR.md`](V3_0_17_FLOWCHART_HISTORY_SELECTOR.md) — v3.0.17 flowchart history selector, complete Windows test run, and public-repository preparation
