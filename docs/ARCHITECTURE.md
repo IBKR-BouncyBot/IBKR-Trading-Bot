@@ -28,7 +28,7 @@ TradingController (worker thread)
 
 `main.py` creates the Qt application, applies the selected Fusion palette, acquires the single-instance lock, creates the controller/window, connects Qt's session-management commit signal, and starts the Qt event loop. A Windows-controlled session termination calls the GUI's non-interactive checkpoint handler through a direct Qt connection. The handler saves resume state but does not stop the worker or exit from inside the session callback; this keeps the application usable if another program cancels shutdown. If shutdown proceeds, normal event-loop cleanup stops the worker and releases the process lock.
 
-For a watchdog replacement, the GUI exits Qt with a dedicated internal code and a one-time handoff token. `main.py` attempts controller shutdown, releases the same single-instance lock, and uses `os.execv` to replace the complete source or frozen process. The replacement consumes the handoff once before the worker starts. There is no second worker thread and no intentional overlap between old and new BouncyBot processes.
+For a watchdog replacement, the GUI exits Qt with a dedicated internal code and a one-time handoff token. `main.py` attempts controller shutdown, releases the same single-instance lock, and uses a properly quoted `subprocess.Popen` argument list on Windows or `os.execv` on POSIX to relaunch the complete source or frozen process. The replacement consumes the handoff once before the worker starts. There is no second worker thread and no intentional overlap between old and new BouncyBot processes.
 
 `app/paths.py` defines the portable application directory:
 

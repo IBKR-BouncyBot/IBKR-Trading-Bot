@@ -2,10 +2,16 @@
 
 These files document superseded releases and implementation history. They are retained for traceability, but they may describe old labels, defaults, layouts, tests, or limitations.
 
-For current behavior, use the [project README](../../README.md), the [current documentation index](../README.md), the [changelog](../../CHANGELOG.md), and the current [`v3.3.0 release note`](../V3_3_0_DARK_MODE_AUDIT_AND_WINDOWS_RELEASE.md).
+For current behavior, use the [project README](../../README.md), the [current documentation index](../README.md), the [changelog](../../CHANGELOG.md), and the current [`v3.6.0 release note`](../V3_6_0_SELL_RECONCILIATION_AND_HISTORY_ROBUSTNESS.md).
 
 ## Version 3 release notes
 
+- [`V3_5_0_GUI_LIGHT_MODE_AND_LAYOUT.md`](V3_5_0_GUI_LIGHT_MODE_AND_LAYOUT.md) — v3.5.0 price-monitor-first Advanced layout, light-mode startup, and reliable workflow-button state after theme switching.
+- [`V3_5_0_IMPLEMENTATION_TEST_REPORT.txt`](V3_5_0_IMPLEMENTATION_TEST_REPORT.txt) — retained v3.5.0 implementation and verification report.
+- [`V3_4_0_RELIABILITY_AND_RECOVERY_FIXES.md`](V3_4_0_RELIABILITY_AND_RECOVERY_FIXES.md) — protective-SELL completion gates, watchdog path quoting, bounded capture shutdown, deterministic recovery state, and lockfile hardening.
+- [`V3_4_0_IMPLEMENTATION_TEST_REPORT.txt`](V3_4_0_IMPLEMENTATION_TEST_REPORT.txt) — retained v3.4.0 implementation and verification report.
+- [`V3_3_0_DARK_MODE_AUDIT_AND_WINDOWS_RELEASE.md`](V3_3_0_DARK_MODE_AUDIT_AND_WINDOWS_RELEASE.md) — v3.3.0 Fusion themes, corrected audit layouts, Windows packaging, worker/storage watchdog, and authenticated process recovery
+- [`V3_3_0_IMPLEMENTATION_TEST_REPORT.txt`](V3_3_0_IMPLEMENTATION_TEST_REPORT.txt) — retained v3.3.0 implementation and verification report
 - [`V3_2_2_GUI_INFORMATION_AND_AUDIT_LAYOUT.md`](V3_2_2_GUI_INFORMATION_AND_AUDIT_LAYOUT.md) — v3.2.2 richer price-monitor identity, compact audit layout, BouncyBot branding, About information, and documentation cleanup
 - [`V3_2_1_INCIDENT_GAP_CORRECTIONS.md`](V3_2_1_INCIDENT_GAP_CORRECTIONS.md) — v3.2.1 LSE/LSEETF continuous-session timing, repeated-preflight audit throttling, and the distinct `PreflightBlocked` status
 - [`V3_2_0_EUR_SMART_AND_RECONNECT.md`](V3_2_0_EUR_SMART_AND_RECONNECT.md) — v3.2.0 exact USD/EUR ordinary-stock SMART contracts, one-currency database enforcement, capability/session validation, and fixed ten-second reconnect

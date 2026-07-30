@@ -2,6 +2,78 @@
 
 This file summarizes behavior-changing and maintenance releases represented by the repository. Historical implementation notes remain in `docs/legacy/` for traceability. Current behavior is documented in `README.md` and the current guides linked from `docs/README.md`.
 
+## v3.6.0
+
+### Fixed
+
+- Required final SELL settlement to prove that persisted cycle executions exactly equal the app-owned BUY-filled quantity, that no broker remainder is still working, and that an aggregate fill price is available before completing the cycle.
+- Persisted nonterminal final-SELL partials and kept them under order supervision. Terminal partials now enter `ERROR` with `SELL_PARTIAL_TERMINAL`; underfills, overfills, contradictory remainders, missing historical executions, and missing aggregate prices enter `ERROR` with `SELL_QUANTITY_MISMATCH`.
+- Aggregated prior and replacement SELL executions for cancel-and-replace/manual-close exits so exact closure, weighted fill price, commission, and P/L remain correct when the final market order is sized only for the unsold remainder.
+- Treated a partially filled SELL as working until its broker status is terminal, preventing a manual market-close request from overlapping a still-working remainder.
+- Rejected a terminal protective SELL that reports both the full app-owned filled quantity and a positive remainder instead of waiting indefinitely or treating the position as exactly closed.
+- Made formatted Trade History currency, percentage, and quantity columns sort by their underlying finite numeric values rather than display text.
+- Reported audit-detail read and Trade History export failures in operator dialogs instead of allowing synchronous GUI-slot exceptions to escape or showing a false success message.
+
+### Safety and compatibility
+
+- Ambiguous final/protective SELL facts fail closed for manual reconciliation rather than completing a cycle without exact broker/local proof.
+- Entry calculations, ATR behavior, order construction, sizing, market-data/RTH behavior, account/contract ownership, watchdog restart, and database schema are unchanged.
+- v3.6.0 adds no SQLite table, column, index, migration, or persisted setting. Existing v3.5.0 databases and portable state remain compatible.
+
+### Documentation and tests
+
+- Added focused regressions for partial and contradictory SELL states, exact aggregate cancel-and-replace settlement, working-partial cancellation before manual replacement, numeric sorting, and GUI audit/export failures.
+- Added [`docs/V3_6_0_SELL_RECONCILIATION_AND_HISTORY_ROBUSTNESS.md`](docs/V3_6_0_SELL_RECONCILIATION_AND_HISTORY_ROBUSTNESS.md), archived the v3.5.0 release note and implementation report under `docs/legacy/`, and updated current release/build metadata to v3.6.0.
+
+## v3.5.0
+
+### Changed
+
+- Moved the **Price data monitor** above the connection and strategy configuration sections in Advanced and Debug views, matching the first operational section shown in Simple view.
+- Changed startup appearance to always use the validated light Fusion palette. Dark mode remains available for the current session through **View > Dark mode**.
+
+### Fixed
+
+- Reapplied the current input-lock and workflow-button gates after light/dark theme switches. The bottom command buttons no longer remain disabled until the top lock is toggled twice.
+- Made cached command-card updates reassert the underlying button enablement even when the semantic state text is unchanged.
+
+### Safety and compatibility
+
+- This release changes GUI layout and presentation state only. Trading strategy, order construction, controller behavior, recovery behavior, persistence, and broker ownership rules are unchanged.
+- v3.5.0 adds no SQLite table, column, index, migration, or persisted setting. Existing v3.4.0 databases and portable state remain compatible.
+
+### Documentation and tests
+
+- Added focused regressions for Advanced-view widget order, forced light startup, retained manual theme switching, cached command-button enablement, and post-theme interaction-state reconciliation.
+- Added [`docs/legacy/V3_5_0_GUI_LIGHT_MODE_AND_LAYOUT.md`](docs/legacy/V3_5_0_GUI_LIGHT_MODE_AND_LAYOUT.md), archived the v3.4.0 release note and implementation report under `docs/legacy/`, and updated current release/build metadata to v3.5.0.
+
+## v3.4.0
+
+### Fixed
+
+- Changed Windows watchdog replacement to `subprocess.Popen` with an argument list so Python applies native Windows quoting when the executable or portable folder path contains spaces. POSIX replacement continues to use `os.execv`.
+- Required protective SELL completion to prove an exact match between cumulative filled quantity and the app-owned BUY quantity with zero broker remainder. Live nonterminal partials remain under supervision; terminal partials enter `ERROR` with `PROTECTIVE_SELL_PARTIAL_TERMINAL`; inconsistent zero-remainder or overfill states enter `ERROR` with `PROTECTIVE_SELL_QUANTITY_MISMATCH`.
+- Applied the same exact-quantity requirement to reconnect polling and both execution-led SELL recovery paths. Under-counted and over-counted recovered executions persist their observed facts but cannot complete the cycle.
+- Prevented price-triggered exit logic from creating a second exit while a previously observed protective partial is temporarily unavailable from the broker poll.
+- Loaded the Windows process API with `use_last_error=True` and explicit signatures so access-denied elevated lock owners are not misclassified as dead. Lock acquisition now closes the file descriptor and removes a partial lock file when the PID write fails.
+- Kept the asynchronous market-capture writer alive after an individual write failure. Shutdown restarts a missing/dead writer when work remains and uses a monotonic hard deadline instead of unbounded `Queue.join()`.
+- Removed only expired or malformed watchdog handoff files during tokenless startup while preserving fresh valid requests for the token-holding replacement.
+- Required two consecutive matching cycle serializations before the GUI-thread fallback writes a resume checkpoint; continuously changing state now refuses the checkpoint instead of persisting an unconfirmed snapshot.
+- Included the execution timestamp in the fallback execution-deduplication key, preserving distinct same-size, same-price partial prints when IBKR omits an execution ID.
+- Made active-cycle selection deterministic for same-second updates with `updated_at DESC, cycle_number DESC, id DESC`.
+- Removed a dead duplicate headless signal class, rounded the initial drop trigger to the strategy's four-decimal price precision, and normalized built-in TWS/IB Gateway Windows path literals.
+
+### Safety and compatibility
+
+- Strategy formulas, configured percentages, ATR behavior, price-source priority, normal order construction, position sizing, RTH rules, commission/P&L accounting, and account scope are unchanged.
+- v3.4.0 adds no SQLite table, column, index, migration, or persisted setting. Existing v3.3.0 databases and portable state remain compatible through the existing startup and reconciliation paths.
+- Ambiguous protective-exit quantities fail closed rather than being interpreted as cycle completion. The broker remains authoritative and manual reconciliation is required after a terminal partial or quantity mismatch.
+
+### Documentation and tests
+
+- Added focused deterministic regressions for all submitted fixes plus exact protective quantity mismatch handling, unavailable-poll suppression after a partial fill, continuously torn checkpoint refusal, malformed fresh watchdog requests, and shutdown with a missing writer reference.
+- Added [`docs/legacy/V3_4_0_RELIABILITY_AND_RECOVERY_FIXES.md`](docs/legacy/V3_4_0_RELIABILITY_AND_RECOVERY_FIXES.md), archived the v3.3.0 release note and implementation report under `docs/legacy/`, and updated current release/build metadata to v3.4.0.
+
 ## v3.3.0
 
 ### Added
@@ -39,7 +111,7 @@ This file summarizes behavior-changing and maintenance releases represented by t
 
 - Added focused coverage for light/dark palette roles, system-theme signal handling, View-menu theme switching, neutral Fusion-dark stylesheet conversion, theme refresh of cached state widgets and custom-painted views, non-overlapping About-logo layout, full-width Timeline table allocation, Market capture internal scrolling, runtime-only image packaging, shortcut creation/checksums, current release metadata, and archived v3.2.2 documentation.
 - Added watchdog/storage regressions covering one-time handoffs, exact-cycle signatures, restart-loop protection, non-throwing diagnostics, real SQLite write probes, persist-before-publish ordering, broker-mutation blocking, transport-only callback pumping, dead/stalled worker detection, storage-fault recovery, GUI-side stale-age/RTH invalidation, process-lock release before replacement, exact-cycle reconciliation gates, and audit-token redaction.
-- Updated [`docs/V3_3_0_DARK_MODE_AUDIT_AND_WINDOWS_RELEASE.md`](docs/V3_3_0_DARK_MODE_AUDIT_AND_WINDOWS_RELEASE.md), added [`docs/WORKER_WATCHDOG_AND_AUTO_RECOVERY.md`](docs/WORKER_WATCHDOG_AND_AUTO_RECOVERY.md), and retained the v3.2.2 release note under `docs/legacy/`.
+- Updated [`docs/V3_3_0_DARK_MODE_AUDIT_AND_WINDOWS_RELEASE.md`](docs/legacy/V3_3_0_DARK_MODE_AUDIT_AND_WINDOWS_RELEASE.md), added [`docs/WORKER_WATCHDOG_AND_AUTO_RECOVERY.md`](docs/WORKER_WATCHDOG_AND_AUTO_RECOVERY.md), and retained the v3.2.2 release note under `docs/legacy/`.
 
 ## v3.2.2
 

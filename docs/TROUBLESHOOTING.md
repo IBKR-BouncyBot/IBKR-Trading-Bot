@@ -57,7 +57,7 @@ For `LSE` and `LSEETF`, the Live Strategy RTH status should show an effective cl
 
 ## The bot keeps reconnecting every 10 seconds
 
-After an established local API socket is lost, v3.3.0 retries the saved TWS/Gateway endpoint every 10 seconds without a retry limit. This is expected. Start or log into the selected platform, correct the host/port/client ID, or click **Disconnect** to stop the attempts. Application shutdown also stops them.
+After an established local API socket is lost, v3.6.0 retries the saved TWS/Gateway endpoint every 10 seconds without a retry limit. This is expected. Start or log into the selected platform, correct the host/port/client ID, or click **Disconnect** to stop the attempts. Application shutdown also stops them.
 
 A local reconnect is not enough for trading: the upstream IBKR link, broker reconciliation, exact contract, and a new actual market-data event must recover before strategy processing resumes.
 
@@ -83,7 +83,7 @@ When no live order was attempted, the cycle status should read `PreflightBlocked
 
 ## A BUY becomes Inactive or Rejected
 
-Open the Live Strategy event list or the Cycle Audit broker/decision events and locate the retained IBKR error code and message. In v3.3.0 a definitive no-fill rejection moves the cycle to `ERROR` and does not automatically retry. This is intentional; restarting the same invalid request can produce repeated broker rejections.
+Open the Live Strategy event list or the Cycle Audit broker/decision events and locate the retained IBKR error code and message. In v3.6.0 a definitive no-fill rejection moves the cycle to `ERROR` and does not automatically retry. This is intentional; restarting the same invalid request can produce repeated broker rejections.
 
 For `Invalid Price`, minimum-variation, or invalid-stop errors:
 
@@ -211,7 +211,7 @@ Some stop actions wait for broker cancellation status before submitting a replac
 
 ## The GUI is responsive, but price age or RTH appears frozen
 
-This indicates that the Qt interface may still be running while the controller worker has stopped delivering snapshots. v3.3.0 now treats the snapshot stream as a separate health signal:
+This indicates that the Qt interface may still be running while the controller worker has stopped delivering snapshots. v3.6.0 now treats the snapshot stream as a separate health signal:
 
 - after 3 seconds the GUI reports **Worker delayed**;
 - after 15 seconds it reports **Worker unresponsive**, invalidates cached connection/data/RTH indicators, and keeps increasing the displayed data age;

@@ -1,6 +1,6 @@
 # Documentation index
 
-The files in this directory describe the current v3.3.0 behavior unless explicitly marked otherwise. The root of `docs/` is intentionally limited to current operating, design, recovery, and verification material. Superseded release notes are stored under [`legacy/`](legacy/README.md).
+The files in this directory describe the current v3.6.0 behavior unless explicitly marked otherwise. The root of `docs/` is intentionally limited to current operating, design, recovery, and verification material. Superseded release notes are stored under [`legacy/`](legacy/README.md).
 
 When documents disagree, use this source-of-truth order:
 
@@ -50,8 +50,8 @@ When documents disagree, use this source-of-truth order:
 
 ## Current release note
 
-[`V3_3_0_DARK_MODE_AUDIT_AND_WINDOWS_RELEASE.md`](V3_3_0_DARK_MODE_AUDIT_AND_WINDOWS_RELEASE.md) records automatic and View-menu-selectable Fusion themes, the corrected About/audit layouts, Windows packaging, fail-closed worker and storage supervision, authenticated full-process automatic recovery, compatibility, and verification scope. The detailed current watchdog contract is in [`WORKER_WATCHDOG_AND_AUTO_RECOVERY.md`](WORKER_WATCHDOG_AND_AUTO_RECOVERY.md).
+[`V3_6_0_SELL_RECONCILIATION_AND_HISTORY_ROBUSTNESS.md`](V3_6_0_SELL_RECONCILIATION_AND_HISTORY_ROBUSTNESS.md) records exact aggregate final-SELL settlement, fail-closed quantity mismatches, numeric Trade History sorting, operator-visible audit/export failures, compatibility, and verification scope. The detailed current watchdog contract remains in [`WORKER_WATCHDOG_AND_AUTO_RECOVERY.md`](WORKER_WATCHDOG_AND_AUTO_RECOVERY.md).
 
 ## Archived documentation
 
-The [`legacy/`](legacy/README.md) directory contains all superseded release-specific notes and retained historical reports. Only the current v3.3.0 release note remains in the root of `docs/`. Archived files may accurately describe the release that introduced a feature, but labels, defaults, layouts, tests, and limitations in them can be obsolete. They are not the current operating specification.
+The [`legacy/`](legacy/README.md) directory contains all superseded release-specific notes and retained historical reports. Only the current v3.6.0 release note remains in the root of `docs/`. Archived files may accurately describe the release that introduced a feature, but labels, defaults, layouts, tests, and limitations in them can be obsolete. They are not the current operating specification.

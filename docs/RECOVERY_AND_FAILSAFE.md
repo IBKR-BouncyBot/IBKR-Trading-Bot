@@ -33,7 +33,7 @@ The main Qt thread independently times delivery of controller snapshots. The def
 | No snapshot for 30 seconds | Request a complete process replacement. |
 | Worker thread no longer alive | Request replacement immediately after a one-second startup grace period. |
 
-Replacement is process-level, not thread-level. Qt exits first, controller shutdown is attempted, the portable-folder single-instance lock is released, and `os.execv` replaces the current source or packaged process. BouncyBot never starts a second worker inside the wedged process and never intentionally overlaps two BouncyBot processes for the same portable folder.
+Replacement is process-level, not thread-level. Qt exits first, controller shutdown is attempted, the portable-folder single-instance lock is released, and Windows starts a properly quoted replacement with `subprocess.Popen` while POSIX uses `os.execv`. BouncyBot never starts a second worker inside the wedged process and never intentionally overlaps two BouncyBot processes for the same portable folder.
 
 The GUI writes a short-lived one-time handoff outside SQLite and passes its random token only to the replacement process. The handoff can authorize automatic continuation only when all of these conditions hold:
 

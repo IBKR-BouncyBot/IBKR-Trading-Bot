@@ -148,7 +148,7 @@ CURRENCY_SYMBOLS = {"USD": "$", "EUR": "€"}
 ACTIVE_CONTRACT_CURRENCY = "USD"
 CURRENCY_SYMBOL = CURRENCY_SYMBOLS[ACTIVE_CONTRACT_CURRENCY]
 
-APP_VERSION = "3.3.0"
+APP_VERSION = "3.6.0"
 DARK_MODE_APP_PROPERTY = "bouncybotDarkMode"
 
 LIGHT_FUSION_PALETTE_COLORS = {
@@ -219,7 +219,7 @@ def _currency_prefix(value: Any = None) -> str:
 
 
 def _dark_mode_enabled() -> bool:
-    """Return the application-level system-theme state set by ``main``."""
+    """Return the application-level theme state set by ``main`` or the View menu."""
     try:
         app = QApplication.instance()
         return bool(app is not None and app.property(DARK_MODE_APP_PROPERTY))
@@ -1220,6 +1220,48 @@ def _format_currency(value: Any, decimals: int = 4) -> str:
     return f"{sign}{CURRENCY_SYMBOL}{abs(number):,.{decimals}f}"
 
 
+class _NumericTableItem(QTableWidgetItem):
+    """Table cell that displays formatted text but sorts by its numeric value.
+
+    QTableWidget orders rows with ``QTableWidgetItem.__lt__``, which compares
+    the display text. Money, percentage, and quantity cells are formatted for
+    the operator (currency symbol, thousands separator, explicit sign), so a
+    text comparison would place -$1,200.00 after $9.50 and $1,050.00 before
+    $85.00. Carrying the numeric value on the item keeps the formatting while
+    restoring a correct ordering.
+    """
+
+    def __init__(self, text: str, sort_value: float) -> None:
+        super().__init__(text)
+        self._sort_value = float(sort_value)
+
+    def __lt__(self, other: Any) -> bool:
+        other_value = getattr(other, "_sort_value", None)
+        if other_value is None:
+            try:
+                return bool(super().__lt__(other))
+            except Exception:
+                return False
+        try:
+            return self._sort_value < float(other_value)
+        except (TypeError, ValueError):
+            return False
+
+
+def _numeric_table_item(text: str, raw_value: Any) -> QTableWidgetItem:
+    """Build a numeric-sorting cell, grouping unusable values at one end."""
+    try:
+        sort_value = float(raw_value)
+        if not math.isfinite(sort_value):
+            raise ValueError("non-finite numeric table value")
+    except (TypeError, ValueError):
+        # Blank or non-numeric cells still need a deterministic position, so
+        # they group together below every real value instead of falling back
+        # to text ordering and mixing comparison semantics within a column.
+        sort_value = float("-inf")
+    return _NumericTableItem(text, sort_value)
+
+
 def _currency_decimals_for_label(label: Any) -> int:
     text = str(label or "").strip().lower()
     if any(token in text for token in ("amount", "budget", "p/l", "pnl", "gross", "net", "reinvested profit")):
@@ -1790,6 +1832,14 @@ class CommandStepCard(QFrame):
         normalized = str(state).strip().lower()
         signature = (display_state, bool(enabled), str(detail))
         if signature == self._last_state_signature:
+            # Reassert the actual button enablement even when the semantic
+            # state is unchanged. Qt can rebuild native style objects during
+            # a Fusion palette switch; keeping this assignment outside the
+            # cached visual update prevents a ready workflow button from
+            # remaining visually/actually disabled until the input lock is
+            # toggled.
+            if self.button.isEnabled() != bool(enabled):
+                self.button.setEnabled(bool(enabled))
             return
         self._last_state_signature = signature
         colors = {
@@ -5944,7 +5994,7 @@ class CycleAuditDialog(QDialog):
             lines.extend([
                 "BUILT-IN EXAMPLE CYCLE",
                 "=" * 80,
-                "This is synthetic v3.3.0 paper-trading example data. It is not an actual market record, is not stored in SQLite, and cannot affect trading or risk totals.",
+                "This is synthetic v3.6.0 paper-trading example data. It is not an actual market record, is not stored in SQLite, and cannot affect trading or risk totals.",
                 "The scenario models a liquid U.S. stock pullback, a multi-execution trailing BUY fill, a temporary protective SELL, and a modest trailing-stop profit exit.",
                 "",
             ])
@@ -6069,7 +6119,7 @@ class MainWindow(QMainWindow):
         self._watchdog_shutdown_expected = False
         auto_restart_value = str(os.environ.get("IBKR_BOT_AUTO_RESTART", "1") or "1").strip().lower()
         self._watchdog_auto_restart_enabled = auto_restart_value not in {"0", "false", "no", "off"}
-        self.setWindowTitle("BouncyBot - IBKR Portable Trading Bot v3.3.0")
+        self.setWindowTitle("BouncyBot - IBKR Portable Trading Bot v3.6.0")
         icon_path = resource_path("Images", "BouncyBot_app_icon.png")
         if icon_path.is_file():
             self.setWindowIcon(QIcon(str(icon_path)))
@@ -6917,6 +6967,13 @@ class MainWindow(QMainWindow):
         self.stage_ribbon = StageRibbon()
         root.addWidget(self.stage_ribbon)
 
+        # Keep the price feed at the top of the operational content in every
+        # view mode. In Advanced/Debug this places it before the connection and
+        # strategy configuration panels, matching the first visible section in
+        # Simple view.
+        self.price_panel = PricePanel()
+        root.addWidget(self.price_panel)
+
         top = QHBoxLayout()
         top.setSpacing(10)
         self.connection_box = self._connection_group()
@@ -6924,9 +6981,6 @@ class MainWindow(QMainWindow):
         top.addWidget(self.connection_box, 1)
         top.addWidget(self.strategy_box, 2)
         root.addLayout(top)
-
-        self.price_panel = PricePanel()
-        root.addWidget(self.price_panel)
 
         # Keep the live graph immediately below the price monitor so the
         # operator can read price feed, chart, and then detailed state in order.
@@ -11010,7 +11064,13 @@ class MainWindow(QMainWindow):
         if row.get("__example"):
             details = self._example_audit_details(row)
         else:
-            details = self.controller.get_cycle_audit_details(cycle_id)
+            # Synchronous SQLite read on the GUI thread: a storage fault or a
+            # lock timeout must not escape this slot as an unhandled exception.
+            try:
+                details = self.controller.get_cycle_audit_details(cycle_id)
+            except Exception as exc:
+                QMessageBox.warning(self, "Audit details", f"Could not read the audit details for this cycle:\n{exc}")
+                return
         dialog = CycleAuditDialog(row, details, self)
         dialog.exec()
 
@@ -11184,6 +11244,11 @@ class MainWindow(QMainWindow):
                                 item.setData(Qt.DisplayRole, int(raw_value))
                             except (TypeError, ValueError):
                                 item = QTableWidgetItem(value)
+                        elif key in right_keys:
+                            # Right-aligned columns are the numeric ones; sort
+                            # them by value so the largest loss and the largest
+                            # profit land at the ends of the column.
+                            item = _numeric_table_item(value, raw_value)
                         else:
                             item = QTableWidgetItem(value)
                         item.setData(Qt.UserRole, r)
@@ -11222,7 +11287,15 @@ class MainWindow(QMainWindow):
         self._apply_history_filters()
 
     def _export_history(self) -> None:
-        target = self.controller.export_history(self.history_ticker_filter.text())
+        # Reads up to the full history and writes a CSV on the GUI thread. A
+        # read-only or full portable folder, a path-length limit, or a locked
+        # file must surface as an operator message instead of an unhandled
+        # exception escaping the Qt slot.
+        try:
+            target = self.controller.export_history(self.history_ticker_filter.text())
+        except Exception as exc:
+            QMessageBox.warning(self, "Export failed", f"Could not export the trade history:\n{exc}")
+            return
         QMessageBox.information(self, "Export complete", f"Trade history exported to:\n{target}")
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
@@ -11313,7 +11386,7 @@ class MainWindow(QMainWindow):
         event.accept()
 
     def apply_system_theme(self, dark: bool) -> None:
-        """Apply a system theme change to existing and future GUI widgets."""
+        """Apply the selected runtime theme to existing and future GUI widgets."""
         app = QApplication.instance()
         if app is not None:
             app.setProperty(DARK_MODE_APP_PROPERTY, bool(dark))
@@ -11344,7 +11417,44 @@ class MainWindow(QMainWindow):
                 (CycleTimelineWidget, ProfitGuardWidget, StrategyGraphWidget, StrategyFlowchartWidget),
             ):
                 widget.update()
+
+        # Qt may finish rebuilding native controls after the palette/stylesheet
+        # call returns. Reconcile the command bar immediately and once more on
+        # the next event-loop turn so a theme switch cannot leave the bottom
+        # workflow buttons disabled until the input lock is toggled.
+        self._restore_interaction_state_after_theme_change()
+        try:
+            QTimer.singleShot(0, self._restore_interaction_state_after_theme_change)
+        except Exception:
+            pass
         self.update()
+
+    def _restore_interaction_state_after_theme_change(self) -> None:
+        """Reapply lock and workflow enablement after a Fusion style rebuild."""
+        # ``__dict__`` avoids fabricating dynamic attributes in the lightweight
+        # Qt test layer while remaining equivalent to normal QWidget lookup.
+        command_bar = self.__dict__.get("command_bar")
+        if command_bar is not None:
+            command_bar.setEnabled(True)
+        view_mode_combo = self.__dict__.get("view_mode_combo")
+        if view_mode_combo is not None:
+            view_mode_combo.setEnabled(True)
+
+        snapshot = self.__dict__.get("current_snapshot") or {}
+        cycle = snapshot.get("active_cycle") or {}
+        stage = cycle.get("stage")
+        self._update_input_locks(stage)
+        self._update_command_bar_states(snapshot)
+
+        # A stale-worker snapshot deliberately disables every broker-facing
+        # workflow action after the ordinary state calculation. Preserve that
+        # fail-closed override when a theme rebuild replays the command states.
+        if bool((snapshot.get("watchdog_override") or {}).get("active")):
+            for button in self.__dict__.get("command_step_buttons", {}).values():
+                try:
+                    button.setEnabled(False)
+                except Exception:
+                    pass
 
     def _apply_styles(self) -> None:
         # The light rules are the canonical stylesheet. A deterministic color

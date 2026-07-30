@@ -1,4 +1,4 @@
-"""v3.3.0 price-monitor and Cycle Audit layout regressions."""
+"""v3.6.0 price-monitor and Cycle Audit layout regressions."""
 
 from __future__ import annotations
 

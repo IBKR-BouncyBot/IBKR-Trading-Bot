@@ -1,4 +1,4 @@
-"""v3.3.0 release metadata, compatibility, and documentation regressions."""
+"""v3.6.0 release metadata, compatibility, and documentation regressions."""
 
 from pathlib import Path
 
@@ -15,28 +15,33 @@ BUILD = (ROOT / "scripts" / "build_windows.ps1").read_text(encoding="utf-8")
 SECURITY = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
 DOCS_INDEX = (ROOT / "docs" / "README.md").read_text(encoding="utf-8")
 LEGACY_INDEX = (ROOT / "docs" / "legacy" / "README.md").read_text(encoding="utf-8")
-CURRENT_NOTE = ROOT / "docs" / "V3_3_0_DARK_MODE_AUDIT_AND_WINDOWS_RELEASE.md"
+CURRENT_NOTE = ROOT / "docs" / "V3_6_0_SELL_RECONCILIATION_AND_HISTORY_ROBUSTNESS.md"
+ARCHIVED_V330_NOTE = ROOT / "docs" / "legacy" / "V3_3_0_DARK_MODE_AUDIT_AND_WINDOWS_RELEASE.md"
 ARCHIVED_V322_NOTE = ROOT / "docs" / "legacy" / "V3_2_2_GUI_INFORMATION_AND_AUDIT_LAYOUT.md"
 
 
 def test_v330_release_metadata_is_consistent() -> None:
-    assert 'APP_VERSION = "3.3.0"' in GUI
-    assert "BouncyBot - IBKR Portable Trading Bot v3.3.0" in GUI
-    assert "This is synthetic v3.3.0 paper-trading example data." in GUI
-    assert "**Current release: v3.3.0**" in README
-    assert 'version = "3.3.0"' in PYPROJECT
-    assert '$version = "3.3.0"' in BUILD
-    assert "## v3.3.0" in CHANGELOG
-    assert "current repository version, v3.3.0" in SECURITY
-    assert "current v3.3.0 behavior" in DOCS_INDEX
+    assert 'APP_VERSION = "3.6.0"' in GUI
+    assert "BouncyBot - IBKR Portable Trading Bot v3.6.0" in GUI
+    assert "This is synthetic v3.6.0 paper-trading example data." in GUI
+    assert "**Current release: v3.6.0**" in README
+    assert 'version = "3.6.0"' in PYPROJECT
+    assert '$version = "3.6.0"' in BUILD
+    assert "## v3.6.0" in CHANGELOG
+    assert "current repository version, v3.6.0" in SECURITY
+    assert "current v3.6.0 behavior" in DOCS_INDEX
 
 
 def test_v330_release_note_is_current_and_v322_is_archived() -> None:
     assert CURRENT_NOTE.is_file()
+    assert ARCHIVED_V330_NOTE.is_file()
     assert ARCHIVED_V322_NOTE.is_file()
+    assert not (ROOT / "docs" / ARCHIVED_V330_NOTE.name).exists()
     assert not (ROOT / "docs" / ARCHIVED_V322_NOTE.name).exists()
     assert CURRENT_NOTE.name in README
     assert CURRENT_NOTE.name in DOCS_INDEX
+    assert ARCHIVED_V330_NOTE.name in README
+    assert ARCHIVED_V330_NOTE.name in LEGACY_INDEX
     assert ARCHIVED_V322_NOTE.name in README
     assert ARCHIVED_V322_NOTE.name in LEGACY_INDEX
 
@@ -54,7 +59,7 @@ def test_v321_incident_gap_corrections_remain_present() -> None:
 
 
 def test_v330_release_note_documents_scope_and_compatibility() -> None:
-    text = CURRENT_NOTE.read_text(encoding="utf-8")
+    text = ARCHIVED_V330_NOTE.read_text(encoding="utf-8")
     assert "Automatic and selectable Fusion themes" in text
     assert "About screen logo" in text
     assert "Cycle Audit Timeline tables" in text

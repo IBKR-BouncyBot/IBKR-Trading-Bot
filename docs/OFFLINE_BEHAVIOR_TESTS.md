@@ -1,6 +1,6 @@
 # Deterministic offline behavior tests
 
-This document describes the current non-GUI, non-Windows, non-network test layer in v3.3.0. It covers strategy behavior, controller state transitions, broker-event handling, persistence and recovery, shutdown checkpoints, GUI contracts, and bounded performance behavior.
+This document describes the current non-GUI, non-Windows, non-network test layer in v3.6.0. It covers strategy behavior, controller state transitions, broker-event handling, persistence and recovery, shutdown checkpoints, GUI contracts, and bounded performance behavior.
 
 The suite deliberately avoids:
 
@@ -146,7 +146,7 @@ The complete Windows launcher runs the deterministic layers in this order:
 
 The Unix `scripts/run_tests.sh` helper still separates non-soak coverage from the soak subset to keep that development-host command practical.
 
-The corrected v3.3.0 source tree executed **1,089/1,089** collected pytest cases across isolated coverage partitions with `ResourceWarning` promoted to an error. The combined instrumented run included the ordinary, accelerated-soak, and elapsed-time-bound large-database tests, measured **77.5%** combined statement/branch coverage, and entered **991/991** executable application callables. The release also killed **17/17** targeted safety mutants and passed **58/58** deterministic simulation contracts across 54 CSV price paths. The three former strict expected failures remain ordinary passing regressions.
+The corrected v3.6.0 source tree executed **1,140/1,140** collected pytest cases across isolated coverage partitions with `ResourceWarning` promoted to an error. The combined instrumented run included the ordinary, accelerated-soak, and elapsed-time-bound large-database tests, measured **78.0%** combined statement/branch coverage, and entered **996/996** executable application callables. The release also killed **17/17** targeted safety mutants and passed **58/58** deterministic simulation contracts across 54 CSV price paths. The three former strict expected failures remain ordinary passing regressions.
 
 The CSV matrix itself passes cleanly in the offline Linux environment. The full Windows launcher remains the authoritative combined run for Coverage.py, Ruff, Pyright, and native launcher behavior.
 

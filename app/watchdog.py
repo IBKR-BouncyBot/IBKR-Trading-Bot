@@ -400,6 +400,64 @@ def record_watchdog_restart_attempt(
     return True
 
 
+def discard_expired_watchdog_restart_request(
+    *,
+    base_dir: Optional[Path] = None,
+    now_epoch: Optional[float] = None,
+    max_age_seconds: float = WATCHDOG_REQUEST_MAX_AGE_SECONDS,
+) -> bool:
+    """Remove a leftover handoff file only when it is expired or malformed.
+
+    An ordinary tokenless startup cannot consume a request, so an orphaned file
+    (for example after a failed replacement launch) would otherwise persist
+    forever. A fresh, well-formed request is deliberately preserved for the
+    replacement process that holds its one-time token.
+    """
+    path = watchdog_request_path(base_dir)
+    try:
+        data: Any = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return False
+    except Exception:
+        data = None
+        expired = True
+    else:
+        try:
+            valid_request = bool(
+                isinstance(data, dict)
+                and int(data.get("schema_version") or 0) == WATCHDOG_REQUEST_SCHEMA_VERSION
+                and str(data.get("token") or "").strip()
+            )
+            created = float(data.get("created_epoch")) if isinstance(data, dict) else float("nan")
+            now = time.time() if now_epoch is None else float(now_epoch)
+            age = now - created
+            expired = (
+                not valid_request
+                or not (age == age)
+                or age < -60.0
+                or age > max(1.0, float(max_age_seconds))
+            )
+        except Exception:
+            expired = True
+    if not expired:
+        return False
+    try:
+        path.unlink(missing_ok=True)
+    except Exception as exc:
+        append_emergency_log(
+            "Could not remove an expired watchdog restart request during startup.",
+            exc=exc,
+            base_dir=base_dir,
+        )
+        return False
+    append_emergency_log(
+        "Removed an expired or malformed watchdog restart request during ordinary startup.",
+        context={"request": _redacted_restart_request(data) if isinstance(data, dict) else None},
+        base_dir=base_dir,
+    )
+    return True
+
+
 def discard_watchdog_restart_request(
     token: str = "",
     *,

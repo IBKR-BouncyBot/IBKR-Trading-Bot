@@ -122,13 +122,13 @@ class PlatformLaunchResult:
 
 
 _COMMON_TWS_PATHS = (
-    r"C:\\Jts\\tws.exe",
-    r"C:\\Jts\\Trader Workstation\\tws.exe",
+    r"C:\Jts\tws.exe",
+    r"C:\Jts\Trader Workstation\tws.exe",
 )
 
 _COMMON_GATEWAY_PATTERNS = (
-    r"C:\\Jts\\ibgateway\\*\\ibgateway.exe",
-    r"C:\\Jts\\ibgateway\\ibgateway.exe",
+    r"C:\Jts\ibgateway\*\ibgateway.exe",
+    r"C:\Jts\ibgateway\ibgateway.exe",
 )
 
 

@@ -35,19 +35,9 @@ if os.environ.get("IBKR_BOT_HEADLESS_SIGNALS") == "1":
     class QObject:  # type: ignore[no-redef]
         pass
 
-    class _HeadlessSignalInstance:
-        def __init__(self) -> None:
-            self._callbacks: list[Any] = []
-            self.emissions: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
-
-        def connect(self, callback: Any) -> None:
-            self._callbacks.append(callback)
-
-        def emit(self, *args: Any, **kwargs: Any) -> None:
-            self.emissions.append((args, kwargs))
-            for callback in list(self._callbacks):
-                callback(*args, **kwargs)
-
+    # Signal.__get__ instantiates the module-level _HeadlessSignalInstance
+    # defined after the imports below; a duplicate inline definition here was
+    # dead code shadowed by that later definition.
     class Signal:  # type: ignore[no-redef]
         def __init__(self, *args: Any, **kwargs: Any) -> None:
             self.name = ""
@@ -679,7 +669,26 @@ class TradingController:
                 return True
 
         try:
-            cycle = CycleState.from_dict(self.active_cycle.to_dict()) if self.active_cycle is not None else None
+            # The worker owns self.active_cycle and can mutate it in place.
+            # This GUI-thread fallback therefore re-reads until two consecutive
+            # serializations match, so a torn mid-mutation snapshot is not
+            # persisted as the resume checkpoint.
+            cycle_ref = self.active_cycle
+            cycle: Optional[CycleState] = None
+            if cycle_ref is not None:
+                data = cycle_ref.to_dict()
+                stable_data: Optional[dict[str, Any]] = None
+                for _ in range(8):
+                    confirmation = cycle_ref.to_dict()
+                    if confirmation == data:
+                        stable_data = confirmation
+                        break
+                    data = confirmation
+                if stable_data is None:
+                    raise RuntimeError(
+                        "The active cycle changed continuously while the GUI fallback checkpoint was being created."
+                    )
+                cycle = CycleState.from_dict(stable_data)
             self.storage.save_resume_checkpoint(
                 connection,
                 strategy,
@@ -2679,11 +2688,23 @@ class TradingController:
                 else:
                     polled = self.adapter.poll_order(cycle.protective_sell_order_ref) if cycle.protective_sell_order_ref else None
                     if polled and polled.filled > 0:
-                        recovered = StrategyEngine.on_protective_sell_fill(cycle, polled.filled, polled.avg_fill_price, polled.status, polled.commission)
-                        self.active_cycle = recovered
-                        self.storage.upsert_cycle(recovered)
-                        self._log("INFO", f"Recovered protective SELL fill for {cycle.ticker}.", recovered)
-                        self._maybe_start_next_cycle()
+                        # Reuse the live poll gate so recovery cannot complete a
+                        # protective exit until the broker reports the exact
+                        # app-owned quantity with no remainder. Terminal partials
+                        # and inconsistent quantities therefore fail closed in
+                        # the same way as they do during uninterrupted trading.
+                        self._handle_protective_sell_order_poll(cycle, polled)
+                        recovered = self.active_cycle or cycle
+                        if recovered.stage == Stage.CYCLE_COMPLETE:
+                            self._log("INFO", f"Recovered protective SELL fill for {cycle.ticker}.", recovered)
+                        elif recovered.stage == Stage.WAIT_RISE_TRIGGER:
+                            self._log(
+                                "INFO",
+                                f"Recovered partial protective SELL fill for {cycle.ticker}: "
+                                f"{int(polled.filled)} filled, {int(polled.remaining)} remaining. "
+                                "Waiting for the protective order to reach a terminal status.",
+                                recovered,
+                            )
                         return
                     if self._recover_protective_sell_from_executions(cycle) is not None:
                         self._maybe_start_next_cycle()
@@ -3287,6 +3308,26 @@ class TradingController:
                 self.storage.upsert_cycle(cycle)
                 return None
             qty, avg_price, commission = total_qty, total_avg, total_commission
+        target_qty = max(0, int(getattr(cycle, "buy_filled_qty", 0) or 0))
+        if target_qty <= 0 or qty != target_qty:
+            # Recovered executions must exactly match the app-owned position.
+            # A lower quantity leaves shares unsold; a higher quantity indicates
+            # duplicate attribution or an over-sell. Persist the observed facts
+            # and let the caller enter formal recovery-required mode.
+            cycle.sell_filled_qty = qty
+            if avg_price > 0:
+                cycle.avg_sell_price = avg_price
+            cycle.sell_commission = commission
+            cycle.touch()
+            self.active_cycle = cycle
+            self.storage.upsert_cycle(cycle)
+            self._log(
+                "WARN",
+                f"Recovered {qty} SELL shares for {target_qty} app-owned shares from recent executions for {cycle.ticker}; "
+                "the cycle was not completed and broker/local reconciliation is required.",
+                cycle,
+            )
+            return None
         recovered = StrategyEngine.on_sell_fill(cycle, qty, avg_price, "Filled", commission)
         self.active_cycle = recovered
         self.storage.upsert_cycle(recovered)
@@ -3298,6 +3339,24 @@ class TradingController:
         if qty <= 0 or avg_price <= 0:
             return None
         self._record_recovered_executions(cycle, rows, "PROTECTIVE_SELL")
+        target_qty = max(0, int(getattr(cycle, "buy_filled_qty", 0) or 0))
+        if target_qty <= 0 or qty != target_qty:
+            # See _recover_sell_from_executions: recovery requires an exact
+            # quantity match, not merely a positive or at-least-target total.
+            cycle.protective_sell_filled_qty = qty
+            if avg_price > 0:
+                cycle.protective_avg_sell_price = avg_price
+            cycle.protective_sell_commission = commission
+            cycle.touch()
+            self.active_cycle = cycle
+            self.storage.upsert_cycle(cycle)
+            self._log(
+                "WARN",
+                f"Recovered {qty} protective SELL shares for {target_qty} app-owned shares from recent executions for {cycle.ticker}; "
+                "the cycle was not completed and broker/local reconciliation is required.",
+                cycle,
+            )
+            return None
         recovered = StrategyEngine.on_protective_sell_fill(cycle, qty, avg_price, "Filled", commission)
         self.active_cycle = recovered
         self.storage.upsert_cycle(recovered)
@@ -3400,11 +3459,14 @@ class TradingController:
         return max(0, bought - sold)
 
     @staticmethod
-    def _is_order_working_for_close(ref: Optional[str], status: Optional[str], filled_qty: int = 0) -> bool:
+    def _is_order_working_for_close(ref: Optional[str], status: Optional[str], _filled_qty: int = 0) -> bool:
         if not ref:
             return False
-        if int(filled_qty or 0) > 0:
-            return False
+        # A partially filled order can still have a live remainder. Treat the
+        # broker status, not the presence of any fill, as authoritative for
+        # whether a cancel-confirm-close workflow must wait. Otherwise a manual
+        # market close could submit a second SELL while the original remainder
+        # is still working.
         terminal = {"Filled", "Cancelled", "ApiCancelled", "Inactive", "Rejected"}
         return str(status or "").strip() not in terminal
 
@@ -4447,6 +4509,19 @@ class TradingController:
                     if self._handle_protective_sell_order_poll(cycle, polled):
                         return
                     cycle = self.active_cycle or cycle
+                elif int(cycle.protective_sell_filled_qty or 0) > 0:
+                    # Once a protective order has partially filled, absence of
+                    # a current broker status is not permission to create a
+                    # second exit from price logic. Wait fail-closed until the
+                    # original order can be polled or formal reconciliation
+                    # determines the remaining app-owned quantity.
+                    self._log_price_warning_throttled(
+                        cycle,
+                        "A partially filled protective SELL order is temporarily unavailable from IBKR. "
+                        "Price-triggered exit logic remains paused until its status is reconciled.",
+                        throttle_key=f"{cycle.id}|protective_partial_poll_unavailable",
+                    )
+                    return
             if not fetched_price:
                 return
             if last_price is None:
@@ -6982,9 +7057,9 @@ class TradingController:
     def _handle_protective_sell_order_poll(self, cycle: CycleState, polled: PolledOrderState) -> bool:
         """Poll the optional protective SELL order.
 
-        Returns True when the protective order filled and the cycle is complete,
-        so the caller should not continue with price-trigger logic in the same
-        worker tick.
+        Returns True whenever the caller must not continue with price-trigger
+        logic in the same worker tick: full completion, an intermediate partial
+        fill that is still working, or a fail-closed terminal quantity mismatch.
         """
         self.storage.update_order_status(polled.order_ref, polled.status, polled.order_id, polled.perm_id)
         self._update_recovery_probe_from_order_poll(polled)
@@ -7068,6 +7143,94 @@ class TradingController:
             self.active_cycle = cycle
             self.storage.upsert_cycle(cycle)
             return False
+        status = str(polled.status or "").strip()
+        terminal = status in {
+            "Filled",
+            "Cancelled",
+            "ApiCancelled",
+            "Inactive",
+            "Rejected",
+        }
+        target_qty = max(0, int(cycle.buy_filled_qty or 0))
+        filled_qty = max(0, int(polled.filled or 0))
+        remaining_qty = max(0, int(polled.remaining or 0))
+        terminal_partial = terminal and target_qty > 0 and 0 < filled_qty < target_qty
+        quantity_mismatch = (
+            target_qty <= 0
+            or filled_qty > target_qty
+            or (remaining_qty == 0 and filled_qty != target_qty)
+            # A terminal order that still reports a remainder while the
+            # app-owned quantity is already fully sold cannot be waited on:
+            # the status is final, so the partial-fill branch below would
+            # re-persist the same facts on every poll and never complete or
+            # error. Treat it as an unprovable quantity instead.
+            or (terminal and remaining_qty > 0 and filled_qty >= target_qty)
+        )
+        if terminal_partial or quantity_mismatch:
+            # A protective exit may complete the cycle only when the broker's
+            # cumulative fill exactly matches the app-owned position and no
+            # remainder is still working. Any terminal partial or inconsistent
+            # quantity is unsafe to reinterpret as a completed exit.
+            stage_before = cycle.stage.value
+            self._record_polled_executions(cycle, polled, "PROTECTIVE_SELL")
+            cycle.protective_sell_filled_qty = filled_qty
+            if float(polled.avg_fill_price or 0.0) > 0:
+                cycle.protective_avg_sell_price = float(polled.avg_fill_price)
+            cycle.protective_sell_cancel_requested = False
+            cycle.stage = Stage.ERROR
+            if terminal_partial:
+                event_type = "PROTECTIVE_SELL_PARTIAL_TERMINAL"
+                cycle.error_message = (
+                    f"The protective SELL order ended with status {polled.status} after "
+                    f"{filled_qty} of {target_qty} app-owned shares were sold; "
+                    f"{max(0, target_qty - filled_qty)} shares remain without a working exit order. "
+                    "Trading is paused for manual review."
+                )
+            else:
+                event_type = "PROTECTIVE_SELL_QUANTITY_MISMATCH"
+                cycle.error_message = (
+                    f"The protective SELL order reported {filled_qty} filled and {remaining_qty} remaining "
+                    f"for {target_qty} app-owned shares with status {polled.status}. "
+                    "The broker quantity does not prove that the app-owned position is exactly closed, so trading is paused for manual review."
+                )
+            cycle.touch()
+            self.active_cycle = cycle
+            self.storage.upsert_cycle(cycle)
+            self.storage.add_decision_event(
+                event_type=event_type,
+                message=cycle.error_message,
+                cycle=cycle,
+                stage_before=stage_before,
+                stage_after=cycle.stage.value,
+                decision_result="stopped_error",
+                broker_order_id=polled.order_id,
+                perm_id=polled.perm_id,
+                raw=polled.raw,
+            )
+            self._log("ERROR", cycle.error_message, cycle)
+            return True
+        if remaining_qty > 0:
+            # An intermediate cumulative fill during a live multi-print market
+            # execution. Mirror the final-SELL handler: persist the partial
+            # facts and wait for IBKR's terminal status instead of completing
+            # the cycle while shares are still working at the broker.
+            self._record_polled_executions(cycle, polled, "PROTECTIVE_SELL")
+            previous_qty = int(cycle.protective_sell_filled_qty or 0)
+            cycle.protective_sell_filled_qty = filled_qty
+            if float(polled.avg_fill_price or 0.0) > 0:
+                cycle.protective_avg_sell_price = float(polled.avg_fill_price)
+            cycle.touch()
+            self.active_cycle = cycle
+            self.storage.upsert_cycle(cycle)
+            if filled_qty != previous_qty:
+                self._log(
+                    "INFO",
+                    f"Partial protective SELL fill detected: {filled_qty} filled, "
+                    f"{remaining_qty} remaining. Waiting for the protective order "
+                    "to reach a terminal status.",
+                    cycle,
+                )
+            return True
         self._record_polled_executions(cycle, polled, "PROTECTIVE_SELL")
         next_cycle = StrategyEngine.on_protective_sell_fill(cycle, polled.filled, polled.avg_fill_price, polled.status, polled.commission)
         self.active_cycle = next_cycle
@@ -7443,26 +7606,156 @@ class TradingController:
             self.storage.upsert_cycle(cycle)
             self._log_native_order_wait_diagnostic(cycle, polled.status)
             return
-        if polled.remaining > 0 and polled.status != "Filled":
+        terminal = str(polled.status or "").strip() in {
+            "Filled",
+            "Cancelled",
+            "ApiCancelled",
+            "Inactive",
+            "Rejected",
+        }
+        target_qty = max(0, int(getattr(cycle, "buy_filled_qty", 0) or 0))
+        order_filled_qty = max(0, int(polled.filled or 0))
+        remaining_qty = max(0, int(polled.remaining or 0))
+        previous_filled_qty = max(0, int(getattr(cycle, "sell_filled_qty", 0) or 0))
+
+        # A manual close order may deliberately be sized only for the unsold
+        # remainder after an earlier partial SELL. Persist the current order's
+        # cumulative facts first, then validate and complete against all SELL
+        # executions attributed to this cycle rather than against this one
+        # order's quantity alone. This also keeps weighted price/commission and
+        # P/L correct across cancel-and-replace exits.
+        self._record_polled_executions(cycle, polled, "SELL")
+        aggregate_filled_qty, aggregate_avg_price, aggregate_commission = self._close_before_rth_sell_totals(cycle)
+
+        terminal_partial = terminal and target_qty > 0 and 0 < aggregate_filled_qty < target_qty
+        quantity_mismatch = (
+            target_qty <= 0
+            # Selling more than the cycle ever bought is anomalous. A broker
+            # order that still reports a working remainder after aggregate
+            # cycle fills already reached the app-owned quantity is likewise
+            # unsafe because another print could create a short position.
+            or aggregate_filled_qty > target_qty
+            or (remaining_qty > 0 and aggregate_filled_qty >= target_qty)
+            # A zero remainder means this order can no longer close an
+            # aggregate quantity shortfall. Do not reinterpret a smaller
+            # forced-close order as proof that the complete cycle is closed.
+            or (remaining_qty == 0 and aggregate_filled_qty != target_qty)
+        )
+        fill_price_missing = (
+            remaining_qty == 0
+            and aggregate_filled_qty == target_qty
+            and aggregate_avg_price <= 0
+        )
+        if terminal_partial or quantity_mismatch or fill_price_missing:
+            # The final SELL may complete a cycle only when the broker's
+            # persisted cumulative executions exactly match the app-owned
+            # position, no remainder is still working, and a fill price is
+            # available. A terminal partial, over-fill, missing historical
+            # execution, or contradictory remainder therefore pauses trading
+            # fail-closed for manual review.
+            stage_before = cycle.stage.value
             cycle.sell_status = polled.status
-            cycle.sell_filled_qty = polled.filled
-            cycle.avg_sell_price = polled.avg_fill_price
+            cycle.sell_filled_qty = aggregate_filled_qty
+            if aggregate_avg_price > 0:
+                cycle.avg_sell_price = aggregate_avg_price
+            cycle.sell_commission = aggregate_commission
+            cycle.stage = Stage.ERROR
+            if terminal_partial:
+                event_type = "SELL_PARTIAL_TERMINAL"
+                cycle.error_message = (
+                    f"The SELL order ended with status {polled.status} after "
+                    f"{aggregate_filled_qty} of {target_qty} app-owned shares were sold; "
+                    f"{max(0, target_qty - aggregate_filled_qty)} shares remain without a working exit order. "
+                    "Trading is paused for manual review."
+                )
+            else:
+                event_type = "SELL_QUANTITY_MISMATCH"
+                cycle.error_message = (
+                    f"The SELL order reported {order_filled_qty} filled and {remaining_qty} remaining; "
+                    f"persisted cycle executions total {aggregate_filled_qty} of {target_qty} app-owned shares "
+                    f"at an average price of {aggregate_avg_price:.4f}, with status {polled.status}. "
+                    "The broker facts do not prove that the app-owned position is exactly closed, so trading is paused for manual review."
+                )
             cycle.touch()
             self.active_cycle = cycle
             self.storage.upsert_cycle(cycle)
-            self._log("INFO", f"Partial SELL fill detected: {polled.filled} filled, {polled.remaining} remaining.", cycle)
+            self.storage.add_decision_event(
+                event_type=event_type,
+                message=cycle.error_message,
+                cycle=cycle,
+                stage_before=stage_before,
+                stage_after=cycle.stage.value,
+                decision_result="stopped_error",
+                broker_order_id=polled.order_id,
+                perm_id=polled.perm_id,
+                raw={
+                    **dict(polled.raw or {}),
+                    "order_cumulative_filled": order_filled_qty,
+                    "order_remaining": remaining_qty,
+                    "cycle_cumulative_sell_quantity": aggregate_filled_qty,
+                    "cycle_cumulative_sell_avg_price": aggregate_avg_price,
+                    "cycle_cumulative_sell_commission": aggregate_commission,
+                },
+            )
+            self._log("ERROR", cycle.error_message, cycle)
             return
-        self._record_polled_executions(cycle, polled, "SELL")
-        next_cycle = StrategyEngine.on_sell_fill(cycle, polled.filled, polled.avg_fill_price, polled.status, polled.commission)
+        if remaining_qty > 0:
+            # A non-terminal cumulative fill: persist the partial facts and let
+            # the order run to a terminal status before completing the cycle.
+            cycle.sell_status = polled.status
+            cycle.sell_filled_qty = aggregate_filled_qty
+            if aggregate_avg_price > 0:
+                cycle.avg_sell_price = aggregate_avg_price
+            cycle.sell_commission = aggregate_commission
+            cycle.touch()
+            self.active_cycle = cycle
+            self.storage.upsert_cycle(cycle)
+            if aggregate_filled_qty != previous_filled_qty:
+                self._log(
+                    "INFO",
+                    f"Partial SELL fill detected: {order_filled_qty} filled on the current order, "
+                    f"{remaining_qty} remaining; {aggregate_filled_qty} of {target_qty} app-owned shares "
+                    "are confirmed sold across the cycle.",
+                    cycle,
+                )
+            return
+        next_cycle = StrategyEngine.on_sell_fill(
+            cycle,
+            aggregate_filled_qty,
+            aggregate_avg_price,
+            polled.status,
+            aggregate_commission,
+        )
         self.active_cycle = next_cycle
         self.storage.upsert_cycle(next_cycle)
-        self.storage.add_decision_event(event_type="SELL_FILL", message="SELL filled and cycle completed.", cycle=next_cycle, stage_before=cycle.stage.value, stage_after=next_cycle.stage.value, decision_result="cycle_complete", raw=polled.raw)
+        self.storage.add_decision_event(
+            event_type="SELL_FILL",
+            message="SELL fills exactly closed the app-owned cycle position.",
+            cycle=next_cycle,
+            stage_before=cycle.stage.value,
+            stage_after=next_cycle.stage.value,
+            decision_result="cycle_complete",
+            broker_order_id=polled.order_id,
+            perm_id=polled.perm_id,
+            raw={
+                **dict(polled.raw or {}),
+                "order_cumulative_filled": order_filled_qty,
+                "cycle_cumulative_sell_quantity": aggregate_filled_qty,
+                "cycle_cumulative_sell_avg_price": aggregate_avg_price,
+                "cycle_cumulative_sell_commission": aggregate_commission,
+            },
+        )
         self._start_trade_market_data_capture("SELL_FILL", next_cycle, polled)
         try:
             self.storage.backup_database("after_sell_fill")
         except Exception:
             pass
-        self._log("INFO", f"SELL filled: {polled.filled} @ {polled.avg_fill_price:.4f}. Net P/L {next_cycle.net_pnl:.2f}.", next_cycle)
+        self._log(
+            "INFO",
+            f"SELL settlement complete: {aggregate_filled_qty} @ {aggregate_avg_price:.4f}. "
+            f"Net P/L {next_cycle.net_pnl:.2f}.",
+            next_cycle,
+        )
         self._maybe_start_next_cycle()
 
     def _record_polled_executions(self, cycle: CycleState, polled: PolledOrderState, side: str) -> None:

@@ -1052,7 +1052,9 @@ class CycleState:
         cycle = cls.new_pending(settings=settings, cycle_number=cycle_number, account=account, reinvested_profit=reinvested_profit)
         cycle.anchor_price = float(last_price)
         cycle.last_price = float(last_price)
-        cycle.drop_trigger_price = float(last_price) * (1.0 - settings.initial_drop_pct / 100.0)
+        # Match the strategy engine's four-decimal round_price() so the stored
+        # initial value equals the recalculated one on the first price tick.
+        cycle.drop_trigger_price = round(float(last_price) * (1.0 - settings.initial_drop_pct / 100.0), 4)
         return cycle
 
     @classmethod

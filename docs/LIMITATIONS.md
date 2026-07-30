@@ -1,6 +1,6 @@
 # Limitations and non-goals
 
-This document states the boundaries of v3.3.0. Treat each limitation as an operational constraint, not as a future guarantee.
+This document states the boundaries of v3.6.0. Treat each limitation as an operational constraint, not as a future guarantee.
 
 ## Strategy scope
 
@@ -46,7 +46,7 @@ Use separate accounts or deliberate operating procedures when strict position se
 
 ## Contract, route, currency, and quantity limits
 
-- v3.3.0 supports only USD and EUR ordinary `STK` contracts selected from an exact IBKR API result. Other currencies and security types remain unsupported.
+- v3.6.0 supports only USD and EUR ordinary `STK` contracts selected from an exact IBKR API result. Other currencies and security types remain unsupported.
 - Order routing is `SMART` only. The primary exchange identifies the selected native listing; direct-routing workflows are not implemented.
 - “SMART supported” is capability-driven, not a guarantee for every listing or venue. BouncyBot requires the selected contract to advertise or accept SMART, `MKT`, `TRAIL`, market-rule pricing, whole-share quantity rules, and usable regular-session metadata. A missing capability blocks the contract.
 - Each portable SQLite database is single-currency. A zero-cycle draft can switch between USD and EUR, but the first persisted cycle locks the database. Mixed USD/EUR history and automatic FX conversion are not supported.
@@ -102,4 +102,4 @@ Use separate accounts or deliberate operating procedures when strict position se
 
 ## Multi-instance ownership boundary
 
-Multiple BouncyBot copies can share a Master API feed. v3.3.0 rejects attribution of any order or callback whose complete `OrderRef` is not already persisted locally. This prevents one installation from acting on another installation's app-prefixed order, but it also means a lost or replaced local database can require manual recovery instead of broad prefix-based discovery.
+Multiple BouncyBot copies can share a Master API feed. v3.6.0 rejects attribution of any order or callback whose complete `OrderRef` is not already persisted locally. This prevents one installation from acting on another installation's app-prefixed order, but it also means a lost or replaced local database can require manual recovery instead of broad prefix-based discovery.

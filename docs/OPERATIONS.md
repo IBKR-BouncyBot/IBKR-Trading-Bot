@@ -1,6 +1,6 @@
 # Operations guide
 
-This guide describes the normal operator workflow for v3.3.0. It does not replace the broker’s API documentation or account controls.
+This guide describes the normal operator workflow for v3.6.0. It does not replace the broker’s API documentation or account controls.
 
 ## Before starting
 
@@ -193,7 +193,7 @@ After any outage or restart:
 
 ATR observation history is in-memory only and starts empty after an application or Windows restart. A stale active cycle is intentionally held for explicit reconciliation. The recovery probe itself is point-in-time: normal terminal order polls can retire an older matching probe row; after any TWS-side change, use **Refresh from IBKR/TWS** to obtain a newer authoritative probe.
 
-## v3.3.0 paper-account validation
+## v3.6.0 paper-account validation
 
 Before live use, validate at least one exact USD SMART stock and one exact EUR SMART stock in a paper account. Confirm contract search, conId qualification, market-data entitlement, market-rule price normalization, whole-share size rules, what-if validation, BUY and SELL order acceptance, commissions, contract-specific RTH status, reconnect/reconciliation, and pre-close behavior. A successful source test run cannot prove venue-specific broker acceptance.
 

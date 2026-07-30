@@ -1,0 +1,188 @@
+BouncyBot - IBKR Portable Trading Bot v3.4.0
+Reliability, protective-fill, watchdog, lockfile, and capture-shutdown report
+Release date: 2026-07-27
+
+LINEAGE AND VERSION
+===================
+
+This release is based on the user-supplied locally patched v3.3.0 source tree.
+The existing v3.3.0 Fusion themes, About/audit layout, Windows packaging,
+worker watchdog, fail-closed storage handling, and authenticated automatic
+recovery remain present. Application, package, Windows build, documentation,
+and current regression metadata were advanced to v3.4.0.
+
+The submitted bytecode/cache artifacts were treated as local build output and
+are not part of the source release.
+
+PATCH REVIEW
+============
+
+The submitted changes were reviewed against the preceding Ruff-I001-corrected
+v3.3.0 source. The intended fixes were retained. Review also found and corrected
+several edge cases before release:
+
+- The GUI-thread checkpoint retry loop could still persist its final unconfirmed
+  serialization when the cycle never stabilized. v3.4.0 writes only after two
+  consecutive serializations match and refuses the checkpoint after a bounded
+  number of changing reads.
+- Tokenless startup checked only watchdog request age. A fresh file with the
+  current timestamp but missing the required schema/token could be preserved.
+  v3.4.0 removes malformed as well as expired requests while preserving a fresh
+  valid request.
+- Capture shutdown returned immediately when the writer reference was missing,
+  even if queued work remained. v3.4.0 starts a writer for queued work and keeps
+  the wait/join inside one monotonic hard deadline.
+- Protective SELL recovery originally rejected underfills but could still accept
+  over-attributed recovered executions, a zero-remainder quantity mismatch, or
+  a terminal partial whose broker remainder was reported as zero. v3.4.0
+  requires an exact app-owned quantity match, audits all terminal partials with
+  PROTECTIVE_SELL_PARTIAL_TERMINAL, and uses
+  PROTECTIVE_SELL_QUANTITY_MISMATCH for other inconsistent quantities.
+- After a protective partial had been persisted, a temporarily unavailable
+  order poll could allow price-triggered exit logic to continue. v3.4.0 pauses
+  that path until the existing order can be reconciled.
+- Historical Windows lock tests were updated to exercise the new last-error-aware
+  WinDLL path rather than the superseded ctypes.windll seam.
+
+IMPLEMENTED CHANGES
+===================
+
+1. Windows watchdog replacement
+
+- Windows uses subprocess.Popen with a structured argv list, allowing Python to
+  quote executables and portable paths containing spaces correctly.
+- POSIX retains os.execv and atomic process-image replacement.
+- Existing lock release, one-time token, exact-cycle signature, reconciliation,
+  and restart-rate-limit gates remain unchanged.
+
+2. Protective SELL exact-completion gates
+
+- Nonterminal partial fills are recorded and persisted while the original order
+  remains under supervision.
+- A terminal partial enters Stage.ERROR and records a
+  PROTECTIVE_SELL_PARTIAL_TERMINAL decision event.
+- A zero-remainder underfill, overfill, invalid target, or other inconsistent
+  broker quantity enters Stage.ERROR and records
+  PROTECTIVE_SELL_QUANTITY_MISMATCH.
+- Reconnect polling reuses the live exact-quantity gate.
+- Ordinary and protective execution-led SELL recovery complete a cycle only
+  when recovered aggregate quantity equals buy_filled_qty exactly.
+- A missing broker poll after a known protective partial blocks any second
+  price-triggered exit until reconciliation restores authoritative facts.
+
+3. Windows lockfile process checks and acquisition cleanup
+
+- kernel32 is loaded with use_last_error=True.
+- OpenProcess, GetExitCodeProcess, and CloseHandle signatures are declared.
+- Access denied is interpreted conservatively as an existing process, preventing
+  an elevated owner from being misclassified as dead.
+- A PID-write failure closes the descriptor, removes the partial lock file, and
+  clears the in-process acquired-path registry.
+
+4. Bounded market-capture writer behavior
+
+- An individual capture-write exception no longer terminates the writer thread.
+- Shutdown no longer calls unbounded Queue.join().
+- Missing or dead writers are restarted when queued work remains.
+- Queue draining and final thread joining share one monotonic hard deadline.
+
+5. Deterministic persistence and recovery
+
+- Active cycles are selected with updated_at DESC, cycle_number DESC, id DESC.
+- Emergency GUI-thread checkpoints require two consecutive matching cycle
+  serializations.
+- Tokenless startup discards expired or malformed watchdog handoff files and
+  preserves fresh valid files.
+- Execution fallback deduplication includes the execution timestamp when IBKR
+  supplies no execution ID.
+
+6. Maintenance corrections
+
+- Removed the dead duplicate headless signal-instance class.
+- Rounded a newly created drop_trigger_price to the same four-decimal precision
+  used by the strategy engine.
+- Normalized built-in TWS and IB Gateway Windows path literals.
+- Retained signed real execution commissions while documenting the intentional
+  non-negative cumulative residual-placeholder behavior.
+
+SAFETY AND COMPATIBILITY
+========================
+
+- Strategy formulas, ATR behavior, price-source priority, order type and normal
+  construction, position sizing, RTH rules, account scope, commission/P&L
+  accounting, and configured percentages are unchanged.
+- v3.4.0 adds no SQLite table, column, index, migration, or persisted setting.
+- Existing v3.3.0 databases, active cycles, orders, executions, audit records,
+  backups, exports, captures, and watchdog state remain compatible through the
+  existing startup/reconciliation path.
+- Ambiguous broker quantities fail closed. The release deliberately prefers
+  manual reconciliation over false cycle completion or a duplicate exit.
+
+FINAL VERIFICATION
+==================
+
+Repository tests
+----------------
+
+- 1,118/1,118 collected pytest cases passed across eight isolated partitions.
+- ResourceWarning was promoted to an error in every partition.
+- The partitions included ordinary tests, accelerated-soak tests, and the
+  elapsed-time-bound large-database performance tests.
+- 29 focused v3.4.0 regressions cover the submitted fixes and review-discovered
+  safety edges.
+- No case was skipped, xfailed, or retained as a known-gap sentinel in the
+  completed partition set.
+
+Coverage and deterministic verification
+---------------------------------------
+
+- 77.8% combined statement/branch coverage for app/ and main.py; required gate:
+  75.0%.
+- 992/992 executable application callables were entered.
+- 17/17 targeted safety mutants were killed.
+- 58/58 deterministic simulation contracts passed across 54 CSV price-path
+  files.
+
+Supplemental verification
+-------------------------
+
+- Python compileall passed for app/, tests/, scripts/, and main.py.
+- Git whitespace validation passed.
+- The focused source review confirmed that every submitted functional change is
+  present and that local __pycache__/bytecode files are excluded from release.
+- Ruff and Pyright were not installed in the offline Linux release environment
+  and are therefore not recorded as passing for v3.4.0. The Windows
+  run_all_tests.bat workflow still requires both tools.
+
+PLATFORM-SPECIFIC BOUNDARY
+==========================
+
+A native Windows/PyInstaller executable was not built in this Linux environment.
+Windows-specific behavior was exercised with deterministic platform doubles,
+including paths containing spaces, the WinDLL last-error loader, process status,
+and lock cleanup. Before unattended live deployment, the generated Windows
+executable should still be smoke-tested for:
+
+- watchdog replacement from the intended installation path;
+- one-instance lock handoff;
+- reconnect to the intended TWS/IB Gateway session;
+- exact-cycle reconciliation after a Stage-3 restart;
+- shutdown while a market capture is pending; and
+- restart-loop limiting.
+
+The in-process watchdog still depends on a responsive Qt main event loop and
+cannot recover a frozen GUI thread, complete process crash before handoff,
+Windows/hardware failure, power loss, a missing executable, or a Gateway login /
+2FA requirement. External Windows process supervision remains appropriate for
+those cases and must not bypass BouncyBot's lock or reconciliation gates.
+
+SOURCE RELEASE CONTENT
+======================
+
+The source archive is assembled from committed repository files under one
+IBKR-Trading-Bot-main/ root. It excludes .git data, virtual environments,
+__pycache__, bytecode, pytest/coverage caches, runtime databases, emergency
+logs, restart handoffs/history, backups, exports, debug captures, and build
+output. The complete source Images/ directory is retained for README and
+repository documentation assets; the Windows build continues to package only
+the two required runtime images inside GUI/.

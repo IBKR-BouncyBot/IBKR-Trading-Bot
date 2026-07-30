@@ -15,6 +15,7 @@ import json
 import queue
 import re
 import threading
+import time
 import zipfile
 from collections import deque
 from dataclasses import asdict, dataclass, field, is_dataclass
@@ -237,23 +238,43 @@ class MarketDataCaptureManager:
             try:
                 if pending is None:
                     return
-                path = self._write_capture(pending)
+                try:
+                    path = self._write_capture(pending)
+                except Exception:
+                    # A capture-write failure (for example disk full) must not
+                    # terminate the writer thread; queued captures behind it
+                    # would otherwise block shutdown's queue drain forever.
+                    continue
                 with self._completed_lock:
                     self._completed_files.append(path)
             finally:
                 self._write_queue.task_done()
 
     def shutdown(self, *, wait: bool = True, timeout: float = 5.0) -> None:
-        if not self._async_writes or self._writer_thread is None:
+        if not self._async_writes:
             return
+        unfinished = int(getattr(self._write_queue, "unfinished_tasks", 0) or 0)
+        if self._writer_thread is None:
+            if unfinished <= 0:
+                return
+            self._ensure_writer_thread()
+        deadline = time.monotonic() + max(0.1, float(timeout or 0.0))
         if wait:
-            try:
-                self._write_queue.join()
-            except Exception:
-                pass
+            # Queue.join() has no timeout and would hang process shutdown if
+            # the writer thread had died with items still queued. Restart a
+            # dead writer so pending captures get one bounded drain attempt,
+            # then poll the queue against the shutdown deadline.
+            if getattr(self._write_queue, "unfinished_tasks", 0):
+                self._ensure_writer_thread()
+            while (
+                getattr(self._write_queue, "unfinished_tasks", 0)
+                and time.monotonic() < deadline
+            ):
+                time.sleep(0.05)
         self._write_queue.put(None)
-        if wait:
-            self._writer_thread.join(timeout=max(0.1, float(timeout or 0.0)))
+        writer = self._writer_thread
+        if wait and writer is not None:
+            writer.join(timeout=max(0.0, deadline - time.monotonic()))
 
     def _write_capture(self, pending: PendingTradeCapture) -> Path:
         self.output_dir.mkdir(parents=True, exist_ok=True)

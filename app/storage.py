@@ -1028,7 +1028,11 @@ class BotStorage:
         if ticker:
             query += " AND ticker=?"
             params.append(ticker.upper())
-        query += " ORDER BY updated_at DESC LIMIT 1"
+        # updated_at has whole-second resolution, so same-second ties between
+        # two attention-needing cycles are possible; break them deterministically
+        # toward the newest cycle so watchdog exact-cycle matching and startup
+        # selection cannot flip between runs.
+        query += " ORDER BY updated_at DESC, cycle_number DESC, id DESC LIMIT 1"
         with self.connect() as con:
             row = con.execute(query, tuple(params)).fetchone()
         return self._row_to_cycle(row) if row else None
@@ -1654,6 +1658,11 @@ class BotStorage:
         placeholder_id = self.cumulative_execution_id(ref, side_value)
         target_shares = max(0.0, float(cumulative_shares or 0.0))
         target_avg = max(0.0, float(cumulative_avg_price or 0.0))
+        # Broker cumulative commissions are clamped non-negative on purpose:
+        # the monotonic merge below assumes growth and would misbehave with
+        # signed rebate values. Rebated (negative) commissions still reach
+        # P/L through the real per-execution rows, which keep signed amounts;
+        # only this transient residual placeholder excludes them.
         target_commission = (
             max(0.0, float(cumulative_commission))
             if cumulative_commission not in (None, "")

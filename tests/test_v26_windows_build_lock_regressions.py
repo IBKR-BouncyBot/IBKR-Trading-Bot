@@ -22,11 +22,6 @@ class _FakeKernel32:
         return True
 
 
-class _FakeWindll:
-    def __init__(self, kernel32):
-        self.kernel32 = kernel32
-
-
 def test_windows_pid_check_does_not_send_ctrl_c_event(monkeypatch):
     from app import lockfile
 
@@ -34,11 +29,18 @@ def test_windows_pid_check_does_not_send_ctrl_c_event(monkeypatch):
         raise AssertionError("Windows PID checks must not call os.kill(pid, 0)")
 
     kernel32 = _FakeKernel32(exit_code=259)
+    loaded = []
     monkeypatch.setattr(lockfile.os, "name", "nt", raising=False)
     monkeypatch.setattr(lockfile.os, "kill", forbidden_kill)
-    monkeypatch.setattr(lockfile.ctypes, "windll", _FakeWindll(kernel32), raising=False)
+    monkeypatch.setattr(
+        lockfile.ctypes,
+        "WinDLL",
+        lambda name, use_last_error=False: (loaded.append((name, use_last_error)) or kernel32),
+        raising=False,
+    )
 
     assert lockfile._pid_is_running(4321) is True
+    assert loaded == [("kernel32", True)]
     assert kernel32.opened
     assert kernel32.closed == [12345]
 
@@ -48,7 +50,12 @@ def test_windows_pid_check_detects_exited_process(monkeypatch):
 
     kernel32 = _FakeKernel32(exit_code=0)
     monkeypatch.setattr(lockfile.os, "name", "nt", raising=False)
-    monkeypatch.setattr(lockfile.ctypes, "windll", _FakeWindll(kernel32), raising=False)
+    monkeypatch.setattr(
+        lockfile.ctypes,
+        "WinDLL",
+        lambda name, use_last_error=False: kernel32,
+        raising=False,
+    )
 
     assert lockfile._pid_is_running(4321) is False
 

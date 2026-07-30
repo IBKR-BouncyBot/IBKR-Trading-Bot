@@ -3467,7 +3467,17 @@ class IbAsyncTwsAdapter(BrokerAdapter):
             item = self._execution_dict_from_fill(fill)
             if not item:
                 continue
-            key = str(item.get("execution_id") or f"{item.get('perm_id')}|{item.get('order_id')}|{item.get('side')}|{item.get('shares')}|{item.get('price')}")
+            key = str(
+                item.get("execution_id")
+                or (
+                    # Two same-size, same-price partial prints of one order are
+                    # distinct fills; include the execution timestamp so the
+                    # fallback key cannot silently merge them when IBKR omits
+                    # an execution id.
+                    f"{item.get('perm_id')}|{item.get('order_id')}|{item.get('side')}|"
+                    f"{item.get('shares')}|{item.get('price')}|{item.get('executed_at') or item.get('time')}"
+                )
+            )
             if key in seen:
                 continue
             seen.add(key)

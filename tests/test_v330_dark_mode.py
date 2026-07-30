@@ -1,4 +1,4 @@
-"""Automatic system light/dark appearance regressions for v3.3.0."""
+"""Fusion light/dark appearance regressions for v3.6.0."""
 
 from __future__ import annotations
 
@@ -130,13 +130,14 @@ def test_custom_painted_views_use_theme_selected_colors() -> None:
         assert "_theme_color(" in segment, start
 
 
-def test_theme_startup_and_live_change_hooks_are_wired() -> None:
-    assert "_apply_application_palette(app)" in MAIN_SOURCE
-    assert "_install_system_theme_hook(app, window)" in MAIN_SOURCE
-    assert "app.styleHints()" in MAIN_SOURCE
-    assert "colorSchemeChanged" in MAIN_SOURCE
-    assert "window.apply_system_theme" not in MAIN_SOURCE
-    assert 'getattr(window, "apply_system_theme", None)' in MAIN_SOURCE
+def test_theme_startup_is_light_and_runtime_menu_switching_remains_wired() -> None:
+    main_body = MAIN_SOURCE[MAIN_SOURCE.index("def main() -> int:") :]
+    assert "_apply_application_palette(app)" in main_body
+    assert "dark: Optional[bool] = False" in MAIN_SOURCE
+    assert "_install_system_theme_hook(app, window)" not in main_body
+    assert "def _set_theme_from_view_menu" in GUI_SOURCE
+    assert "_apply_fusion_application_palette(app, bool(dark))" in GUI_SOURCE
+    assert "self.apply_system_theme(bool(dark))" in GUI_SOURCE
 
 
 def test_view_menu_exposes_explicit_light_and_dark_choices_in_menu_order() -> None:

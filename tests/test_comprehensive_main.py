@@ -223,7 +223,13 @@ def test_main_runs_window_and_always_releases_lock(main_module, monkeypatch: pyt
     monkeypatch.setattr(main_module, "QApplication", lambda argv: app)
     monkeypatch.setattr(main_module, "_apply_application_palette", lambda value: events.append(("palette", value)))
     monkeypatch.setattr(main_module, "_apply_application_icon", lambda value: events.append(("icon", value)))
-    monkeypatch.setattr(main_module, "_install_system_theme_hook", lambda value, window: events.append("theme_hook"))
+    monkeypatch.setattr(
+        main_module,
+        "_install_system_theme_hook",
+        lambda value, window: (_ for _ in ()).throw(
+            AssertionError("system theme hook must not be installed at startup")
+        ),
+    )
     monkeypatch.setattr(main_module, "_install_session_shutdown_hook", lambda value, window: events.append("session_hook"))
     monkeypatch.setattr(main_module, "SingleInstanceLock", lambda: lock)
     monkeypatch.setattr(main_module, "TradingController", lambda: controller)
@@ -235,7 +241,6 @@ def test_main_runs_window_and_always_releases_lock(main_module, monkeypatch: pyt
         ("icon", app),
         "acquire",
         ("window", controller),
-        "theme_hook",
         "session_hook",
         "show",
         "shutdown",

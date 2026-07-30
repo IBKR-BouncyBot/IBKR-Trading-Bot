@@ -1,6 +1,6 @@
 # Worker watchdog and automatic recovery
 
-This document defines the v3.3.0 corrective worker/storage supervision behavior. It preserves BouncyBot's single-controller-worker design. The corrective implementation does not add a broker worker, database-writer worker, service, daemon, or second trading process.
+This document defines the v3.6.0 corrective worker/storage supervision behavior. It preserves BouncyBot's single-controller-worker design. The corrective implementation does not add a broker worker, database-writer worker, service, daemon, or second trading process.
 
 ## Failure class addressed
 
@@ -30,7 +30,7 @@ The replacement sequence is:
 2. Qt exits with an internal watchdog exit code.
 3. `main.py` asks the controller to shut down and waits for its existing bounded shutdown interval.
 4. The portable-folder single-instance lock is released.
-5. `os.execv` replaces the complete source or frozen BouncyBot process with the same entry point and the private token argument.
+5. Windows starts the same source or frozen BouncyBot entry point with a properly quoted `subprocess.Popen` argument list; POSIX uses `os.execv`. Both carry the private token argument.
 6. The replacement process consumes and deletes the matching handoff once, before its worker starts.
 
 If Qt cannot exit, restart history cannot be made durable, the request cannot be written, no token is available, or process replacement fails, BouncyBot records the failure in the emergency log and remains fail-closed. It does not launch an overlapping fallback process.
@@ -142,6 +142,6 @@ For machine- or process-level supervision beyond this boundary, an external Wind
 
 ## Verification scope
 
-The v3.3.0 corrective tests cover one-time token consumption, exact-cycle signatures, restart rate limiting, emergency logging, real rolled-back SQLite write probes, persist-before-publish ordering, storage-fault broker-action blocking, transport-only callback pumping, dead/stalled worker detection, stale quote-age/RTH display invalidation, lock release before process replacement, exact-cycle reconciliation gating, and audit-token redaction.
+The v3.6.0 corrective tests cover one-time token consumption, exact-cycle signatures, restart rate limiting, emergency logging, real rolled-back SQLite write probes, persist-before-publish ordering, storage-fault broker-action blocking, transport-only callback pumping, dead/stalled worker detection, stale quote-age/RTH display invalidation, lock release before process replacement, exact-cycle reconciliation gating, and audit-token redaction.
 
-A native Windows executable and its `os.execv` behavior must still be smoke-tested on Windows after running `build_windows.bat`; source tests on Linux cannot produce or execute a Windows PyInstaller binary.
+A native Windows executable and its `subprocess.Popen` replacement behavior must still be smoke-tested on Windows after running `build_windows.bat`; source tests on Linux cannot produce or execute a Windows PyInstaller binary.

@@ -50,7 +50,20 @@ def _pid_is_running_windows(
         return False
     try:
         if kernel32 is None:
-            kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+            # ctypes.windll loads with use_last_error=False, so
+            # ctypes.get_last_error() would never observe an OpenProcess
+            # failure code and an access-denied (for example elevated) owner
+            # process could be misread as dead, wrongly releasing the lock.
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+            try:
+                kernel32.OpenProcess.restype = ctypes.c_void_p
+                kernel32.OpenProcess.argtypes = (ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32)
+                kernel32.GetExitCodeProcess.restype = ctypes.c_int
+                kernel32.GetExitCodeProcess.argtypes = (ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong))
+                kernel32.CloseHandle.restype = ctypes.c_int
+                kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
+            except Exception:
+                pass
         if get_last_error is None:
             get_last_error = getattr(ctypes, "get_last_error", lambda: 0)
     except Exception:
@@ -127,9 +140,6 @@ class SingleInstanceLock:
         for attempt in range(2):
             try:
                 self.fd = os.open(str(self.path), flags)
-                os.write(self.fd, str(os.getpid()).encode("ascii", errors="ignore"))
-                _ACQUIRED_LOCK_PATHS.add(key)
-                return
             except FileExistsError as exc:
                 if attempt == 0 and self._remove_stale_lock_if_possible():
                     continue
@@ -137,9 +147,27 @@ class SingleInstanceLock:
                     f"Another bot instance appears to be using this portable folder. "
                     f"Close the other instance or remove stale lock file: {self.path}"
                 ) from exc
+            try:
+                os.write(self.fd, str(os.getpid()).encode("ascii", errors="ignore"))
             except Exception:
+                # Do not leave an open descriptor or a half-written lock file
+                # behind; a later start would otherwise have to treat it as a
+                # stale artifact of this failed acquisition.
+                try:
+                    os.close(self.fd)
+                except Exception:
+                    pass
+                self.fd = None
+                try:
+                    self.path.unlink()
+                except FileNotFoundError:
+                    pass
+                except Exception:
+                    pass
                 _ACQUIRED_LOCK_PATHS.discard(key)
                 raise
+            _ACQUIRED_LOCK_PATHS.add(key)
+            return
 
     def release(self) -> None:
         key = _lock_key(self.path)

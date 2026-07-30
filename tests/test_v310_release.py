@@ -11,19 +11,19 @@ PYPROJECT = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 BUILD_SCRIPT = (ROOT / "scripts" / "build_windows.ps1").read_text(encoding="utf-8")
 DOCS_INDEX = (ROOT / "docs" / "README.md").read_text(encoding="utf-8")
 LEGACY_INDEX = (ROOT / "docs" / "legacy" / "README.md").read_text(encoding="utf-8")
-CURRENT_RELEASE_NOTE = ROOT / "docs" / "V3_3_0_DARK_MODE_AUDIT_AND_WINDOWS_RELEASE.md"
+CURRENT_RELEASE_NOTE = ROOT / "docs" / "V3_6_0_SELL_RECONCILIATION_AND_HISTORY_ROBUSTNESS.md"
 V310_RELEASE_NOTE = ROOT / "docs" / "legacy" / "V3_1_0_CLOSE_BEFORE_RTH_LIQUIDATION.md"
 
 
 def test_current_release_metadata_is_consistent_and_v310_note_is_archived() -> None:
-    assert "BouncyBot - IBKR Portable Trading Bot v3.3.0" in GUI
-    assert "This is synthetic v3.3.0 paper-trading example data." in GUI
+    assert "BouncyBot - IBKR Portable Trading Bot v3.6.0" in GUI
+    assert "This is synthetic v3.6.0 paper-trading example data." in GUI
     assert README.startswith("# BouncyBot - an IBKR Portable Trading Bot \n")
-    assert "**Current release: v3.3.0**" in README
-    assert 'version = "3.3.0"' in PYPROJECT
-    assert '$version = "3.3.0"' in BUILD_SCRIPT
-    assert "## v3.3.0" in CHANGELOG
-    assert "current v3.3.0 behavior" in DOCS_INDEX
+    assert "**Current release: v3.6.0**" in README
+    assert 'version = "3.6.0"' in PYPROJECT
+    assert '$version = "3.6.0"' in BUILD_SCRIPT
+    assert "## v3.6.0" in CHANGELOG
+    assert "current v3.6.0 behavior" in DOCS_INDEX
     assert CURRENT_RELEASE_NOTE.is_file()
     assert V310_RELEASE_NOTE.is_file()
     assert not (ROOT / "docs" / "V3_1_0_CLOSE_BEFORE_RTH_LIQUIDATION.md").exists()

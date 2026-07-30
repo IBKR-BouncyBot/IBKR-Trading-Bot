@@ -1,4 +1,4 @@
-"""v3.3.0 fail-closed worker watchdog and replacement-process regressions."""
+"""v3.6.0 fail-closed worker watchdog and replacement-process regressions."""
 
 from __future__ import annotations
 
@@ -966,7 +966,14 @@ def test_callable_gate_enters_main_replacement_helpers(
         main_module.os,
         "execv",
         lambda executable, replacement_argv: calls.append(
-            (str(executable), list(replacement_argv))
+            ("execv", list(replacement_argv))
+        ),
+    )
+    monkeypatch.setattr(
+        main_module.subprocess,
+        "Popen",
+        lambda replacement_argv, **kwargs: calls.append(
+            ("popen", list(replacement_argv))
         ),
     )
     main_module._replace_with_watchdog_process(
@@ -974,4 +981,7 @@ def test_callable_gate_enters_main_replacement_helpers(
         ["main.py", "--style=fusion"],
     )
     assert calls
+    # os.exec* applies no argv quoting on Windows, so the fixed relaunch uses a
+    # properly quoted subprocess.Popen there and keeps atomic execv on POSIX.
+    assert calls[0][0] == ("popen" if main_module.os.name == "nt" else "execv")
     assert calls[0][1][-1] == "--watchdog-recovery-token=abc123"
