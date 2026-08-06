@@ -8,7 +8,7 @@ These controls reduce specific risks; none guarantees safety or profitability.
 
 **Cancel SELL trail and liquidate before close** is off by default. The configured minute value uses the contract's date-specific regular-session close and may therefore start earlier on an early-close day.
 
-In Stage 3, the policy is conditional: the selected current price must be strictly above the average BUY fill price at the cutoff, with commissions intentionally ignored. If a protective SELL is working, the safety invariant is cancel-confirm-replace; its fills reduce the remaining quantity, and the price condition is checked again before replacement. With no protective SELL, the app can submit the market SELL directly.
+In Stage 3, the policy is conditional: a complete, independently fresh, non-crossed bid/ask pair must be within the configured Maximum spread, and the executable bid must be strictly above the average BUY fill price at the cutoff, with commissions intentionally ignored. If a protective SELL is working, the safety invariant is cancel-confirm-replace; its fills reduce the remaining quantity, and the quote/bid condition is checked again before replacement. With no protective SELL, the app can submit the market SELL directly.
 
 In Stage 4, the established invariant remains cancel-confirm-replace: no replacement market SELL is transmitted while the original final SELL trail may still execute. Any fills reported during cancellation reduce the remaining quantity.
 
@@ -17,10 +17,10 @@ The replacement is RTH-only, `DAY`, and market-priced. The Stage-3 quote compari
 Failure behavior is conservative:
 
 - unknown session boundary: do not start the automatic workflow;
-- Stage-3 quote not strictly above average BUY: do not sell at that observation; a later fresh profitable quote before close may still qualify;
+- Stage-3 executable bid not strictly above average BUY: do not sell at that observation; a later fresh profitable quote before close may still qualify;
 - cancellation not terminal by close: do not submit a second SELL;
 - cancellation terminal after RTH: do not submit outside RTH;
-- Stage-3 quote falls back to or below average BUY after a protective cancellation: stop in `ERROR`;
+- Stage-3 quote becomes invalid or its executable bid falls to/below average BUY after a protective cancellation: stop in `ERROR`;
 - replacement rejected, failed, or incomplete at close: stop in `ERROR` for manual review;
 - conflicting manual market-close request while the workflow is active: refuse the second request.
 
@@ -50,9 +50,17 @@ Strategy orders use `outsideRth=False`. New order placement requires the control
 
 The production adapter obtains date-specific regular-session ranges from the exact qualified contract's IBKR `liquidHours` and `timeZoneId`. For `LSE` and `LSEETF`, the effective range is the intersection of that broker window and the verified 08:00-16:30 `Europe/London` continuous session; this prevents timing-sensitive market orders from being scheduled in a later auction/post-continuous phase. An IBKR early close remains earlier and therefore still wins. The effective boundaries drive the first-minutes, last-minutes, pre-close BUY-cancellation, Stage-3/Stage-4 liquidation, and RTH-only ATR controls. The weekday 09:30-16:00 New York fallback is permitted only for a recognized U.S. primary exchange. A non-U.S. or unknown contract with missing or unusable session metadata fails closed; BouncyBot does not guess U.S. hours for an EUR listing.
 
-A configured BUY blocker is not a broker submission failure. Before an order intent exists, BouncyBot records `PreflightBlocked` and returns the cycle to Stage 1. The first audit warning is immediate; an unchanged blocker category for the same cycle is then limited to one event per 60 seconds. The guard itself remains active on every evaluation.
+A configured BUY blocker is not a broker submission failure. Before an order intent exists, BouncyBot records `PreflightBlocked` and returns the cycle to Stage 1. The guard remains active on every evaluation, but v3.9.0 coalesces repeated audit rows per cycle while retaining stable blocker reason codes. Expected waits use INFO entry/15-minute summaries; hard risk, data, or broker blockers use an immediate WARN, a one-minute first WARN summary, and later WARN summaries at five-minute intervals. Recovery is recorded once when the blocker clears.
 
 Native orders accepted by IBKR can remain working according to broker rules. The application’s RTH guard controls its own submissions/activation decisions, not the broker’s entire account.
+
+### Working BUY remainder after a partial fill
+
+A positive partial fill proves that the triggered BUY is marketable and has already created an app-owned position. BouncyBot therefore does not cancel merely because the first broker update is partial. It allows the original order a fixed 3.0-second grace period to finish an ordinary multi-print execution, while remaining in Stage 2 and reconciling every execution and commission.
+
+The still-working remainder is cancelled once after the timeout, or immediately when an enabled safety fact becomes unsafe: RTH closes; required live/fresh data is lost; session timing becomes unavailable or enters the configured cancellation window; the volatility ceiling is exceeded; the configured minimum price or previous-close gap is breached/unverifiable; or the configured spread becomes missing, crossed, or excessive. Portfolio P/L limits, cycle counts, and what-if are not rerun after a fill because they govern new submission rather than ownership of shares already bought.
+
+Cancellation is not atomic with exchange execution. More shares, including the full requested quantity, can fill before IBKR confirms the request. Stage 3 begins only after the original BUY is terminal and uses the final reconciled app-owned quantity.
 
 ### Data-type and freshness controls
 
@@ -64,9 +72,11 @@ Defaults:
 - bid/ask maximum age: 3 seconds;
 - RTH-status maximum age: 60 seconds.
 
-Freshness is based on actual `pendingTickersEvent` delivery, not on whether a cached `Ticker` still contains non-null bid, ask, or last fields. Each live subscription has an identity and each actual callback has a sequence/timestamp. The controller consumes a sequence once; rereading it does not reset quote age, advance a waiting stage, or add ATR/volatility data. If event tracking is unavailable, the production adapter fails closed rather than treating cached fields as fresh.
+Freshness is based on actual `pendingTickersEvent` delivery, not on whether a cached `Ticker` still contains non-null bid, ask, or Last fields. Each live subscription has an identity and each actual callback has a sequence/timestamp. The live adapter additionally records update and numerical-change identity for each price field. A bid-size, ask-size, last-size, or timestamp event therefore cannot refresh an unchanged cached price; a same-value raw price tick can refresh that specific field.
 
-A quote can legitimately remain numerically unchanged while fresh events continue. The GUI therefore shows both actual-update age/count and value-change age/count. After an upstream outage or reconnect, cached fields remain invalid until a new event arrives.
+The controller consumes a whole-event sequence once. ATR and generic Stage-1/Stage-3 selected-price handling additionally require the raw selected-price basis to have updated in that event. The normal Stage-3 final SELL requires both bid and ask to be independently fresh, a valid spread, the bid at the trigger, and two distinct qualifying quote updates. Rereading cached fields does not reset age or create another confirmation. After an upstream outage or reconnect, field timestamps remain invalid until the corresponding fields update again. If field tracking is unavailable on the production path, the guarded Stage-3 exit fails closed.
+
+A quote can legitimately remain numerically unchanged while fresh same-value price ticks continue. The GUI therefore shows both actual-update age/count and value-change age/count.
 
 ### IBKR what-if preflight
 
@@ -148,7 +158,7 @@ Uses current bid and ask to calculate:
 spread % = (ask - bid) / midpoint × 100
 ```
 
-The calculated spread is compared with the fixed **Maximum spread %** saved by the user. Live bid/ask data never changes that configured value. It can change only through explicit user input or loading persisted settings. Missing/stale bid/ask can also block through the data guard. Zero disables the configured percentage limit, not freshness requirements.
+The calculated spread is compared with the fixed **Maximum spread %** saved by the user. Live bid/ask data never changes that configured value. It can change only through explicit user input or loading persisted settings. Missing/stale bid/ask can also block through the data guard. The percentage ceiling applies to BUY preflight and the normal Stage-3 final-SELL/Stage-3 close-before-RTH gate, even when the optional hard-risk master is off. Zero disables only the configured percentage ceiling, not quote completeness or per-side freshness requirements.
 
 ### Previous-close gap
 
@@ -178,7 +188,7 @@ Before replacing a protective/final SELL or performing a market close, the contr
 
 Most configurable hard limits are entry controls. They do not intentionally trap an existing app-owned position by blocking risk-reducing SELL actions.
 
-SELL submission still requires coherent state, a live local socket, confirmed upstream IBKR connectivity, completed post-reconnect reconciliation, valid quantity/contract, appropriate RTH/order conditions, and safe cancellation sequencing. A missing fresh quote does not by itself prevent every risk-reducing exit path, because a protective or market-close order may be based on known fills rather than a new strategy-price trigger. A protective or final native order can still be rejected or fill poorly.
+SELL submission still requires coherent state, a live local socket, confirmed upstream IBKR connectivity, completed post-reconnect reconciliation, valid quantity/contract, appropriate RTH/order conditions, and safe cancellation sequencing. The normal Stage-3 profit exit additionally requires the field-level bid/ask confirmation and two pre-submission revalidations described above. A missing fresh quote does not by itself prevent every risk-reducing exit path, because a protective or market-close order may be based on known fills rather than a new strategy-price trigger. A protective or final native order can still be rejected or fill poorly.
 
 ## Trading-status presentation
 

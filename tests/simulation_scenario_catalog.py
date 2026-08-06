@@ -404,7 +404,7 @@ CSV_SCENARIOS: tuple[CsvScenario, ...] = (
         name="partial_buy_40_percent_cycle",
         csv_name="partial_buy_40_percent_cycle.csv",
         category="buy-execution",
-        description="A partial BUY cancels the remainder and sizes the final SELL to the four filled shares.",
+        description="A partial BUY reaches the simulated 3.0-second grace timeout, cancels the remainder, and sizes the final SELL to the four filled shares.",
         expected_stage=Stage.CYCLE_COMPLETE,
         expected_events=(
             "buy_trail_submitted",

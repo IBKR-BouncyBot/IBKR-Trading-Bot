@@ -2,10 +2,16 @@
 
 These files document superseded releases and implementation history. They are retained for traceability, but they may describe old labels, defaults, layouts, tests, or limitations.
 
-For current behavior, use the [project README](../../README.md), the [current documentation index](../README.md), the [changelog](../../CHANGELOG.md), and the current [`v3.6.0 release note`](../V3_6_0_SELL_RECONCILIATION_AND_HISTORY_ROBUSTNESS.md).
+For current behavior, use the [project README](../../README.md), the [current documentation index](../README.md), the [changelog](../../CHANGELOG.md), and the current [`v3.9.0 release note`](../V3_9_0_AUDIT_DIAGNOSTIC_COALESCING.md).
 
 ## Version 3 release notes
 
+- [`V3_8_0_BUY_PARTIAL_FILL_GRACE.md`](V3_8_0_BUY_PARTIAL_FILL_GRACE.md) — v3.8.0 three-second marketable-BUY partial-fill grace, timeout cancellation, immediate safety cancellation, and restart-safe first-fill timing.
+- [`V3_8_0_IMPLEMENTATION_TEST_REPORT.txt`](V3_8_0_IMPLEMENTATION_TEST_REPORT.txt) — retained v3.8.0 implementation and verification report.
+- [`V3_7_0_FIELD_LEVEL_MARKET_DATA_AND_STAGE3_SELL_GUARD.md`](V3_7_0_FIELD_LEVEL_MARKET_DATA_AND_STAGE3_SELL_GUARD.md) — v3.7.0 independent price-field freshness, executable-bid confirmation, Stage-3 spread enforcement, pre-submit revalidation, and ATR filtering.
+- [`V3_7_0_IMPLEMENTATION_TEST_REPORT.txt`](V3_7_0_IMPLEMENTATION_TEST_REPORT.txt) — retained v3.7.0 implementation and verification report.
+- [`V3_6_0_SELL_RECONCILIATION_AND_HISTORY_ROBUSTNESS.md`](V3_6_0_SELL_RECONCILIATION_AND_HISTORY_ROBUSTNESS.md) — v3.6.0 exact final-SELL aggregate settlement, fail-closed partial/mismatched quantities, numeric Trade History sorting, and GUI error handling.
+- [`V3_6_0_IMPLEMENTATION_TEST_REPORT.txt`](V3_6_0_IMPLEMENTATION_TEST_REPORT.txt) — retained v3.6.0 implementation and verification report.
 - [`V3_5_0_GUI_LIGHT_MODE_AND_LAYOUT.md`](V3_5_0_GUI_LIGHT_MODE_AND_LAYOUT.md) — v3.5.0 price-monitor-first Advanced layout, light-mode startup, and reliable workflow-button state after theme switching.
 - [`V3_5_0_IMPLEMENTATION_TEST_REPORT.txt`](V3_5_0_IMPLEMENTATION_TEST_REPORT.txt) — retained v3.5.0 implementation and verification report.
 - [`V3_4_0_RELIABILITY_AND_RECOVERY_FIXES.md`](V3_4_0_RELIABILITY_AND_RECOVERY_FIXES.md) — protective-SELL completion gates, watchdog path quoting, bounded capture shutdown, deterministic recovery state, and lockfile hardening.

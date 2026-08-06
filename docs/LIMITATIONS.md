@@ -1,6 +1,6 @@
 # Limitations and non-goals
 
-This document states the boundaries of v3.6.0. Treat each limitation as an operational constraint, not as a future guarantee.
+This document states the boundaries of v3.9.0. Treat each limitation as an operational constraint, not as a future guarantee.
 
 ## Strategy scope
 
@@ -13,12 +13,13 @@ This document states the boundaries of v3.6.0. Treat each limitation as an opera
 ## Execution limits
 
 - Native IBKR trailing orders trigger market-style execution. The displayed stop is not a guaranteed fill price.
+- The Stage-2 partial-BUY grace, introduced in v3.8.0, is fixed at 3.0 seconds. It is not a persisted setting and cannot guarantee that a cancellation reaches IBKR before additional or complete fills occur.
 - A configured minimum-profit percentage is a pre-submission stop-level condition. It does not guarantee net profit after slippage, gaps, partial fills, commissions, fees, or broker adjustments.
 - The optional slippage buffer changes planning math only. It is not a limit order and does not cap slippage.
 - The protective SELL cannot guarantee protection during gaps, market closures, halts, disconnections, rejection, or insufficient liquidity.
 - The application cannot override IBKR risk checks, exchange rules, account restrictions, or order simulations.
 - The optional Stage-3/Stage-4 close-before-RTH policy is not guaranteed to finish before the close. Cancellation acknowledgement, partial fills, order rejection, halts, connectivity, and limited remaining time can leave shares unsold and require manual review. Its market replacement can realize a loss.
-- In Stage 3, the close-before-RTH policy acts only while a fresh selected price is strictly above the weighted average BUY price, ignoring commissions. The market fill can still be below that reference or realize a loss. The policy does not create an extended-hours or overnight protective order.
+- In Stage 3, the close-before-RTH policy acts only from a complete, independently fresh, non-crossed quote whose spread is within the configured maximum and whose executable bid is strictly above the weighted average BUY price, ignoring commissions. The market fill can still be below that bid or realize a loss. The policy does not create an extended-hours or overnight protective order.
 
 ## Position ownership limits
 
@@ -39,14 +40,14 @@ Use separate accounts or deliberate operating procedures when strict position se
 - Price selection depends on fields supplied by TWS/Gateway and the account’s subscriptions.
 - Delayed, frozen, stale, absent, crossed, or illiquid quotes can block BUYs or make diagnostics less representative.
 - A `Ticker` object can retain old non-null fields after delivery stops. The GUI may display those fields as cached diagnostics, but they do not count as fresh data. Actual event delivery is required.
-- Freshness is tracked at the ticker-update event level, not as an exchange timestamp for every individual field; a fresh callback can contain an unchanged value.
-- ATR uses prices observed while this application is running and RTH is open. Observation/bar collection continues when adaptation is disabled, but the buffer is not persisted. It resets on restart, is not exchange-native historical ATR, and does not warm up while the application is closed.
+- The live adapter tracks update and numerical-change identity separately for bid, ask, Last, close, mark, and the selected-price basis. A fresh callback can still contain unchanged cached fields, but those fields do not become fresh merely because another field, a size, or a timestamp updated. These are application callback timestamps, not guaranteed exchange-origin timestamps.
+- ATR uses prices observed while this application is running and RTH is open, and only when the raw field or quote basis underlying the selected price updated in that event. An unchanged cached Last exposed by another ticker update is excluded. Observation/bar collection continues when adaptation is disabled, but the buffer is not persisted. It resets on restart, is not exchange-native historical ATR, and does not warm up while the application is closed.
 - The recent-volatility filter uses the application’s observed sample range, not a broker historical-volatility product.
 - Normal RTH and session-timing guards use date-specific IBKR contract `liquidHours`, including early closes. `LSE` and `LSEETF` additionally use a verified 08:00-16:30 `Europe/London` continuous-session cap. The cap is not an independently maintained LSE holiday or special early-close calendar: an IBKR late open, earlier close, or closed day remains authoritative. This release does not provide an independent continuous-session calendar for every SMART-routable venue. The 09:30-16:00 New York fallback is permitted only for recognized U.S. primary exchanges and may not represent holidays, halts, or special sessions perfectly. Non-U.S. or unknown contracts with missing/unusable session metadata fail closed.
 
 ## Contract, route, currency, and quantity limits
 
-- v3.6.0 supports only USD and EUR ordinary `STK` contracts selected from an exact IBKR API result. Other currencies and security types remain unsupported.
+- v3.9.0 supports only USD and EUR ordinary `STK` contracts selected from an exact IBKR API result. Other currencies and security types remain unsupported.
 - Order routing is `SMART` only. The primary exchange identifies the selected native listing; direct-routing workflows are not implemented.
 - “SMART supported” is capability-driven, not a guarantee for every listing or venue. BouncyBot requires the selected contract to advertise or accept SMART, `MKT`, `TRAIL`, market-rule pricing, whole-share quantity rules, and usable regular-session metadata. A missing capability blocks the contract.
 - Each portable SQLite database is single-currency. A zero-cycle draft can switch between USD and EUR, but the first persisted cycle locks the database. Mixed USD/EUR history and automatic FX conversion are not supported.
@@ -59,6 +60,7 @@ Use separate accounts or deliberate operating procedures when strict position se
 - When a market rule is advertised but unavailable or ambiguous, the application blocks submission rather than guessing. This can prevent an otherwise acceptable order until the broker metadata becomes available.
 - The what-if request is a broker preflight, not a reservation of buying power, price, route, or permission. A successful result does not guarantee live acceptance or execution.
 - Error callbacks can arrive before, during, or after order-status callbacks. The adapter retains a bounded short-lived race cache, but a process/network failure can still prevent some diagnostics from reaching local SQLite. Gateway/TWS logs remain an important external source.
+- Audit-condition coalescing is an in-memory diagnostic facility. It deliberately suppresses duplicate SQLite rows, not guard evaluation. A process restart resets the coalescer, so a still-active condition can create a new entry event. Summary cadence is not a guarantee that every intermediate age, retry count, or price will be persisted; the GUI and structured summary context carry the current/latest evidence.
 - `Inactive` is treated as a structural no-fill failure for an app-owned BUY and stops the cycle. An unusual broker workflow that uses `Inactive` for a benign condition therefore requires manual review rather than automatic continuation.
 
 ## Availability and recovery limits
@@ -102,4 +104,4 @@ Use separate accounts or deliberate operating procedures when strict position se
 
 ## Multi-instance ownership boundary
 
-Multiple BouncyBot copies can share a Master API feed. v3.6.0 rejects attribution of any order or callback whose complete `OrderRef` is not already persisted locally. This prevents one installation from acting on another installation's app-prefixed order, but it also means a lost or replaced local database can require manual recovery instead of broad prefix-based discovery.
+Multiple BouncyBot copies can share a Master API feed. v3.9.0 rejects attribution of any order or callback whose complete `OrderRef` is not already persisted locally. This prevents one installation from acting on another installation's app-prefixed order, but it also means a lost or replaced local database can require manual recovery instead of broad prefix-based discovery.

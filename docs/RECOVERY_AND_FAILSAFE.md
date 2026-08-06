@@ -113,12 +113,15 @@ Recovery may:
 
 - reattach to the matching open app BUY;
 - import one or more missing BUY executions;
-- cancel a remaining unfilled quantity after a positive fill;
+- preserve the first persisted positive-fill time and allow the triggered marketable BUY a fixed 3.0-second completion grace;
+- cancel a still-working remainder after that grace expires, or immediately when an enabled RTH, data-freshness/type, pre-close, volatility, minimum-price, gap, or spread safety boundary becomes unsafe;
 - advance to post-BUY management using the recorded fill;
 - stop in `ERROR` when an unfilled order is `Inactive`/`Rejected` or carries a substantive broker validation error;
 - require review when multiple/conflicting BUY orders or unidentified facts exist.
 
-A broker rejection is not converted into a fresh entry setup. The rejected order reference and broker identifiers remain attached to the stopped cycle so the operator can reconcile the exact request. A normal confirmed cancellation without a substantive rejection remains recoverable and can reset Stage 2 to Stage 1.
+A partial BUY remains in Stage 2 until the original broker order is terminal. Fills and commissions that arrive before or during the cancellation race continue to update the app-owned quantity, weighted average price, and execution ledger. The grace origin reuses `buy_filled_at`, so reconnect and watchdog replacement do not restart an already elapsed timeout; a missing, malformed, or future timestamp starts one new bounded grace period rather than cancelling from an unprovable age.
+
+A broker rejection is not converted into a fresh entry setup. The rejected order reference and broker identifiers remain attached to the stopped cycle so the operator can reconcile the exact request. A normal confirmed cancellation without a substantive rejection remains recoverable and can reset Stage 2 to Stage 1 when no shares filled, or advance to Stage 3 with the final app-owned quantity when a positive fill exists.
 
 ### Post-BUY/protective stage
 

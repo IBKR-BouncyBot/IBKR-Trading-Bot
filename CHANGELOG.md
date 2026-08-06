@@ -1,5 +1,71 @@
 # Changelog
 
+## v3.9.0
+
+### Audit diagnostic coalescing
+
+- Replaced cadence-level repetition for persistent Stage-3 quote-evidence, reconnect, BUY-preflight, close-before-RTH, and native trailing-order wait conditions with stable condition keys and reason codes. Changing ages, prices, timestamps, or retry counters no longer bypass suppression.
+- Recorded one operational condition-entry event when relevant, one bounded persistence summary after the configured delay, additional summaries at a bounded cadence, and one recovery event when the condition clears. Structured raw evidence retains reason counts, occurrence counts, suppressed observations, duration, latest context, and observed maximum metrics.
+- Kept the Stage-3 quote guard visible continuously in the Price Data Monitor, including state, stable reason code, executable bid, current trigger, distance from the trigger, current detail, observation count, and suppressed-row count.
+- Kept ordinary cached/non-price ticker callbacks and a valid executable bid below the Stage-3 profit trigger out of the persistent WARN stream. An invalid quote near/above the trigger, invalidation after the first confirmation, unavailable field tracking/upstream evidence, and final pre-submit revalidation failures remain immediately visible.
+- Changed normal unchanged native BUY/SELL trailing-order waits to INFO summaries no more often than every 15 minutes. Diagnostic selected-price or raw-Last stop crossings still produce immediate operator-visible events and periodic anomaly summaries.
+- Aggregated repeated reconnect attempts into one outage condition with an immediate outage warning, one-minute and five-minute persistence summaries, and one recovery event. Individual reconnect attempts remain active operational behavior but no longer create one audit row each.
+- Coalesced repeated BUY preflight and close-before-RTH/session-timing messages by stable category while preserving immediate safety-critical errors and every underlying guard evaluation.
+
+### Safety and compatibility
+
+- No strategy formula, market-data validity rule, Stage-3 two-observation requirement, order construction, broker mutation, RTH decision, ATR input, position ownership rule, fill reconciliation rule, risk threshold, or watchdog recovery gate changed.
+- Critical order rejections, terminal partials, quantity mismatches, storage/worker failures, broker/local reconciliation uncertainty, failed durable submissions, and `ERROR`/`MANUAL_REVIEW` transitions remain unthrottled.
+- v3.9.0 adds no SQLite table, column, index, migration, or persisted setting. Existing v3.8.0 databases and portable state remain compatible. Coalescer state is intentionally in-memory; after a process restart a still-active condition may produce a new entry event and then begins a new bounded summary interval.
+
+### Verification and documentation
+
+- Added focused regressions for changing-age Stage-3 messages, a 705-observation NBIS-style stale-ask sequence, GUI-only non-price callbacks, immediate near-trigger invalid evidence, native-order summary/anomaly cadence, reconnect aggregation/recovery, BUY-preflight condition recovery, and the Price Data Monitor guard display.
+- Final validation passed 1,211/1,211 pytest cases, all 126 test modules in fresh processes, 33 focused v3.9.0 tests, 78.1% combined statement/branch coverage, 1,024/1,024 callable-entry checks, 17/17 safety mutants, and 58/58 deterministic simulations across 54 CSV paths.
+- Added [`docs/V3_9_0_AUDIT_DIAGNOSTIC_COALESCING.md`](docs/V3_9_0_AUDIT_DIAGNOSTIC_COALESCING.md), archived the v3.8.0 release note/report, and updated application, build, documentation, and test metadata to v3.9.0.
+
+## v3.8.0
+
+### BUY partial-fill settlement
+
+- Changed Stage 2 so the first positive fill of a triggered marketable BUY no longer causes an immediate cancellation request. Native BUY `TRAIL` orders that have triggered and zero-trail `MKT` BUY orders are allowed a fixed 3.0-second grace period to finish an ordinary multi-execution fill.
+- Measured the grace from the first persisted positive fill (`buy_filled_at`), not from the latest partial execution, so a slow stream of additional fills cannot extend the working order indefinitely. The timestamp survives reconnects, watchdog replacement, and application restarts.
+- Requested cancellation of the still-working remainder once the order remains nonterminal beyond the grace period. The original order stays in Stage 2 until IBKR reports a terminal state, and all additional fills received before or during the cancellation race continue to update quantity, average price, commission, and execution history.
+- Added immediate remainder cancellation when an enabled market/session safety boundary becomes unsafe: RTH closure, loss of required live-data mode, stale market data, unavailable session timing or the configured pre-close BUY cutoff, the configured volatility ceiling, configured minimum-price/previous-close-gap limits, or an unavailable/crossed/excessive bid/ask spread.
+- Preserved one-shot cancellation semantics through the existing `buy_remainder_cancel_requested` flag. A failed broker cancellation remains retryable; a successful request is audited as `BUY_REMAINDER_CANCEL_REQUESTED` with structured timeout/safety evidence.
+
+### Verification and compatibility
+
+- Added focused regressions for native trailing and market BUYs, full completion during the grace period, timeout cancellation that is not reset by later fills, session and market-data safety cancellation, minimum-price/gap/spread limits, cancellation retry/deduplication, persisted/clock-rollback timing, terminal partial settlement, and late full fills during the cancellation race.
+- Updated deterministic partial-fill simulations to model grace expiry before remainder cancellation while retaining terminal fill reconciliation.
+- Added [`docs/legacy/V3_8_0_BUY_PARTIAL_FILL_GRACE.md`](docs/legacy/V3_8_0_BUY_PARTIAL_FILL_GRACE.md), archived the v3.7.0 release note/report, and updated application, build, documentation, and test metadata to v3.8.0.
+- v3.8.0 adds no SQLite table, column, index, migration, or persisted setting. Existing v3.7.0 databases and portable state remain compatible.
+
+## v3.7.0
+
+### Field-level market-data freshness
+
+- Added independent bid, ask, Last, close, mark, and derived-price update/change identity to each production market-data snapshot. Same-price price ticks remain fresh; size-only and timestamp-only events do not refresh a cached price.
+- Added selected-price basis metadata so `marketPrice` can be identified as Last-derived, quote-derived, mark-derived, or close-derived. A fresh whole-ticker callback no longer makes an unchanged Last fallback strategy-usable.
+- Preserved pre-invalidation field values only as comparison baselines while clearing all update timestamps and sequences, so the first post-reconnect callback cannot make every cached field look fresh.
+- Excluded unchanged fallback Last values from the controller price history and ATR input.
+
+### Stage-3 final-SELL guard
+
+- Required a complete, non-crossed, independently fresh bid/ask pair before the normal final SELL can be armed.
+- Applied the configured maximum-spread percentage to Stage 3 even when the optional hard BUY-risk group is disabled.
+- Required the executable SELL-side bid to confirm the recalculated rise trigger. Last, midpoint, mark, close, and `marketPrice` cannot independently arm the order.
+- Required two consecutive distinct quote updates for the same cycle and market-data subscription. Any intervening invalid or non-quote event resets confirmation.
+- Revalidated quote identity, bid, ask, field ages, spread, trigger, and order reference immediately before durable intent creation and again immediately before broker submission. A failed check rolls the unsubmitted transition back to Stage 3 and records `SELL_MARKET_DATA_REVALIDATION_BLOCKED`.
+- Applied the same fresh complete spread-checked quote boundary to the optional profitable Stage-3 close-before-RTH price test.
+
+### Regression coverage and compatibility
+
+- Added incident-shaped regressions for CHIP's ask widening from 128.10 to 130.42 while Last remained 129.44, and for the later missing-bid event with ask near 128.04 and the same unchanged Last.
+- Added coverage for same-price price ticks, size/timestamp-only events, field invalidation, independent quote-side ages, two-event confirmation, executable-bid reference selection, and both pre-submission revalidation boundaries.
+- Added [`docs/legacy/V3_7_0_FIELD_LEVEL_MARKET_DATA_AND_STAGE3_SELL_GUARD.md`](docs/legacy/V3_7_0_FIELD_LEVEL_MARKET_DATA_AND_STAGE3_SELL_GUARD.md), archived the v3.6.0 release note/report, and updated application/build/documentation metadata to v3.7.0.
+- v3.7.0 adds no SQLite table, column, index, migration, or persisted setting. Existing v3.6.0 databases and portable state remain compatible.
+
 This file summarizes behavior-changing and maintenance releases represented by the repository. Historical implementation notes remain in `docs/legacy/` for traceability. Current behavior is documented in `README.md` and the current guides linked from `docs/README.md`.
 
 ## v3.6.0
@@ -23,7 +89,7 @@ This file summarizes behavior-changing and maintenance releases represented by t
 ### Documentation and tests
 
 - Added focused regressions for partial and contradictory SELL states, exact aggregate cancel-and-replace settlement, working-partial cancellation before manual replacement, numeric sorting, and GUI audit/export failures.
-- Added [`docs/V3_6_0_SELL_RECONCILIATION_AND_HISTORY_ROBUSTNESS.md`](docs/V3_6_0_SELL_RECONCILIATION_AND_HISTORY_ROBUSTNESS.md), archived the v3.5.0 release note and implementation report under `docs/legacy/`, and updated current release/build metadata to v3.6.0.
+- Added [`docs/legacy/V3_6_0_SELL_RECONCILIATION_AND_HISTORY_ROBUSTNESS.md`](docs/legacy/V3_6_0_SELL_RECONCILIATION_AND_HISTORY_ROBUSTNESS.md), archived the v3.5.0 release note and implementation report under `docs/legacy/`, and updated current release/build metadata to v3.6.0.
 
 ## v3.5.0
 

@@ -299,7 +299,7 @@ def test_iren_fixture_replays_definitive_rejection_circuit_breaker(
     assert [row["event_type"] for row in decisions].count("ORDER_TERMINAL_WITHOUT_FILL") == 1
 
 
-def test_nbis_fixture_reconciles_second_fill_during_cancel(
+def test_nbis_fixture_reconciles_second_fill_during_partial_fill_grace(
     controller_module: Any,
     tmp_path: Path,
 ) -> None:
@@ -334,8 +334,8 @@ def test_nbis_fixture_reconciles_second_fill_during_cancel(
 
     assert controller.active_cycle.stage == Stage.BUY_TRAIL_ACTIVE
     assert controller.active_cycle.buy_filled_qty == 28
-    assert controller.active_cycle.buy_remainder_cancel_requested is True
-    assert broker.cancelled_orders == [cycle.buy_order_ref]
+    assert controller.active_cycle.buy_remainder_cancel_requested is False
+    assert broker.cancelled_orders == []
 
     second_state = broker.fill_order(
         str(cycle.buy_order_ref),

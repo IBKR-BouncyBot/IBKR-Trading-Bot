@@ -221,6 +221,34 @@ class MarketPriceSnapshot:
     market_data_update_age_seconds: Optional[float] = None
     market_data_event_tracking: bool = False
     market_data_event_tracking_available: bool = False
+    # Field-level change identity is separate from whole-ticker event identity.
+    # A pendingTickersEvent can be caused by bid/ask/size while the cached Last
+    # remains unchanged.  Production snapshots expose these maps so the
+    # controller can reject a Last-derived fallback that did not itself update.
+    market_data_field_tracking: bool = False
+    market_data_field_tracking_source: str = ""
+    market_data_tick_types: list[int] | None = None
+    field_update_sequences: dict[str, int] | None = None
+    field_update_received_at: dict[str, str] | None = None
+    field_update_age_seconds: dict[str, Optional[float]] | None = None
+    fields_updated_in_event: list[str] | None = None
+    field_change_sequences: dict[str, int] | None = None
+    field_change_received_at: dict[str, str] | None = None
+    field_change_age_seconds: dict[str, Optional[float]] | None = None
+    fields_changed_in_update: list[str] | None = None
+    quote_update_sequence: Optional[int] = None
+    quote_update_received_at: str = ""
+    quote_update_age_seconds: Optional[float] = None
+    delayed_quote_update_sequence: Optional[int] = None
+    delayed_quote_update_received_at: str = ""
+    delayed_quote_update_age_seconds: Optional[float] = None
+    selected_price_basis: str = ""
+    selected_price_basis_fields: list[str] | None = None
+    selected_price_basis_update_sequence: Optional[int] = None
+    selected_price_basis_received_at: str = ""
+    selected_price_basis_age_seconds: Optional[float] = None
+    selected_price_basis_updated_in_event: Optional[bool] = None
+    selected_price_basis_changed_in_update: Optional[bool] = None
     upstream_connected: Optional[bool] = None
     upstream_state: str = ""
     upstream_message: str = ""
@@ -570,6 +598,43 @@ class IbAsyncTwsAdapter(BrokerAdapter):
         103, 107, 109, 110, 111, 113, 201, 202, 321, 361, 403,
         10147, 10148, 10149, 10150, 10151, 10152, 10153, 10154,
     })
+    _FIELD_CHANGE_TRACKING_NAMES = (
+        "last",
+        "delayedLast",
+        "bid",
+        "ask",
+        "delayedBid",
+        "delayedAsk",
+        "close",
+        "delayedClose",
+        "markPrice",
+        "delayedMarkPrice",
+        "marketPrice",
+    )
+    # IBKR TickType values for actual price fields. Size-only ticks are
+    # intentionally excluded: a new lastSize/bidSize/askSize must not refresh
+    # an unchanged Last/bid/ask price.  ib_async exposes the current network
+    # batch through ``Ticker.ticks`` when pendingTickersEvent is emitted.
+    _PRICE_TICK_FIELD_BY_TYPE = {
+        1: "bid",
+        2: "ask",
+        4: "last",
+        9: "close",
+        37: "markPrice",
+        # RT Volume and RT Trade Volume contain an actual trade price and
+        # ib_async writes that value into Ticker.last. Timestamp-only ticks
+        # (45/88) are deliberately absent: a new timestamp must not refresh an
+        # unchanged cached Last.
+        48: "last",
+        # ib_async normalizes delayed top-of-book price ticks into the same
+        # Ticker.bid/ask/last/close attributes used for live data. The active
+        # market-data type identifies whether those values are live or delayed.
+        66: "bid",
+        67: "ask",
+        68: "last",
+        75: "close",
+        77: "last",
+    }
 
     def __init__(self) -> None:
         self.ib: Any = None
@@ -694,14 +759,18 @@ class IbAsyncTwsAdapter(BrokerAdapter):
     def _invalidate_market_data_event_state(self) -> None:
         """Forget update timestamps while retaining active subscription identity."""
         for ticker_id, meta in list(self._ticker_update_meta.items()):
-            self._ticker_update_meta[ticker_id] = {
-                "key": meta.get("key") or self._ticker_keys_by_id.get(ticker_id),
-                "subscription_id": str(meta.get("subscription_id") or ""),
-                "sequence": 0,
-                "received_at": "",
-                "received_monotonic": 0.0,
-                "ticker_update_time": "",
-            }
+            reset = self._empty_ticker_update_meta(
+                meta.get("key") or self._ticker_keys_by_id.get(ticker_id),
+                str(meta.get("subscription_id") or ""),
+            )
+            # Keep the last observed values solely as a comparison baseline.
+            # After a farm/connectivity reset, the next pending-ticker event may
+            # concern only one price field (or only a size field).  Clearing the
+            # baseline would incorrectly stamp every cached non-null field as a
+            # fresh update.  Timestamps and sequences remain cleared, so each
+            # field must actually change again before it becomes actionable.
+            reset["field_values"] = dict(meta.get("field_values") or {})
+            self._ticker_update_meta[ticker_id] = reset
         self._awaiting_fresh_market_data = True
 
     def _forget_market_data_subscriptions(self) -> None:
@@ -1026,14 +1095,97 @@ class IbAsyncTwsAdapter(BrokerAdapter):
             if key is None:
                 continue
             self._market_data_update_sequence += 1
+            sequence = self._market_data_update_sequence
             previous = self._ticker_update_meta.get(ticker_id) or {}
+            fields = self._fields_from_ticker(ticker_obj)
+            previous_values = dict(previous.get("field_values") or {})
+            tick_tracking_available, tick_types, explicitly_updated_fields = (
+                self._explicit_price_field_updates(ticker_obj)
+            )
+            changed_fields: list[str] = []
+            current_values: dict[str, Optional[float]] = {}
+            for name in self._FIELD_CHANGE_TRACKING_NAMES:
+                current = fields.get(name)
+                current_values[name] = current
+                previously_seen = name in previous_values
+                if not previously_seen:
+                    changed = current is not None
+                else:
+                    changed = not self._price_values_equal(previous_values.get(name), current)
+                if changed:
+                    changed_fields.append(name)
+
+            # A raw price tick proves an update even when the numeric value did
+            # not move. Value changes remain a compatibility fallback for test
+            # doubles and for any supported ib_async path that omits ``ticks``.
+            updated_fields = set(changed_fields).union(explicitly_updated_fields)
+            field_update_sequences = dict(previous.get("field_update_sequences") or {})
+            field_update_received_at = dict(previous.get("field_update_received_at") or {})
+            field_update_received_monotonic = dict(
+                previous.get("field_update_received_monotonic") or {}
+            )
+            for name in updated_fields:
+                field_update_sequences[name] = sequence
+                field_update_received_at[name] = received_at
+                field_update_received_monotonic[name] = received_monotonic
+
+            field_change_sequences = dict(previous.get("field_change_sequences") or {})
+            field_change_received_at = dict(previous.get("field_change_received_at") or {})
+            field_change_received_monotonic = dict(
+                previous.get("field_change_received_monotonic") or {}
+            )
+            for name in changed_fields:
+                field_change_sequences[name] = sequence
+                field_change_received_at[name] = received_at
+                field_change_received_monotonic[name] = received_monotonic
+
+            quote_updated = bool({"bid", "ask"}.intersection(updated_fields))
+            delayed_quote_updated = bool({"delayedBid", "delayedAsk"}.intersection(updated_fields))
+            quote_sequence = int(previous.get("quote_update_sequence") or 0)
+            quote_received_at = str(previous.get("quote_update_received_at") or "")
+            quote_received_monotonic = float(previous.get("quote_update_received_monotonic") or 0.0)
+            if quote_updated:
+                quote_sequence = sequence
+                quote_received_at = received_at
+                quote_received_monotonic = received_monotonic
+            delayed_quote_sequence = int(previous.get("delayed_quote_update_sequence") or 0)
+            delayed_quote_received_at = str(previous.get("delayed_quote_update_received_at") or "")
+            delayed_quote_received_monotonic = float(
+                previous.get("delayed_quote_update_received_monotonic") or 0.0
+            )
+            if delayed_quote_updated:
+                delayed_quote_sequence = sequence
+                delayed_quote_received_at = received_at
+                delayed_quote_received_monotonic = received_monotonic
+
             self._ticker_update_meta[ticker_id] = {
                 "key": key,
                 "subscription_id": previous.get("subscription_id") or self._subscription_id(key),
-                "sequence": self._market_data_update_sequence,
+                "sequence": sequence,
                 "received_at": received_at,
                 "received_monotonic": received_monotonic,
                 "ticker_update_time": self._ticker_time_text(ticker_obj),
+                "field_tracking_source": (
+                    "raw_tick_types+value_changes"
+                    if tick_tracking_available
+                    else "value_changes"
+                ),
+                "tick_types": sorted(tick_types),
+                "field_values": current_values,
+                "field_update_sequences": field_update_sequences,
+                "field_update_received_at": field_update_received_at,
+                "field_update_received_monotonic": field_update_received_monotonic,
+                "fields_updated_in_event": sorted(updated_fields),
+                "field_change_sequences": field_change_sequences,
+                "field_change_received_at": field_change_received_at,
+                "field_change_received_monotonic": field_change_received_monotonic,
+                "fields_changed_in_update": changed_fields,
+                "quote_update_sequence": quote_sequence,
+                "quote_update_received_at": quote_received_at,
+                "quote_update_received_monotonic": quote_received_monotonic,
+                "delayed_quote_update_sequence": delayed_quote_sequence,
+                "delayed_quote_update_received_at": delayed_quote_received_at,
+                "delayed_quote_update_received_monotonic": delayed_quote_received_monotonic,
             }
             recorded = True
         if recorded and self._upstream_connected is not False:
@@ -1819,6 +1971,118 @@ class IbAsyncTwsAdapter(BrokerAdapter):
                 return value, key
         return None, "none"
 
+    @staticmethod
+    def _price_values_equal(left: Any, right: Any) -> bool:
+        if left is None or right is None:
+            return left is right
+        try:
+            left_value = float(left)
+            right_value = float(right)
+        except Exception:
+            return left == right
+        tolerance = max(1e-10, abs(left_value) * 1e-10, abs(right_value) * 1e-10)
+        return abs(left_value - right_value) <= tolerance
+
+    @classmethod
+    def _explicit_price_field_updates(
+        cls,
+        ticker_obj: Any,
+    ) -> tuple[bool, set[int], set[str]]:
+        """Return raw tick availability, tick types, and updated price fields.
+
+        Value comparison remains the compatibility fallback for test doubles
+        and alternate ib_async builds.  When the normal ``Ticker.ticks`` batch
+        is available, it also distinguishes a same-price quote/trade update
+        from an unrelated size update without treating bidSize/askSize/lastSize
+        as price freshness.
+        """
+        try:
+            raw_ticks = getattr(ticker_obj, "ticks")
+        except Exception:
+            return False, set(), set()
+        try:
+            ticks = list(raw_ticks or [])
+        except Exception:
+            return True, set(), set()
+        tick_types: set[int] = set()
+        updated: set[str] = set()
+        for tick in ticks:
+            try:
+                tick_type = int(getattr(tick, "tickType"))
+            except Exception:
+                continue
+            tick_types.add(tick_type)
+            field_name = cls._PRICE_TICK_FIELD_BY_TYPE.get(tick_type)
+            if field_name:
+                updated.add(field_name)
+        return True, tick_types, updated
+
+    @classmethod
+    def _selected_price_basis(
+        cls,
+        fields: dict[str, Optional[float]],
+        source: str,
+        updated_fields: set[str] | None = None,
+    ) -> tuple[str, tuple[str, ...]]:
+        """Identify which raw field(s) make the selected price actionable.
+
+        ``Ticker.marketPrice()`` is a convenience calculation, not a distinct
+        exchange field.  It can switch from a quote midpoint to a cached Last
+        when one side of the quote disappears or Last falls inside a wide
+        spread.  Classifying that basis lets the controller distinguish a new
+        quote event from an unchanged Last fallback.
+        """
+        source_key = str(source or "none").split(" via ", 1)[0]
+        if source_key == "marketPrice":
+            market_price = fields.get("marketPrice")
+            candidates = (
+                ("last", "last", ("last",)),
+                ("bidAskMidpoint", "bid_ask", ("bid", "ask")),
+                ("markPrice", "mark", ("markPrice",)),
+                ("close", "close", ("close",)),
+                ("delayedLast", "delayed_last", ("delayedLast",)),
+                ("delayedBidAskMidpoint", "delayed_bid_ask", ("delayedBid", "delayedAsk")),
+                ("delayedMarkPrice", "delayed_mark", ("delayedMarkPrice",)),
+                ("delayedClose", "delayed_close", ("delayedClose",)),
+            )
+            matches = [
+                (basis, basis_fields)
+                for name, basis, basis_fields in candidates
+                if market_price is not None
+                and fields.get(name) is not None
+                and cls._price_values_equal(market_price, fields.get(name))
+            ]
+            # A midpoint and Last can legitimately have the same numeric value.
+            # Prefer the basis whose raw field actually updated in this event;
+            # this avoids classifying a fresh quote as a cached Last merely
+            # because both happen to be equal.
+            updated = set(updated_fields or ())
+            for basis, basis_fields in matches:
+                if basis in {"last", "delayed_last"} and updated.intersection(basis_fields):
+                    return basis, basis_fields
+            for basis, basis_fields in matches:
+                if basis in {"bid_ask", "delayed_bid_ask"} and updated.intersection(basis_fields):
+                    return basis, basis_fields
+            for basis, basis_fields in matches:
+                if updated.intersection(basis_fields):
+                    return basis, basis_fields
+            if matches:
+                return matches[0]
+            return "market_price", ("marketPrice",)
+        mapping: dict[str, tuple[str, tuple[str, ...]]] = {
+            "bidAskMidpoint": ("bid_ask", ("bid", "ask")),
+            "midpoint": ("bid_ask", ("bid", "ask")),
+            "delayedBidAskMidpoint": ("delayed_bid_ask", ("delayedBid", "delayedAsk")),
+            "delayedMidpoint": ("delayed_bid_ask", ("delayedBid", "delayedAsk")),
+            "last": ("last", ("last",)),
+            "delayedLast": ("delayed_last", ("delayedLast",)),
+            "markPrice": ("mark", ("markPrice",)),
+            "delayedMarkPrice": ("delayed_mark", ("delayedMarkPrice",)),
+            "close": ("close", ("close",)),
+            "delayedClose": ("delayed_close", ("delayedClose",)),
+        }
+        return mapping.get(source_key, (source_key or "none", (source_key,) if source_key != "none" else ()))
+
     def _subscription_key(self, contract: QualifiedContract, generic_tick_list: str) -> tuple[int, str, str, str]:
         raw = contract.raw
         con_id = int(contract.con_id or getattr(raw, "conId", 0) or 0)
@@ -1828,6 +2092,37 @@ class IbAsyncTwsAdapter(BrokerAdapter):
 
     def _subscription_id(self, key: tuple[int, str, str, str]) -> str:
         return "|".join(str(part) for part in key)
+
+    @staticmethod
+    def _empty_ticker_update_meta(
+        key: tuple[int, str, str, str] | None,
+        subscription_id: str,
+    ) -> dict[str, Any]:
+        return {
+            "key": key,
+            "subscription_id": str(subscription_id or ""),
+            "sequence": 0,
+            "received_at": "",
+            "received_monotonic": 0.0,
+            "ticker_update_time": "",
+            "field_tracking_source": "",
+            "tick_types": [],
+            "field_values": {},
+            "field_update_sequences": {},
+            "field_update_received_at": {},
+            "field_update_received_monotonic": {},
+            "fields_updated_in_event": [],
+            "field_change_sequences": {},
+            "field_change_received_at": {},
+            "field_change_received_monotonic": {},
+            "fields_changed_in_update": [],
+            "quote_update_sequence": 0,
+            "quote_update_received_at": "",
+            "quote_update_received_monotonic": 0.0,
+            "delayed_quote_update_sequence": 0,
+            "delayed_quote_update_received_at": "",
+            "delayed_quote_update_received_monotonic": 0.0,
+        }
 
     def _request_ticker(self, contract: QualifiedContract, generic_tick_list: str) -> Any:
         """Return a cached streaming market-data subscription.
@@ -1845,14 +2140,10 @@ class IbAsyncTwsAdapter(BrokerAdapter):
             self._market_data_subscription_generation += 1
             ticker_id = id(ticker_obj)
             self._ticker_keys_by_id[ticker_id] = key
-            self._ticker_update_meta[ticker_id] = {
-                "key": key,
-                "subscription_id": f"{self._subscription_id(key)}|g{self._market_data_subscription_generation}",
-                "sequence": 0,
-                "received_at": "",
-                "received_monotonic": 0.0,
-                "ticker_update_time": "",
-            }
+            self._ticker_update_meta[ticker_id] = self._empty_ticker_update_meta(
+                key,
+                f"{self._subscription_id(key)}|g{self._market_data_subscription_generation}",
+            )
             self._market_data_resubscribe_required = False
             self._awaiting_fresh_market_data = True
         ticker_obj = self._tickers[key]
@@ -1908,6 +2199,102 @@ class IbAsyncTwsAdapter(BrokerAdapter):
         if received_monotonic > 0:
             update_age = max(0.0, time.monotonic() - received_monotonic)
 
+        field_update_sequences = {
+            str(key): int(value)
+            for key, value in dict(meta.get("field_update_sequences") or {}).items()
+            if int(value or 0) > 0
+        }
+        field_update_received_at = {
+            str(key): str(value or "")
+            for key, value in dict(meta.get("field_update_received_at") or {}).items()
+            if str(value or "")
+        }
+        field_update_received_monotonic = dict(
+            meta.get("field_update_received_monotonic") or {}
+        )
+        field_change_sequences = {
+            str(key): int(value)
+            for key, value in dict(meta.get("field_change_sequences") or {}).items()
+            if int(value or 0) > 0
+        }
+        field_change_received_at = {
+            str(key): str(value or "")
+            for key, value in dict(meta.get("field_change_received_at") or {}).items()
+            if str(value or "")
+        }
+        field_change_received_monotonic = dict(
+            meta.get("field_change_received_monotonic") or {}
+        )
+        now_monotonic = time.monotonic()
+        field_update_ages: dict[str, Optional[float]] = {}
+        field_change_ages: dict[str, Optional[float]] = {}
+        for name in self._FIELD_CHANGE_TRACKING_NAMES:
+            try:
+                updated_monotonic = float(field_update_received_monotonic.get(name) or 0.0)
+            except Exception:
+                updated_monotonic = 0.0
+            field_update_ages[name] = (
+                max(0.0, now_monotonic - updated_monotonic)
+                if updated_monotonic > 0
+                else None
+            )
+            try:
+                changed_monotonic = float(field_change_received_monotonic.get(name) or 0.0)
+            except Exception:
+                changed_monotonic = 0.0
+            field_change_ages[name] = (
+                max(0.0, now_monotonic - changed_monotonic)
+                if changed_monotonic > 0
+                else None
+            )
+        updated_fields = [str(item) for item in (meta.get("fields_updated_in_event") or [])]
+        changed_fields = [str(item) for item in (meta.get("fields_changed_in_update") or [])]
+        selected_basis, selected_basis_fields = self._selected_price_basis(
+            fields,
+            source,
+            set(updated_fields),
+        )
+
+        quote_sequence = int(meta.get("quote_update_sequence") or 0)
+        quote_received_at = str(meta.get("quote_update_received_at") or "")
+        quote_received_monotonic = float(meta.get("quote_update_received_monotonic") or 0.0)
+        quote_age = (
+            max(0.0, now_monotonic - quote_received_monotonic)
+            if quote_received_monotonic > 0
+            else None
+        )
+        delayed_quote_sequence = int(meta.get("delayed_quote_update_sequence") or 0)
+        delayed_quote_received_at = str(meta.get("delayed_quote_update_received_at") or "")
+        delayed_quote_received_monotonic = float(
+            meta.get("delayed_quote_update_received_monotonic") or 0.0
+        )
+        delayed_quote_age = (
+            max(0.0, now_monotonic - delayed_quote_received_monotonic)
+            if delayed_quote_received_monotonic > 0
+            else None
+        )
+
+        basis_sequence = 0
+        basis_received_at = ""
+        basis_age: Optional[float] = None
+        if selected_basis == "bid_ask":
+            basis_sequence = quote_sequence
+            basis_received_at = quote_received_at
+            basis_age = quote_age
+        elif selected_basis == "delayed_bid_ask":
+            basis_sequence = delayed_quote_sequence
+            basis_received_at = delayed_quote_received_at
+            basis_age = delayed_quote_age
+        else:
+            for name in selected_basis_fields:
+                candidate_sequence = int(field_update_sequences.get(name) or 0)
+                if candidate_sequence >= basis_sequence:
+                    basis_sequence = candidate_sequence
+                    basis_received_at = str(field_update_received_at.get(name) or "")
+                    basis_age = field_update_ages.get(name)
+        basis_updated_in_event = bool(set(selected_basis_fields).intersection(updated_fields))
+        basis_changed_in_update = bool(set(selected_basis_fields).intersection(changed_fields))
+
         if self._upstream_connected is False:
             status = "IBKR server connectivity is unavailable; cached prices are not tradeable"
         elif not tracking_available:
@@ -1942,6 +2329,30 @@ class IbAsyncTwsAdapter(BrokerAdapter):
             market_data_update_age_seconds=update_age,
             market_data_event_tracking=tracking,
             market_data_event_tracking_available=tracking_available,
+            market_data_field_tracking=tracking_available,
+            market_data_field_tracking_source=str(meta.get("field_tracking_source") or ""),
+            market_data_tick_types=[int(value) for value in (meta.get("tick_types") or [])],
+            field_update_sequences=field_update_sequences,
+            field_update_received_at=field_update_received_at,
+            field_update_age_seconds=field_update_ages,
+            fields_updated_in_event=updated_fields,
+            field_change_sequences=field_change_sequences,
+            field_change_received_at=field_change_received_at,
+            field_change_age_seconds=field_change_ages,
+            fields_changed_in_update=changed_fields,
+            quote_update_sequence=quote_sequence or None,
+            quote_update_received_at=quote_received_at,
+            quote_update_age_seconds=quote_age,
+            delayed_quote_update_sequence=delayed_quote_sequence or None,
+            delayed_quote_update_received_at=delayed_quote_received_at,
+            delayed_quote_update_age_seconds=delayed_quote_age,
+            selected_price_basis=selected_basis,
+            selected_price_basis_fields=list(selected_basis_fields),
+            selected_price_basis_update_sequence=basis_sequence or None,
+            selected_price_basis_received_at=basis_received_at,
+            selected_price_basis_age_seconds=basis_age,
+            selected_price_basis_updated_in_event=basis_updated_in_event,
+            selected_price_basis_changed_in_update=basis_changed_in_update,
             upstream_connected=self._upstream_connected,
             upstream_state=self._upstream_state,
             upstream_message=self._upstream_message,

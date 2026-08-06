@@ -1,6 +1,6 @@
 # Deterministic CSV simulation scenario matrix
 
-This v3.6.0 test-only matrix contains 58 explicit scenario contracts across 54 CSV price-path files. It extends verification without changing `app/` or `main.py`.
+This v3.9.0 test-only matrix contains 58 explicit scenario contracts across 54 CSV price-path files. It extends verification without changing `app/` or `main.py`.
 
 Every scenario asserts an exact final stage and event sequence. Applicable contracts also assert quantities, trigger/fill prices, order payloads, P/L direction and arithmetic, budget exposure, minimum-profit preservation, RTH blocking/reopening, protective exits, and error text. Shared invariants reject overfills, duplicate lifecycle events, SELL-before-BUY ordering, non-app order references, non-maximal whole-share sizing, and inconsistent completed-cycle P/L.
 
@@ -49,7 +49,7 @@ Every scenario asserts an exact final stage and event sequence. Applicable contr
 | `sizing-slippage` | `buy_gap_above_stop` | `buy_gap_above_stop.csv` | A gap above a native BUY stop records the observed fill and bases profit protection on that fill. |
 | `endurance` | `buy_trail_long_hold` | `buy_trail_long_hold.csv` | A long sequence that never reaches the rebound stop leaves one BUY trail active. |
 | `buy-execution` | `zero_buy_trail_market_entry` | `zero_buy_trail_market_entry.csv` | A zero-percent BUY trail uses the market-order branch and completes normally. |
-| `buy-execution` | `partial_buy_40_percent_cycle` | `partial_buy_40_percent_cycle.csv` | A partial BUY cancels the remainder and sizes the final SELL to the four filled shares. |
+| `buy-execution` | `partial_buy_40_percent_cycle` | `partial_buy_40_percent_cycle.csv` | A partial BUY remains active through the simulated grace, then cancels the remainder and sizes the final SELL to the four filled shares. |
 | `sizing-slippage` | `insufficient_budget_zero_quantity` | `insufficient_budget_zero_quantity.csv` | A budget below one projected share enters ERROR without emitting an order. |
 | `numeric` | `one_share_high_price_cycle` | `one_share_high_price_cycle.csv` | A high-priced instrument correctly sizes and completes a one-share cycle. |
 | `numeric` | `low_price_large_quantity_cycle` | `low_price_large_quantity_cycle.csv` | A low-priced instrument exercises four-decimal triggers and a four-digit whole-share quantity. |

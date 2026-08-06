@@ -62,7 +62,8 @@ The fixed five-button command bar is the dashboard workflow control surface. The
 - connect/reconnect on a fixed ten-second local-socket cadence and qualify exact contracts;
 - refresh market-data and RTH diagnostics;
 - maintain current-session RTH ATR observations regardless of whether adaptation is enabled, aggregate bounded OHLC bars incrementally, and apply ready percentages only when adaptation is enabled;
-- evaluate BUY/SELL blockers;
+- evaluate BUY/SELL blockers, including the field-level Stage-3 quote/spread/executable-bid gate and its two distinct confirmations;
+- own the persisted-time Stage-2 partial-BUY grace and any timeout/safety-triggered remainder cancellation, while the pure strategy layer only reconciles cumulative fill facts;
 - advance the pure strategy state;
 - submit, cancel, and poll app-owned orders;
 - persist cycle/order/execution/audit state;
@@ -103,7 +104,7 @@ It does not import Qt, connect to IBKR, or write SQLite. The controller validate
 - managed-account discovery for display/explicit routing validation;
 - exact USD/EUR ordinary-`STK` contract search and SMART qualification by positive `conId`;
 - market-data subscription and price-source selection;
-- actual `pendingTickersEvent` sequencing, subscription identity, and callback timestamps so cached `Ticker` reads cannot impersonate fresh data;
+- actual `pendingTickersEvent` sequencing, subscription identity, callback timestamps, raw tick-type inspection, and independent per-price-field update/change identity so unrelated ticker activity cannot refresh cached Last/bid/ask values;
 - separate local-socket and upstream IBKR connectivity state driven by broker system messages, including 1100, 1101, 1102, 1300, and 2110;
 - contract-specific RTH/liquid-hours interpretation with non-U.S. fail-closed behavior;
 - SMART/order-type capability checks, route-specific IBKR market-rule selection, price-band loading, side-aware order-price normalization, and whole-share minimum/step validation;
@@ -113,7 +114,7 @@ It does not import Qt, connect to IBKR, or write SQLite. The controller validate
 - app-owned broker rejection/error retention, including bounded callback-race association;
 - order status, fills, open-order, and recent-execution recovery.
 
-The adapter does not own strategy stages. It returns broker facts or raises a broker error that causes the controller to pause or enter recovery. On code 1101 it discards obsolete market-data handles so future reads issue new subscriptions. On code 1102 it retains the active handles but clears update metadata until a new ticker event arrives. The production adapter requires event identity; if `pendingTickersEvent` cannot be registered, populated cached fields remain diagnostic only and no strategy price is produced.
+The adapter does not own strategy stages. It returns broker facts or raises a broker error that causes the controller to pause or enter recovery. On code 1101 it discards obsolete market-data handles so future reads issue new subscriptions. On code 1102 it retains the active handles but clears whole-event and field timestamps while keeping prior values only as a comparison baseline. The next callback freshens only the price fields that actually update; cached fields from before the outage remain diagnostic. The production adapter requires event and field identity; if `pendingTickersEvent` cannot be registered, populated cached fields remain diagnostic only and no strategy price is produced.
 
 Scheduled price reads are nonblocking: the adapter inspects the current subscription immediately and returns without sleeping when the timeout is zero. Bounded explicit reads first inspect the same snapshot and wait only if data is still absent, in slices no longer than 50 ms. Periodic order polling likewise consumes cached `Trade` state immediately; a missing cache entry can start a throttled `reqOpenOrders` refresh, with the response handled by a later broker callback cycle. Explicit connect/recovery/cancel paths retain their bounded waits.
 
@@ -208,7 +209,7 @@ A stored active cycle requires an explicit Start/resume after an ordinary launch
 
 `app/market_data_capture.py` keeps a bounded rolling buffer in RAM. A fill creates a capture session containing the available pre-event window and accumulating post-event rows. The complete package is written to `debug_captures/` only after the post window finishes. No partial capture is flushed on shutdown.
 
-This design avoids continuous disk writes but means a crash or early shutdown loses incomplete capture data. ATR observation history is likewise in-memory session state: it collects only during open RTH, continues while adaptation is disabled, and resets on process restart. Only actual market-data update events enter ATR/volatility history. Re-reading populated cached fields changes diagnostics only; it does not create a sample. The original callback time determines the observation bucket.
+This design avoids continuous disk writes but means a crash or early shutdown loses incomplete capture data. ATR observation history is likewise in-memory session state: it collects only during open RTH, continues while adaptation is disabled, and resets on process restart. Only actual market-data events in which the raw field or quote basis behind the selected price updated enter ATR/volatility history. Re-reading populated cached fields, or exposing an unchanged Last because another field/size/timestamp changed, affects diagnostics only and does not create a sample. The original callback time determines the observation bucket.
 
 ## Single-instance boundary
 

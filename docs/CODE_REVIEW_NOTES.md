@@ -1,6 +1,6 @@
 # Maintainer review notes
 
-This file records the current review boundaries for v3.6.0. It is not a release changelog and should not be used instead of the behavioral guides.
+This file records the current review boundaries for v3.9.0. It is not a release changelog and should not be used instead of the behavioral guides.
 
 ## Source-of-truth order
 
@@ -47,8 +47,9 @@ Changes in these areas require focused strategy, recovery, and failure-path revi
 
 - `IB.isConnected()` represents only the local application-to-TWS/Gateway socket.
 - IBKR connectivity events drive the separate upstream availability state.
-- `pendingTickersEvent` identity and callback time, not repeated reads of populated ticker fields, define quote freshness.
-- Waiting strategy stages and ATR/volatility history consume each subscription sequence once.
+- `pendingTickersEvent` identity and callback time define whole-event freshness; raw price tick types plus value comparison define independent Last/bid/ask/mark/close update identity.
+- Waiting strategy stages and ATR/volatility history consume each subscription sequence once, and the generic selected price is actionable only when its underlying raw basis updated in that event.
+- The normal Stage-3 final SELL requires independently fresh bid and ask, a valid configured spread, executable-bid trigger confirmation on two distinct quote updates, and revalidation before both intent and broker submission.
 - A restoration that loses market-data requests replaces subscription handles; a restoration that retains requests still invalidates prior update metadata until a new event arrives.
 - Broker-order and execution reconciliation completes before normal post-restoration strategy processing.
 - Every order-transmission path rechecks connectivity immediately before placement.
@@ -96,7 +97,7 @@ When behavior changes:
 
 The public-repository documentation set:
 
-- keeps the application and package version at v3.6.0 for documentation-only revisions within this release;
+- keeps the application and package version at v3.9.0 for documentation-only revisions within this release;
 - keeps current operational material in `docs/` and superseded release notes in `docs/legacy/`;
 - treats SQLite files, backups, audit bundles, reports, captures, screenshots, and broker/account data as private unless deliberately sanitized;
 - uses the unmodified PolyForm Noncommercial License 1.0.0 text in the repository root;

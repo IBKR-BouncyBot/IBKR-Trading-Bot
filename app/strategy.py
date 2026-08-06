@@ -390,10 +390,13 @@ class StrategyEngine:
     def on_buy_fill(cycle: CycleState, filled_qty: int, avg_fill_price: float, status: str, commission: float = 0.0) -> tuple[CycleState, list[StrategyAction]]:
         """Reconcile cumulative BUY fills and settle only after terminal status.
 
-        A partial fill can be followed by another fill while IBKR is processing
-        the cancellation request.  The cycle therefore remains in Stage 2 until
-        the original BUY order reaches a terminal state.  Only then is the final
-        app-owned quantity used to enter Stage 3 and size any protective SELL.
+        A triggered marketable BUY may report several partial executions before
+        IBKR reaches a terminal status. The pure strategy layer records those
+        cumulative facts and keeps Stage 2 active; the controller owns the
+        time- and market-dependent decision to cancel a remainder after a short
+        grace period or when a configured safety condition becomes unsafe.
+        Only the final terminal quantity is used to enter Stage 3 and size any
+        protective SELL.
         """
         next_cycle = copy(cycle)
         actions: list[StrategyAction] = []
@@ -410,24 +413,6 @@ class StrategyEngine:
         next_cycle.rise_trigger_price = _safe_rise_trigger_price(next_cycle)
 
         terminal = str(status or "").strip() in TERMINAL_ORDER_STATUSES
-        if (
-            next_cycle.buy_order_ref
-            and next_cycle.quantity > filled_qty
-            and not terminal
-            and not bool(getattr(next_cycle, "buy_remainder_cancel_requested", False))
-        ):
-            next_cycle.buy_remainder_cancel_requested = True
-            actions.append(
-                StrategyAction(
-                    "CANCEL_ORDER",
-                    {
-                        "order_ref": next_cycle.buy_order_ref,
-                        "order_id": next_cycle.buy_order_id,
-                        "role": "buy_remainder",
-                        "reason": "Partial buy fill received; cancelling unfilled remainder per strategy settings.",
-                    },
-                )
-            )
         if not terminal:
             next_cycle.stage = Stage.BUY_TRAIL_ACTIVE
             next_cycle.touch()

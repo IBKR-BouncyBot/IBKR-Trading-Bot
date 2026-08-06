@@ -1,0 +1,109 @@
+BouncyBot v3.7.0 implementation and validation report
+=======================================================
+
+Release scope
+-------------
+
+v3.7.0 implements the nine-step market-data correction derived from the
+CHIP cycle 3 incident. The release retains the existing controller, broker
+adapter, strategy engine, native IBKR order types, worker model, SQLite schema,
+and GUI architecture.
+
+Implemented safeguards
+----------------------
+
+1. The live IBKR adapter tracks bid, ask, Last, delayed equivalents, mark, close,
+   and selected market-price basis with independent update and numerical-change
+   sequences and timestamps.
+2. A whole-ticker event no longer refreshes an unchanged Last-derived selected
+   price when only bid, ask, size, timestamp, or another field changed.
+3. The normal Stage-3 final SELL requires a complete, non-crossed bid/ask pair,
+   with both sides independently within the configured bid/ask age limit.
+4. max_spread_pct is enforced for the normal Stage-3 final SELL and the
+   profitable Stage-3 close-before-RTH path, even when the optional hard BUY
+   risk-limit group is disabled.
+5. The executable SELL bid, not Last/midpoint/mark/close/marketPrice by itself,
+   must confirm the recalculated rise trigger within the contract min-tick
+   tolerance.
+6. Two distinct consecutive qualifying quote updates are required. Any
+   intervening invalid, stale, wide, crossed, incomplete, non-quote, or
+   below-trigger observation resets confirmation.
+7. Quote identity, selected-price source/basis, subscription, event sequence,
+   bid, ask, independent ages, spread, trigger, and SELL reference are
+   revalidated before durable order intent and again immediately before the
+   broker call. Failure rolls the unsubmitted transition back to Stage 3,
+   marks any durable intent failed, emits SELL_MARKET_DATA_REVALIDATION_BLOCKED,
+   and sends no broker order.
+8. ATR and generic strategy-price history accept a selected price only when its
+   actual underlying raw field or quote basis updated in that event. An
+   unchanged cached Last fallback remains diagnostic only.
+9. Focused regressions reproduce both CHIP incident states: ask 130.42 with bid
+   127.82 and unchanged Last 129.44, and missing bid with ask near 128.04 and
+   unchanged Last 129.44. They also cover same-value price ticks, size/timestamp
+   ticks, reconnect invalidation, independent quote-side ages, two-observation
+   confirmation, executable-bid gating, spread gating, and both submission
+   revalidation boundaries.
+
+Additional close-before-RTH hardening
+------------------------------------
+
+The optional profitable Stage-3 close-before-RTH path uses the same fresh,
+complete, non-crossed, spread-checked executable quote. It revalidates after a
+protective-order cancellation and immediately before the market-order broker
+call. If native protection is already terminal and the quote can no longer be
+proved safe, the cycle enters ERROR for manual review; otherwise the unsubmitted
+close request returns to Stage 3.
+
+Compatibility
+-------------
+
+- Application/build/documentation version: 3.7.0.
+- No SQLite table, column, index, migration, or persisted-setting change.
+- Existing v3.6.0 portable databases, active cycles, order references,
+  executions, checkpoints, watchdog state, backups, and captures remain
+  structurally compatible.
+- The correction does not change IBKR native trailing-stop trigger or market
+  execution semantics and cannot guarantee the eventual fill price.
+
+Automated validation
+--------------------
+
+- 1,155/1,155 collected pytest cases passed across all 123 test modules,
+  each executed in a fresh Coverage.py process. Every test ran with
+  ResourceWarning promoted to an error.
+- 15/15 focused v3.7.0 Stage-3 market-data regression tests passed.
+- Combined statement/branch coverage: 78.0% (minimum gate: 75%).
+- Callable-entry gate: 1,008/1,008 executable application callables entered.
+- Safety mutation smoke: 17/17 targeted mutants killed.
+- Deterministic CSV simulations: 58/58 contracts passed across 54 price paths.
+- The elapsed-time-bound large-database performance module passed: 2/2 tests.
+- Python compilation passed for app, tests, scripts, and main.py.
+- Git whitespace validation passed.
+
+Release artifact verification
+-----------------------------
+
+- The source ZIP contains exactly 356 committed files under the
+  `IBKR-Trading-Bot-main/` root, including all 22 source image assets.
+- It contains no Git metadata, virtual environment, cache, bytecode, coverage
+  output, runtime database, log, capture, backup, export, or build output.
+- The v3.7.0 upgrade patch applies cleanly to the exact final v3.6.0 source
+  baseline; the patched tracked tree is byte-identical to the released source.
+- A clean extraction independently collected all 1,155 tests and passed the 51
+  focused v3.7.0, current-release, compatibility, and documentation checks.
+- Source ZIP, release bundle, and checksum-manifest integrity checks passed.
+
+Static/native validation boundary
+---------------------------------
+
+Ruff and Pyright were not installed in the offline Linux release environment,
+and their packages could not be downloaded because network name resolution was
+unavailable. They are therefore not represented as passing here. The configured
+Pyright application scope (models.py, strategy.py, storage.py) was not modified
+by this release. The Windows run_all_tests.bat workflow remains the authoritative
+native Ruff/Pyright gate.
+
+A native Windows/PyInstaller executable was not built in this Linux environment.
+The source, deterministic Windows-path doubles, and packaging metadata are
+included; native Windows build, GUI, IB Gateway, and live/paper broker smoke
+checks remain required before unattended deployment.

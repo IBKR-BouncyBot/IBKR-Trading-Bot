@@ -42,7 +42,7 @@ For Gateway paper/live and TWS paper/live as available:
 - Confirm the price and inspect bid, ask, last/market source, previous close, currency, exact conId, contract minimum tick, size rules, data type, and RTH status. At order preflight, inspect the selected route-specific market rule and increment in the order/audit diagnostics.
 - For a contract whose `minTick` is smaller than the valid increment at the current price, verify the submitted stop follows the applicable `reqMarketRule` band rather than the smallest contract-level tick.
 - For a non-U.S. listing, verify the session uses the contract's `liquidHours`/`timeZoneId`, including daylight-saving and early-close behavior where practical. For `LSE`/`LSEETF`, verify the effective close is the earlier of the IBKR close and 16:30 `Europe/London`, and that a cached open status becomes closed at that boundary. Missing metadata must block rather than use U.S. hours.
-- Force a persistent delayed-data or other BUY preflight blocker. Verify the cycle records `PreflightBlocked`, no order intent is created, the first warning is immediate, repeated identical warnings are limited to one per 60 seconds, and the order remains blocked on every evaluation.
+- Force persistent BUY preflight blockers. Verify the cycle records `PreflightBlocked`, no order intent is created, and the order remains blocked on every evaluation. Expected waits must produce one INFO entry and 15-minute summaries; hard risk/data/broker blockers must produce an immediate WARN, a one-minute first WARN summary, five-minute recurring WARN summaries, and one recovery event when the blocker clears.
 - Disconnect/reconnect and verify actual-update timestamps/counters resume with a fresh subscription; cached fields alone must not clear data-pending state.
 
 ## 5. Workflow lock
@@ -99,7 +99,7 @@ In paper mode with controlled settings:
 - positive BUY trail: verify action, type `TRAIL`, trailing percent, stop, quantity, `GTC`, `outsideRth=False`, app order reference, and optional account behavior in TWS/Gateway;
 - zero BUY trail: verify the drop condition produces a market BUY;
 - slippage buffer: verify quantity is lower/equal compared with unbuffered sizing while the transmitted order type is unchanged;
-- partial fill: verify the remainder cancellation request and transition using the filled quantity;
+- partial fill: verify that the first positive fill receives the fixed 3.0-second completion grace, a full multi-print fill inside the grace is not cancelled, a nonterminal remainder is cancelled after timeout, enabled market/session safety deterioration bypasses the grace, and all fills racing cancellation are reconciled before Stage 3;
 - what-if: verify the request uses the broker what-if path with `whatIf=True` and `transmit=True`, and that missing/invalid state or absent finite margin output blocks the live BUY;
 - invalid price/rejection: verify the retained IBKR code and message appear in Live Strategy/Cycle Audit, the cycle moves to `ERROR`, and no automatic fresh-cycle retry occurs;
 - ordinary cancellation: verify `Cancelled`/`ApiCancelled` without a substantive rejection still resets Stage 2 to Stage 1.
@@ -135,7 +135,7 @@ Use a paper account and a liquid U.S. stock with the option disabled first, then
 
 - Verify the default is OFF and the minutes field defaults to 5, accepts only 1–240, and is disabled while the checkbox is clear.
 - Verify Stage 1 and Stage 2 behavior is unchanged and no close action occurs before the configured cutoff.
-- In Stage 3, verify a fresh selected price strictly above average BUY submits the RTH-only market SELL (after protective cancel-confirm-replace when applicable), while equal/lower/stale prices do not. Confirm commissions are ignored only for eligibility and the fill is not guaranteed profitable.
+- In Stage 3, verify the RTH-only market SELL requires a complete independently fresh non-crossed quote within Maximum spread and an executable bid strictly above average BUY (after protective cancel-confirm-replace when applicable). Missing/stale/crossed/over-wide quotes and equal/lower bids must not submit. Confirm commissions are ignored only for eligibility and the fill is not guaranteed profitable.
 - With a normal final SELL trail working, verify exactly one cancellation request is sent at the contract-specific cutoff, including on an early-close fixture.
 - Verify no market SELL is submitted until TWS/IBKR shows the original trail in a terminal state.
 - Fill the trail during the cancellation race and confirm no replacement is sent after a full fill.
@@ -195,6 +195,9 @@ In paper mode, induce or simulate a Gateway/TWS upstream outage while keeping th
 - verify app-order polling and every new BUY/SELL submission path remain paused;
 - for 1101 restoration, verify a new market-data subscription identity is created;
 - for 1102 restoration, verify the existing subscription remains but cached data stays invalid until a new event;
+- keep Last unchanged while widening the ask or removing the bid; verify the unchanged Last remains diagnostic, does not become strategy-usable, does not enter ATR, and cannot arm the normal Stage-3 SELL;
+- verify one qualifying Stage-3 bid/ask update starts confirmation, a second distinct qualifying quote is required, and any intervening non-quote/incomplete/stale/over-wide/below-trigger event resets it;
+- change or age the quote between confirmation and order construction; verify `SELL_MARKET_DATA_REVALIDATION_BLOCKED` is recorded and no broker order is transmitted;
 - verify **Reconciling** precedes normal processing and app-owned fills/orders that changed during the outage are imported;
 - verify a BUY fill during the outage is not assumed absent and any required protective-order follow-up occurs only after recovery.
 

@@ -1,129 +1,140 @@
-BouncyBot - IBKR Portable Trading Bot v3.6.0
-SELL reconciliation and Trade History robustness report
-Release date: 2026-07-29
+BouncyBot v3.9.0 - Audit Diagnostic Coalescing and Live Guard Status
+Implementation and Test Report
+Date: 2026-08-06
 
-LINEAGE AND REVIEW
-==================
+1. Release basis
 
-This release is based on the final v3.5.0 source archive. The submitted local
-v3.5.0 source and patch were compared with that baseline, reviewed, integrated,
-and advanced to v3.6.0.
+This release was implemented on top of the finalized BouncyBot v3.8.0 BUY
+partial-fill-grace source tree. It advances the project to v3.9.0 and changes
+only audit/diagnostic emission policy, live operator visibility for the current
+Stage-3 SELL evidence condition, corresponding documentation, regression tests,
+and release metadata.
 
-The submitted changes added fail-closed final/protective SELL quantity gates,
-numeric sorting for formatted Trade History columns, and operator-visible GUI
-errors for audit reads and history exports. Review identified and corrected
-related edge cases around cancel-and-replace exit aggregation, a still-working
-partially filled SELL, missing persisted execution proof, missing aggregate fill
-price, and non-finite numeric sort values.
+The v3.8.0 strategy formulas, field-level market-data safety rules, two-update
+Stage-3 confirmation requirement, pre-submit revalidation gates, order types,
+quantity calculations, broker mutation paths, RTH decisions, ATR inputs, fill
+reconciliation, risk limits, and watchdog recovery behavior are unchanged.
 
-IMPLEMENTED CHANGES
-===================
+No SQLite table, column, index, migration, or persisted setting was added.
+Existing v3.8.0 databases, cycles, orders, executions, settings, backups,
+checkpoints, captures, and portable state remain compatible.
 
-1. Exact aggregate final-SELL settlement
+2. Implemented behavior
 
-- A cycle completes only when persisted cycle SELL executions exactly equal the
-  app-owned BUY-filled quantity, no broker remainder is still working, and an
-  aggregate fill price is available.
-- Nonterminal partial fills are persisted and remain under supervision.
-- Terminal partials enter Stage.ERROR with SELL_PARTIAL_TERMINAL.
-- Underfills, overfills, contradictory remainders, missing execution proof, and
-  missing aggregate fill prices enter Stage.ERROR with SELL_QUANTITY_MISMATCH.
-- Cancel-and-replace and manual-close remainder orders are validated against all
-  app-owned SELL executions for the cycle. Weighted aggregate price, commission,
-  and final P/L therefore include both the earlier partial and replacement fill.
-- A partially filled order remains working until its broker status is terminal,
-  so manual market close cancels and confirms the existing remainder before a
-  replacement can be submitted.
+A generic in-memory diagnostic-condition coalescer now tracks persistent
+operational conditions with stable keys and reason codes. Changing values such
+as quote age, price, spread, timestamp, or reconnect attempt number remain in
+structured context but no longer form the suppression identity.
 
-2. Protective-SELL terminal consistency
+Each condition can retain:
 
-- A terminal protective SELL that reports the full app-owned filled quantity and
-  a positive remainder is treated as an unprovable quantity mismatch. It cannot
-  remain in an endless polling state or be interpreted as exact closure.
-- The existing v3.4.0 exact-quantity, terminal-partial, recovery, and fail-closed
-  protective-SELL gates remain in force.
+- first/latest observation timestamps;
+- occurrence and per-reason counts;
+- latest detailed message and structured context;
+- observed maximum numeric metrics;
+- immediate and periodic audit-emission counts; and
+- the number of cadence observations actually suppressed from SQLite.
 
-3. Trade History and audit GUI robustness
+Depending on operational relevance, the audit sequence is bounded to an initial
+condition event, delayed persistence summaries, and one recovery event. The
+underlying safety condition is still evaluated on every controller cadence.
+Coalescing affects only diagnostic persistence and presentation.
 
-- Formatted currency, percentage, and quantity cells sort by their raw finite
-  numeric values instead of lexical display text.
-- Blank, invalid, NaN, and infinite values group deterministically below finite
-  values.
-- Audit-detail read failures and Trade History export failures are shown in an
-  operator dialog. A failed export does not display a success message, and a
-  failed audit read does not open a partially initialized dialog.
+3. Stage-3 SELL quote evidence
 
-SAFETY AND COMPATIBILITY
-========================
+The final-SELL guard now reports stable reason codes including incomplete,
+crossed, stale, independently stale bid/ask, wide-spread, unavailable tracking,
+missing distinct update, unavailable trigger, and trigger-not-reached states.
 
-- Ambiguous SELL facts fail closed for manual reconciliation instead of
-  completing a cycle without exact broker/local proof.
-- Entry logic, ATR calculations, strategy percentages, BUY construction,
-  position sizing, normal SELL order construction, market-data selection, quote
-  freshness, RTH/session behavior, complete-OrderRef ownership, watchdog
-  restart, and account/contract scope are unchanged.
-- v3.6.0 adds no SQLite table, column, index, migration, or persisted setting.
-- Existing v3.5.0 databases, active cycles, execution rows, checkpoints,
-  watchdog files, captures, backups, and portable folders remain compatible.
+Routine cached/non-price callbacks remain GUI-only. A complete valid quote whose
+executable bid is below the profit trigger is treated as ordinary waiting rather
+than a warning. Invalid evidence is still immediate when it occurs near or above
+the trigger, invalidates an accepted first confirmation, removes critical field
+or upstream proof, or fails the final submission revalidation.
 
-FINAL VERIFICATION
-==================
+The Price Data Monitor continuously shows the current Stage-3 evidence state,
+reason code, detailed explanation, executable bid, trigger, percentage distance,
+confirmation state, observation count, and accurately calculated suppressed-row
+count.
 
-Repository tests
-----------------
+The complete v3.7.0/v3.8.0 SELL-safety boundary remains unchanged: independently
+fresh bid and ask fields, complete positive non-crossed quote, configured spread
+limit, executable bid confirmation, two distinct qualifying updates, durable-
+intent revalidation, and broker-call revalidation.
 
-- 1,140/1,140 collected pytest cases passed across all 122 test modules.
-- Each module was executed in a fresh pytest process in the Linux headless
-  environment to isolate Qt-stub module state; the aggregate contained no
-  failed, skipped, or xfailed case.
-- ResourceWarning was promoted to an error in every test process.
-- The run included the accelerated-soak tests and the elapsed-time-bound
-  large-database performance tests.
-- 16 focused v3.6.0 regressions cover the submitted changes and review findings.
+4. Other coalesced diagnostics
 
-Coverage and deterministic verification
----------------------------------------
+- Reconnect attempts use one outage condition: an immediate WARN, an INFO
+  persistence summary after one minute, WARN summaries every five minutes, and
+  one INFO recovery event. Retry behavior remains every ten seconds.
+- Normal unchanged native BUY/SELL trailing-order waits summarize as INFO no
+  more often than every 15 minutes. Selected-price or raw-Last trigger anomalies
+  remain immediately visible and receive bounded anomaly summaries.
+- Repeated BUY preflight blockers are grouped per cycle with stable blocker reason codes.
+  Expected ATR/RTH/session waits use informational 15-minute summaries; hard
+  data, broker, and risk blockers use immediate WARN and one-/five-minute
+  persistence cadence.
+- Stage-3/Stage-4 close-before-RTH timing and settlement waits use the same
+  condition model. Missing session-boundary proof remains an immediate warning.
+- Critical order rejection, terminal partial fill, quantity mismatch,
+  reconciliation uncertainty, storage/worker failure, failed durable
+  submission, and ERROR/MANUAL_REVIEW transitions remain unthrottled.
 
-- 78.0% combined statement/branch coverage for app/ and main.py; required gate:
-  75.0%.
-- 996/996 executable application callables were entered.
+5. Regression coverage
+
+The focused v3.9.0 tests cover:
+
+- changing Stage-3 age text retaining one stable condition identity;
+- a 705-observation NBIS-shaped stale-ask sequence producing bounded events;
+- exact suppressed-observation accounting;
+- current GUI status for cached/non-price callbacks without SQLite flooding;
+- immediate near-trigger invalid evidence and confirmation invalidation;
+- all documented Stage-3 stable reason-code mappings;
+- native-order normal-wait and anomaly cadences, including explicit anomaly
+  recovery back to the ordinary INFO cadence;
+- reconnect aggregation and one recovery event;
+- expected and hard BUY-preflight escalation/recovery;
+- close-before-RTH session-boundary coalescing and recovery; and
+- Price Data Monitor rendering of current Stage-3 guard evidence.
+
+Existing historical release, incident, recovery, order, storage, GUI, simulation,
+and packaging regressions remain in the complete suite.
+
+6. Validation results
+
+Final source validation:
+
+- 1,211/1,211 collected pytest cases passed with ResourceWarning promoted to an
+  error.
+- All 126 test modules passed when executed independently in fresh pytest
+  processes, with no failed module.
+- 33 focused v3.9.0 coalescing, GUI-status, metadata, compatibility, and release
+  tests passed.
+- 78.1% combined statement/branch coverage was measured on the finalized
+  application code.
+- 1,024/1,024 executable application callables were entered by the coverage
+  gate.
 - 17/17 targeted safety mutants were killed.
-- 58/58 deterministic simulation contracts passed across 54 CSV price-path
-  files.
-
-Supplemental verification
--------------------------
-
-- Python compileall passed for app/, tests/, scripts/, and main.py.
+- 58/58 deterministic simulation contracts passed across 54 CSV price paths.
+- Python compileall passed for app, tests, scripts, and main.py.
 - Git whitespace validation passed.
-- Release metadata, current/archived documentation placement, schema
-  compatibility statements, and focused release tests passed.
-- The source archive is assembled only from committed repository files beneath
-  one IBKR-Trading-Bot-main/ root. It contains exactly 353 tracked files,
-  including all 22 source image assets, and excludes Git metadata, virtual
-  environments, caches, bytecode, coverage output, logs, databases, watchdog
-  handoffs, captures, backups, exports, and build output.
-- ZIP integrity and extracted-file byte comparison passed. The extracted source
-  independently collected all 1,140 tests and passed the 81 focused release,
-  compatibility, documentation, and GUI tests.
-- The v3.6.0 upgrade patch applies cleanly to the exact v3.5.0 baseline; the
-  patched 353-file tree is byte-identical to the released source tree.
-- Ruff and Pyright were not installed in the offline Linux environment and are
-  therefore not recorded as passing. The configured Pyright application scope
-  (app/models.py, app/strategy.py, and app/storage.py) is unchanged by the
-  runtime implementation. The Windows run_all_tests.bat workflow remains the
-  authoritative Ruff/Pyright gate.
+- All 22 source image assets remain present.
 
-PLATFORM-SPECIFIC BOUNDARY
-==========================
+7. Tooling limitations
 
-A native Windows/PyInstaller executable was not built in this Linux environment.
-The existing Windows build and portable-release scripts were versioned to
-v3.6.0 but still require a native Windows smoke test. Recommended checks are:
+Ruff and Pyright were not installed in the offline Linux release environment and
+are therefore not recorded as passing. The final Windows run_all_tests.bat gate
+must still run both tools before a native executable is produced.
 
-- run the complete Windows pytest/Ruff/Pyright gate;
-- build and launch the onedir executable from a path containing spaces;
-- verify numeric ascending/descending Trade History sorting;
-- verify audit/export error dialogs with a locked/read-only test folder;
-- paper-test partial final/protective SELL reconciliation and manual close;
-- confirm the Windows shortcut and versioned release-folder names.
+A native Windows/PyInstaller executable was not built in this environment. The
+Windows smoke test should confirm the packaged GUI status display, reconnect
+summaries, native trailing-order wait summaries, SQLite audit output, and normal
+IB Gateway operation during an extended Stage-3 wait.
+
+8. Operational boundary
+
+The diagnostic coalescer is intentionally in memory. A process restart clears
+its housekeeping state, so a still-active condition can create a new entry event
+and starts a new bounded summary interval. Trading and recovery do not depend on
+coalescer persistence. The emergency log, critical decision events, and all
+broker/order safety paths remain independent of this diagnostic suppression.

@@ -721,14 +721,14 @@ def test_v340_release_metadata_and_documentation_are_current() -> None:
     build = (ROOT / "scripts" / "build_windows.ps1").read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-    current_note = ROOT / "docs" / "V3_6_0_SELL_RECONCILIATION_AND_HISTORY_ROBUSTNESS.md"
+    current_note = ROOT / "docs" / "V3_9_0_AUDIT_DIAGNOSTIC_COALESCING.md"
     archived_note = ROOT / "docs" / "legacy" / "V3_3_0_DARK_MODE_AUDIT_AND_WINDOWS_RELEASE.md"
 
-    assert 'APP_VERSION = "3.6.0"' in gui
-    assert 'version = "3.6.0"' in pyproject
-    assert '$version = "3.6.0"' in build
-    assert "**Current release: v3.6.0**" in readme
-    assert "## v3.6.0" in changelog
+    assert 'APP_VERSION = "3.9.0"' in gui
+    assert 'version = "3.9.0"' in pyproject
+    assert '$version = "3.9.0"' in build
+    assert "**Current release: v3.9.0**" in readme
+    assert "## v3.9.0" in changelog
     assert current_note.is_file()
     assert archived_note.is_file()
     assert not (ROOT / "docs" / archived_note.name).exists()

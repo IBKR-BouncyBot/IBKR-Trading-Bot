@@ -1,4 +1,4 @@
-"""v3.6.0 GUI layout, startup-theme, and theme-switch state regressions."""
+"""v3.9.0 GUI layout, startup-theme, and theme-switch state regressions."""
 
 from __future__ import annotations
 

@@ -10,9 +10,10 @@ The committed fixtures cover six observed incidents:
    - preserves `ContractDetails.minTick=0.0001`, SMART market rule 557, the applicable one-cent price band, the malformed historical what-if response, and the broker's invalid-price rejection;
    - verifies market-rule normalization, BUY-up rounding, strict what-if validation, broker-error retention, and the structural-rejection circuit breaker.
 
-2. **NBIS partial-fill cancellation race**
-   - preserves two 28-share BUY executions, the cancellation between them, and late commissions;
-   - verifies that Stage 2 remains active until the original BUY is terminal, all 56 shares are reconciled, commissions are idempotent, and the app-owned unsold quantity is correct.
+2. **NBIS partial-fill multi-print/cancellation race**
+   - preserves two 28-share BUY executions and late commissions from the original incident shape;
+   - verifies that v3.8.0 does not cancel on the first partial during the fixed completion grace, Stage 2 remains active until the original BUY is terminal, all 56 shares are reconciled, commissions are idempotent, and the app-owned unsold quantity is correct;
+   - separate controller regressions age the same persisted first-fill clock beyond the grace, request one remainder cancellation, and prove that later fills during that cancellation race are still included.
 
 3. **Cross-instance Master-client callbacks**
    - preserves foreign NBIS/LAC commission and order-error callback shapes while the local cycle is IREN;
@@ -35,7 +36,7 @@ The committed fixtures cover six observed incidents:
 The three former strict expected-failure sentinels are ordinary passing regressions in v3.2.1:
 
 - timing-sensitive `LSE` and `LSEETF` actions use the earlier verified 08:00-16:30 `Europe/London` continuous-session boundary when IBKR `liquidHours` extends later;
-- unchanged delayed-data BUY preflight warnings use a stable cycle-and-blocker key and are limited to one audit event per 60 seconds while the guard remains enforced on every evaluation; and
+- unchanged delayed-data BUY preflight blockers use a stable per-cycle condition with category reason codes, remain enforced on every evaluation, and emit only the configured entry/persistence/recovery audit sequence; and
 - a local BUY block before broker submission records `PreflightBlocked`, while `SubmitFailed` remains reserved for an actual submission attempt that fails before acceptance can be confirmed.
 
 The focused tests also preserve the raw IBKR boundary for diagnostics, verify that an earlier IBKR holiday/early-close boundary still wins, close cached RTH state at the effective boundary, and confirm that no order intent is written for a preflight block.

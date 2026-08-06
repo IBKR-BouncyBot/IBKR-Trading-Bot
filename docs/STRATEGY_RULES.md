@@ -1,6 +1,6 @@
 # Strategy rules
 
-This document is the current functional description of the five-stage strategy in v3.6.0. It describes application decisions; IBKR remains authoritative for accepted order state and execution.
+This document is the current functional description of the five-stage strategy in v3.9.0. It describes application decisions; IBKR remains authoritative for accepted order state and execution.
 
 ## Scope and invariants
 
@@ -76,7 +76,7 @@ A quantity below one blocks order submission. Before intent is stored, the live 
 - `buy_rebound_trail_pct > 0`: submit a native BUY `TRAIL` order.
 - `buy_rebound_trail_pct == 0`: submit a market BUY immediately after the initial-drop condition.
 
-After the first positive BUY fill, the controller requests cancellation of any unfilled remainder once, but the cycle remains in Stage 2 until the original BUY order is terminal. While cancellation is pending, every later cumulative fill and execution callback is reconciled. Stage 3 begins only after IBKR reports `Filled`, `Cancelled`, `ApiCancelled`, `Inactive`, or `Rejected`, using the final app-owned quantity, weighted average BUY price, and all commissions received so far. A substantive rejection still activates the rejection circuit breaker.
+After the first positive BUY fill, the controller starts a fixed 3.0-second grace period so the triggered marketable order can complete an ordinary multi-print execution. No cancellation is sent solely because the first broker update is partial. If the order remains nonterminal after the grace period, or an enabled RTH, data, pre-close, volatility, minimum-price, previous-close-gap, or spread safety condition becomes unsafe, cancellation of the unfilled remainder is requested once. The timer starts at the first persisted fill and is not reset by later partial progress. Every later cumulative fill and execution callback is reconciled before and during that cancellation race. Stage 3 begins only after IBKR reports `Filled`, `Cancelled`, `ApiCancelled`, `Inactive`, or `Rejected`, using the final app-owned quantity, weighted average BUY price, and all commissions received so far. A substantive rejection still activates the rejection circuit breaker.
 
 An unfilled BUY that becomes `Inactive` or `Rejected`, or reaches a terminal state with a substantive broker rejection, stops the cycle in `ERROR` for manual review. It is not automatically retried. An ordinary confirmed cancellation without a substantive rejection still resets Stage 2 to Stage 1.
 
@@ -104,17 +104,19 @@ minimum stop =
 
 The buffer estimates a worse market fill after the stop; it remains a planning assumption.
 
-### Required selected price
+### Required executable quote
 
 For a positive final SELL trail:
 
 ```text
-required selected price = minimum stop / (1 - sell_trailing_stop_pct / 100)
+required executable bid = minimum stop / (1 - sell_trailing_stop_pct / 100)
 ```
 
-For a zero final SELL trail, the minimum stop itself is the market-exit threshold.
+For a zero final SELL trail, the minimum stop itself is the executable-bid threshold.
 
-The controller does not submit the final exit until the selected price reaches the required level and the current SELL checks allow submission.
+The normal final exit is evaluated only from a complete, non-crossed bid/ask pair whose two sides are independently fresh and whose spread is within the configured Maximum spread. The executable bid, allowing only the exact contract's minimum-tick tolerance, must reach the recalculated threshold. Last, midpoint, mark, close, and `marketPrice` cannot arm the final SELL by themselves.
+
+One qualifying quote starts confirmation. A second distinct quote update for the same cycle and subscription must pass the same checks. Any intervening non-quote, incomplete, stale, crossed, over-wide, or below-trigger event clears the first confirmation. The confirmed quote identity and bid are revalidated immediately before the durable order intent and again immediately before the broker adapter is called. Failure at either point rolls the unsubmitted transition back to Stage 3 and sends no order.
 
 ## Stage 4 — `SELL_TRAIL_ACTIVE`
 
@@ -133,11 +135,11 @@ The policy is disabled by default and uses the contract's confirmed, date-specif
 
 In Stage 3, at the configured cutoff:
 
-1. the selected current price must be strictly greater than the weighted average BUY fill price;
-2. commissions are deliberately ignored for this eligibility comparison;
+1. a complete, independently fresh, non-crossed bid/ask pair must be available and within the configured Maximum spread;
+2. the executable bid must be strictly greater than the weighted average BUY fill price; commissions are deliberately ignored for this eligibility comparison;
 3. if no protective SELL is working, one RTH-only `DAY` market SELL is submitted for the app-owned unsold quantity;
-4. if a protective SELL is working, BouncyBot requests cancellation once, waits for a terminal broker status, includes any fills received during that race, rechecks the selected price, and submits only the remaining quantity;
-5. if the selected price is no longer strictly above the average BUY price after cancellation, the cycle enters `ERROR` for manual review rather than transmitting the replacement.
+4. if a protective SELL is working, BouncyBot requests cancellation once, waits for a terminal broker status, includes any fills received during that race, rechecks the fresh quote and executable bid, and submits only the remaining quantity;
+5. if the quote is no longer valid or the executable bid is no longer strictly above the average BUY price after cancellation, the cycle enters `ERROR` for manual review rather than transmitting the replacement.
 
 In Stage 4, the established cancel-confirm-replace workflow remains:
 
@@ -179,7 +181,7 @@ The controller does not intentionally leave both protective and final app-create
 
 ### Data source
 
-ATR uses selected prices from actual ticker-update events consumed by the controller while RTH is open. Repeated cached reads are excluded. Samples are grouped by callback arrival time into fixed-duration OHLC bars. Observation and diagnostic-bar collection continues when ATR adaptation is disabled; the adaptation switch controls whether ready values are applied, not whether the current-session RTH buffer is maintained. The buffer is in memory and resets on process restart. True range uses the current high/low and previous completed close. ATR% is ATR divided by the latest reference price.
+ATR uses selected prices from actual ticker-update events consumed by the controller while RTH is open, only when the raw field or quote basis behind that selected price updated in the event. Repeated cached reads and an unchanged fallback Last exposed by another field, size, or timestamp event are excluded. Samples are grouped by callback arrival time into fixed-duration OHLC bars. Observation and diagnostic-bar collection continues when ATR adaptation is disabled; the adaptation switch controls whether ready values are applied, not whether the current-session RTH buffer is maintained. The buffer is in memory and resets on process restart. True range uses the current high/low and previous completed close. ATR% is ATR divided by the latest reference price.
 
 It is not based on a requested IBKR historical-bar series.
 

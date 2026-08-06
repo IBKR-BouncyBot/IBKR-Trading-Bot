@@ -1,0 +1,119 @@
+BouncyBot v3.8.0 - BUY Partial-Fill Grace and Safety Cancellation
+Implementation and Test Report
+Date: 2026-08-05
+
+1. Release basis
+
+This corrective release was implemented on top of the finalized BouncyBot v3.7.0
+market-data and Stage-3 SELL-safety source tree. The release advances the project
+to v3.8.0 and changes only the Stage-2 treatment of a positive partial BUY fill,
+plus the corresponding documentation, simulation expectations, regression tests,
+and release metadata.
+
+No SQLite table, column, index, migration, or new persisted setting was added.
+Existing v3.7.0 databases and active-cycle state remain compatible.
+
+2. Implemented behavior
+
+- The first positive fill of a triggered native BUY TRAIL order or zero-trail MKT
+  BUY no longer causes an immediate cancellation request.
+- A fixed 3.0-second completion grace begins at the first persisted positive fill.
+- Additional partial fills do not restart the grace clock.
+- A full terminal fill during the grace settles normally without cancellation.
+- If the order remains nonterminal after the grace, BouncyBot requests one
+  cancellation of the still-working remainder.
+- The original BUY remains in Stage 2 until IBKR reports a terminal order state.
+- Every fill and commission received before or during the cancellation race is
+  reconciled before Stage 3 begins.
+- The existing buy_filled_at timestamp provides restart-safe timeout continuity.
+  Missing, malformed, or future timestamps start a new bounded grace instead of
+  leaving the remainder active indefinitely.
+- The existing buy_remainder_cancel_requested flag prevents duplicate confirmed
+  requests. A broker-call failure leaves the flag clear so a later poll can retry.
+
+The grace is bypassed when an enabled market/session safety control becomes
+unsafe or cannot be verified:
+
+- RTH closure for an RTH-only cycle;
+- loss of required live-data mode;
+- stale or invalidated market-data/RTH evidence;
+- unavailable session boundaries or the configured pre-close BUY cutoff;
+- the configured recent-volatility ceiling;
+- the configured minimum trade price;
+- the configured maximum gap from the previous close; and
+- an unavailable, crossed, or excessive bid/ask spread.
+
+Portfolio budgets, daily-loss limits, cycle counts, and what-if checks are not
+rerun after a fill because they govern submission of a new BUY rather than the
+ownership of shares that have already executed.
+
+3. Audit behavior
+
+- BUY_PARTIAL_FILL records the cumulative quantity and the grace decision facts.
+- BUY_REMAINDER_CANCEL_REQUESTED records a confirmed cancellation request with
+  timeout or safety as the decision result and a structured reason code.
+- Late fills after a cancellation request continue to use execution-id
+  idempotence and cumulative reconciliation.
+
+4. Regression coverage
+
+A new focused module, tests/test_v380_buy_partial_fill_grace.py, covers:
+
+- native TRAIL and zero-trail MKT BUY orders;
+- no cancellation on the first partial;
+- full completion inside the grace;
+- timeout cancellation;
+- later partials not resetting the first-fill time;
+- persistence/reload of the first-fill timestamp;
+- full fills arriving during the cancellation race;
+- RTH, live-data, stale-data, session, volatility, minimum-price, gap, and spread
+  safety cancellation;
+- unavailable/crossed quote evidence;
+- duplicate suppression;
+- future-clock recovery; and
+- broker-terminal partial settlement.
+
+Existing incident and reconciliation tests were updated so the historical NBIS
+multi-print BUY can complete normally during the grace while timeout and failed-
+cancellation paths remain explicitly exercised.
+
+5. Validation results
+
+Final source validation:
+
+- 1,178/1,178 collected pytest cases passed in the complete suite with
+  ResourceWarning promoted to an error.
+- All 124 test modules also passed when executed independently in fresh Python
+  processes; the module-isolated aggregate was again 1,178 passing cases with no
+  failed, skipped, xfailed, or xpassed case.
+- The cleanly extracted release ZIP passed 109/109 focused current-release,
+  compatibility, and release-metadata tests.
+- 23 direct v3.8.0 partial-fill-grace regression cases passed.
+- 78.1% combined statement/branch coverage was measured on the finalized
+  application code.
+- 1,011/1,011 executable application callables were entered by the coverage gate.
+- 17/17 targeted safety mutants were killed.
+- 58/58 deterministic simulation contracts passed across 54 CSV price paths.
+- Python compileall passed for app, tests, scripts, and main.py.
+- git diff --check passed.
+- All 22 source image assets remain present.
+
+6. Tooling limitations
+
+Ruff and Pyright were not available in the offline Linux release environment.
+An installation attempt could not reach the package index, so neither tool is
+recorded as passing here. The final Windows run_all_tests.bat quality gate must
+still run Ruff and Pyright before producing a native executable.
+
+A native Windows/PyInstaller executable was not built in this environment.
+Windows smoke testing should confirm the packaged v3.8.0 executable, IB Gateway
+connection, a normal multi-print BUY that completes inside three seconds, timeout
+cancellation of a still-working remainder, and cancellation-race reconciliation.
+
+7. Unattended-operation boundary
+
+This release deliberately reuses the existing single worker, persisted cycle,
+order-polling, cancellation, and reconciliation architecture. It does not add a
+new worker thread, database schema, broker order type, or automatic replacement
+order. A cancellation request cannot undo filled shares and cannot guarantee that
+the remaining shares will not fill before IBKR acknowledges the request.

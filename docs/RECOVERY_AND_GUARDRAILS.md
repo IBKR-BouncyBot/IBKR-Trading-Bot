@@ -13,7 +13,7 @@ This document is the technical companion to [`RECOVERY_AND_FAILSAFE.md`](RECOVER
 
 - A submitted-order stage is entered only after the adapter returns a submission handle rather than raising a submission error.
 - Submission failure rolls the pure state back to a waiting stage or raises recovery state; it does not leave a fictional active broker order.
-- A positive partial BUY remains in Stage 2 until the original order is terminal; later fills and commissions are reconciled idempotently before Stage 3 begins.
+- A positive partial BUY remains in Stage 2 until the original order is terminal. The controller allows a fixed 3.0-second completion grace, then requests one remainder cancellation after timeout or immediately when an enabled market/session safety boundary becomes unsafe; later fills and commissions are reconciled idempotently before Stage 3 begins.
 - A cycle is complete only when the locally recorded app-owned quantity has been sold/resolved.
 - A stored active cycle requires explicit operator Start/resume after process launch.
 - A cached recovery-probe order row is not treated as permanently current: a newer matching terminal broker poll removes/supersedes it, while a newer broker probe remains visible.

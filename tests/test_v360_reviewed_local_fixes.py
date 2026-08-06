@@ -1,4 +1,4 @@
-"""v3.6.0 reviewed local-fix and fail-closed regression coverage."""
+"""v3.9.0 reviewed local-fix and fail-closed regression coverage."""
 
 from __future__ import annotations
 
@@ -370,34 +370,40 @@ def test_v360_release_metadata_and_documentation_locations_are_current() -> None
     security = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
     docs_index = (ROOT / "docs" / "README.md").read_text(encoding="utf-8")
     legacy_index = (ROOT / "docs" / "legacy" / "README.md").read_text(encoding="utf-8")
-    current_note = ROOT / "docs" / "V3_6_0_SELL_RECONCILIATION_AND_HISTORY_ROBUSTNESS.md"
+    current_note = ROOT / "docs" / "V3_9_0_AUDIT_DIAGNOSTIC_COALESCING.md"
     archived_v350_note = ROOT / "docs" / "legacy" / "V3_5_0_GUI_LIGHT_MODE_AND_LAYOUT.md"
     archived_v350_report = ROOT / "docs" / "legacy" / "V3_5_0_IMPLEMENTATION_TEST_REPORT.txt"
+    archived_v360_note = ROOT / "docs" / "legacy" / "V3_6_0_SELL_RECONCILIATION_AND_HISTORY_ROBUSTNESS.md"
+    archived_v360_report = ROOT / "docs" / "legacy" / "V3_6_0_IMPLEMENTATION_TEST_REPORT.txt"
 
-    assert 'APP_VERSION = "3.6.0"' in gui
-    assert "BouncyBot - IBKR Portable Trading Bot v3.6.0" in gui
-    assert "This is synthetic v3.6.0 paper-trading example data." in gui
-    assert 'version = "3.6.0"' in pyproject
-    assert '$version = "3.6.0"' in build
-    assert "**Current release: v3.6.0**" in readme
-    assert "## v3.6.0" in changelog
-    assert "current repository version, v3.6.0" in security
-    assert "current v3.6.0 behavior" in docs_index
+    assert 'APP_VERSION = "3.9.0"' in gui
+    assert "BouncyBot - IBKR Portable Trading Bot v3.9.0" in gui
+    assert "This is synthetic v3.9.0 paper-trading example data." in gui
+    assert 'version = "3.9.0"' in pyproject
+    assert '$version = "3.9.0"' in build
+    assert "**Current release: v3.9.0**" in readme
+    assert "## v3.9.0" in changelog
+    assert "current repository version, v3.9.0" in security
+    assert "current v3.9.0 behavior" in docs_index
     assert current_note.is_file()
     assert archived_v350_note.is_file()
     assert archived_v350_report.is_file()
+    assert archived_v360_note.is_file()
+    assert archived_v360_report.is_file()
     assert not (ROOT / "docs" / archived_v350_note.name).exists()
     assert current_note.name in readme
     assert current_note.name in docs_index
     assert archived_v350_note.name in readme
     assert archived_v350_note.name in legacy_index
     assert archived_v350_report.name in legacy_index
+    assert archived_v360_note.name in legacy_index
+    assert archived_v360_report.name in legacy_index
 
 
 def test_v360_release_note_documents_fail_closed_scope_and_compatibility() -> None:
-    note = (ROOT / "docs" / "V3_6_0_SELL_RECONCILIATION_AND_HISTORY_ROBUSTNESS.md").read_text(
-        encoding="utf-8"
-    )
+    note = (
+        ROOT / "docs" / "legacy" / "V3_6_0_SELL_RECONCILIATION_AND_HISTORY_ROBUSTNESS.md"
+    ).read_text(encoding="utf-8")
 
     assert "persisted executions prove" in note
     assert "SELL_PARTIAL_TERMINAL" in note

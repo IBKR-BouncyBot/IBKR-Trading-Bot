@@ -370,19 +370,27 @@ def test_cutoff_uses_actual_contract_session_boundary_including_early_close(tmp_
 
 def test_enabled_policy_fails_safe_when_session_boundary_is_unavailable(tmp_path, monkeypatch) -> None:
     controller, broker, cycle = _stage4_setup(tmp_path, monkeypatch)
-    warnings: list[str] = []
+    events: list[tuple[str, str]] = []
     controller._session_minutes_from_rth_status = lambda: {
         "available": False,
         "minutes_to_close": None,
         "message": "missing liquidHours",
     }
-    controller._log_price_warning_throttled = lambda _cycle, message, interval_seconds=30.0: warnings.append(message)
+    controller._log = lambda level, message, _cycle=None, **_kwargs: events.append((level, message))
 
     controller._cancel_sell_and_liquidate_before_close_if_needed(cycle)
 
     assert broker.cancelled_orders == []
     assert _market_orders(broker) == []
-    assert warnings and "Automatic liquidation will not start" in warnings[-1]
+    assert events == [
+        (
+            "WARN",
+            "Stage 4 close-before-RTH cannot verify the regular-session boundary; "
+            "automatic liquidation will not start.",
+        )
+    ]
+    condition = controller._audit_conditions[f"stage4_close_boundary|{cycle.id}"]
+    assert condition["latest_reason_code"] == "SESSION_BOUNDARY_UNAVAILABLE"
 
 
 def test_restart_after_confirmed_cancel_recovers_and_submits_one_replacement(tmp_path, monkeypatch) -> None:

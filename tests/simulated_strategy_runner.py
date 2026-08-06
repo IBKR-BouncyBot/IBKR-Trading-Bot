@@ -243,9 +243,25 @@ def run_one_cycle(
                         sell_trail = _new_trail_order(action, fill_price, "SELL")
                         sell_trail_role = "protective"
                         events.append(SimulatedEvent("protective_sell_submitted", fill_price, "Protective SELL trail submitted", cycle.stage.value, dict(action.payload)))
-                    elif action.action_type == "CANCEL_ORDER":
-                        events.append(SimulatedEvent("cancel_remainder", price, "Cancel remaining BUY quantity", cycle.stage.value, dict(action.payload)))
                 if fill_qty < buy_trail.quantity:
+                    # The production controller now lets a triggered marketable
+                    # BUY finish normally for a short grace period. This
+                    # deterministic runner has no wall clock, so a configured
+                    # partial-fill scenario advances directly to the simulated
+                    # grace expiry and then models a successful cancellation.
+                    events.append(
+                        SimulatedEvent(
+                            "cancel_remainder",
+                            price,
+                            "Partial BUY grace elapsed; cancel remaining BUY quantity",
+                            cycle.stage.value,
+                            {
+                                "filled_qty": fill_qty,
+                                "remaining_qty": buy_trail.quantity - fill_qty,
+                                "grace_seconds": 3.0,
+                            },
+                        )
+                    )
                     cycle, terminal_actions = StrategyEngine.on_buy_fill(
                         cycle,
                         filled_qty=fill_qty,

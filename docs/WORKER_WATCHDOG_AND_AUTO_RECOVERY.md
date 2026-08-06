@@ -1,6 +1,6 @@
 # Worker watchdog and automatic recovery
 
-This document defines the v3.6.0 corrective worker/storage supervision behavior. It preserves BouncyBot's single-controller-worker design. The corrective implementation does not add a broker worker, database-writer worker, service, daemon, or second trading process.
+This document defines the current v3.9.0 worker/storage supervision behavior. It preserves BouncyBot's single-controller-worker design. The corrective implementation does not add a broker worker, database-writer worker, service, daemon, or second trading process.
 
 ## Failure class addressed
 
@@ -142,6 +142,6 @@ For machine- or process-level supervision beyond this boundary, an external Wind
 
 ## Verification scope
 
-The v3.6.0 corrective tests cover one-time token consumption, exact-cycle signatures, restart rate limiting, emergency logging, real rolled-back SQLite write probes, persist-before-publish ordering, storage-fault broker-action blocking, transport-only callback pumping, dead/stalled worker detection, stale quote-age/RTH display invalidation, lock release before process replacement, exact-cycle reconciliation gating, and audit-token redaction.
+The current corrective tests cover one-time token consumption, exact-cycle signatures, restart rate limiting, emergency logging, real rolled-back SQLite write probes, persist-before-publish ordering, storage-fault broker-action blocking, transport-only callback pumping, dead/stalled worker detection, stale quote-age/RTH display invalidation, lock release before process replacement, exact-cycle reconciliation gating, and audit-token redaction.
 
 A native Windows executable and its `subprocess.Popen` replacement behavior must still be smoke-tested on Windows after running `build_windows.bat`; source tests on Linux cannot produce or execute a Windows PyInstaller binary.

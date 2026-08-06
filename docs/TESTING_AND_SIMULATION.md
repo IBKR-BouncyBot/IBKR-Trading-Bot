@@ -113,6 +113,18 @@ The focused v3.2.0 suite verifies exact API-selected positive `conId` identity, 
 
 The focused v3.2.1 suite verifies the 08:00-16:30 `Europe/London` continuous-session cap for `LSE` and `LSEETF`, preservation of an earlier IBKR close, unchanged non-LSE behavior, fail-closed malformed policy metadata, effective-close enforcement through the short RTH cache, immediate and stable repeated-preflight audit throttling, suppression of redundant price-normalization audit rows while delayed data already blocks a BUY, and the `PreflightBlocked` status without an order intent.
 
+### v3.9.0 audit diagnostic coalescing regressions
+
+The focused v3.9.0 suite verifies stable diagnostic condition keys and reason codes, changing-age suppression, condition entry/summary/recovery lifecycle, structured counts and maximum metrics, and bounded one-minute/five-minute/15-minute cadence. An NBIS-shaped 705-observation stale-ask sequence is reduced to a small bounded audit sequence while retaining every observation in the live condition state. Additional tests cover GUI-only cached/non-price callbacks, immediate near-trigger invalid evidence, invalidated first SELL confirmation, native trailing-order normal/anomaly cadence, reconnect aggregation and recovery, BUY-preflight recovery, and Price Data Monitor rendering. Existing Stage-3 field freshness, two-observation confirmation, pre-submit revalidation, order handling, risk, recovery, and persistence tests remain unchanged.
+
+### v3.8.0 BUY partial-fill grace and safety regressions
+
+The focused v3.8.0 suite verifies the revised Stage-2 settlement policy for both native trailing and zero-trail market BUYs: the first positive partial remains working, a complete multi-print fill inside the fixed 3.0-second grace is not cancelled, the first-fill timestamp survives reload, later partial progress does not restart the grace clock, and a still-nonterminal remainder receives one cancellation after timeout. Safety-path tests cover RTH closure, required live-data loss, stale data, unavailable or pre-close session timing, recent-volatility limits, minimum-price and previous-close-gap limits, and unavailable, crossed, or excessive bid/ask spreads. The suite also covers failed-cancel retry, duplicate suppression, future-timestamp recovery, broker-terminal partial settlement, and full late-fill reconciliation after a cancellation request. The historical NBIS multi-execution replay confirms that a second fill can complete normally during the grace rather than being raced by an immediate cancellation.
+
+### v3.7.0 field-level market-data and Stage-3 SELL regressions
+
+The focused v3.7.0 suite reproduces both critical CHIP cycle-3 market states and verifies the complete nine-step correction: independent bid/ask/Last timestamps, raw selected-basis freshness, complete quote and spread enforcement, executable-bid trigger confirmation, two distinct observations, confirmation reset, revalidation before intent and broker submission, ATR exclusion of unchanged fallback Last values, and exact incident-shaped regression data. Additional tests cover same-value price ticks, size/timestamp-only callbacks, reconnect invalidation, delayed-field compatibility, and the Stage-3 close-before-RTH quote boundary.
+
 ### v3.6.0 SELL reconciliation and Trade History regressions
 
 The focused v3.6.0 suite verifies persistence and continued supervision of nonterminal final-SELL partials; fail-closed terminal partial, overfill, contradictory remainder, missing-history, and missing-price states; exact aggregate completion across earlier and replacement SELL orders; cancellation before manual close replacement; protective terminal full-fill/remainder mismatch handling; raw-value sorting for formatted Trade History numeric cells; and operator dialogs for audit-detail and export failures. It enters the real controller/storage boundaries with deterministic broker doubles and the GUI helpers through the headless Qt layer.
@@ -139,6 +151,7 @@ Use test adapters/headless signals to validate:
 - 1100/1101/1102 upstream connectivity, subscription recreation/retention, actual event identity/age, cached-read exclusion, fail-closed missing-event handling, worker pausing, stale SELL presentation, and order-submission gating;
 - guard-versus-recovery action gating;
 - stop/window-close/market-close sequencing based on the persisted app-owned ledger;
+- Stage-2 BUY partial-fill grace, timeout/safety cancellation, and late-fill reconciliation;
 - capture/report hooks.
 
 ### Storage tests
@@ -169,7 +182,7 @@ The callable gate proves entry, not exhaustive path coverage. Assertions, branch
 
 The non-GUI offline expansion adds broker callback permutations, generated controller invariants, numerical/payload properties, recovery decision matrices, differential simulation, multi-instance isolation, subprocess crash/restart tests, schema migration and restore fixtures, sanitized production-incident replays, storage fault injection, Gateway outage sequences, bounded soak tests, and a seventeen-mutant safety gate. The complete scope and exclusions are in [`OFFLINE_BEHAVIOR_TESTS.md`](OFFLINE_BEHAVIOR_TESTS.md). The incident-derived layer is documented in [`PRODUCTION_INCIDENT_REPLAY_TESTS.md`](PRODUCTION_INCIDENT_REPLAY_TESTS.md).
 
-The corrected v3.6.0 source tree executed **1,140/1,140** collected pytest cases across isolated coverage partitions with `ResourceWarning` promoted to an error. The combined instrumented run included the ordinary, accelerated-soak, and elapsed-time-bound large-database tests, measured **78.0%** combined statement/branch coverage, and entered **996/996** executable application callables. The release also killed **17/17** targeted safety mutants and passed **58/58** deterministic simulation contracts across 54 CSV price paths. All three former strict expected-failure sentinels are ordinary passing regressions; no known-gap xfail is retained for these behaviors.
+The v3.9.0 source tree executed **1,211/1,211** collected pytest cases across all 126 test modules with `ResourceWarning` promoted to an error. Every test module also passed in a separate fresh pytest process. The run measured **78.1%** combined statement/branch coverage and entered **1,024/1,024** executable application callables. The release also killed **17/17** targeted safety mutants and passed **58/58** deterministic simulation contracts across 54 CSV price paths. All three former strict expected-failure sentinels are ordinary passing regressions; no known-gap xfail is retained for these behaviors.
 
 ### Build-script tests
 

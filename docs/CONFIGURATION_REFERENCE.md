@@ -1,6 +1,6 @@
 # Configuration reference
 
-This document describes the persisted connection and strategy settings in v3.6.0. Values shown as defaults are the dataclass defaults used for a new configuration. Saved SQLite settings override them after the first run.
+This document describes the persisted connection and strategy settings in v3.9.0. Values shown as defaults are the dataclass defaults used for a new configuration. Saved SQLite settings override them after the first run.
 
 ## Connection settings
 
@@ -57,9 +57,12 @@ A non-zero commission in the database currency is included in net P/L. A non-zer
 
 When ATR adaptation supplies a valid value, it rewrites the order-driving percentages used by the same strategy path. Manual values remain the saved fallback/configuration values and continue to apply to fields whose ATR toggle is off.
 
+When a marketable BUY reports a positive partial fill, BouncyBot uses a fixed runtime-only 3.0-second grace period before requesting cancellation of the remainder. This duration is not a GUI or SQLite setting; it was introduced in v3.8.0. The grace is bypassed when an enabled market/session safety check becomes unsafe, including RTH/data/session/volatility checks and configured minimum-price, gap, or spread limits. The timer starts at the first persisted positive fill and is not extended by later partial executions.
+
+
 ## ATR-adaptive settings
 
-ATR is calculated from actual ticker-update events observed by this running application. Repeated reads of cached non-null fields are excluded. Usable events are collected only while the regular session is open, bucketed by the broker callback arrival time into fixed-time OHLC bars, and converted to ATR%. Observation/bar collection continues when **Use ATR adaptive percentages** is off; disabling adaptation only prevents calculated values from changing strategy percentages. The buffer is in memory, resets when the process restarts, and is not a separate broker historical-bar feed.
+ATR is calculated from actual ticker-update events observed by this running application, but only when the raw Last, bid/ask quote, mark, or close basis behind the selected price updated in that event. Repeated reads and an unchanged cached Last surfaced by another field, size, or timestamp event are excluded. Usable events are collected only while the regular session is open, bucketed by the broker callback arrival time into fixed-time OHLC bars, and converted to ATR%. Observation/bar collection continues when **Use ATR adaptive percentages** is off; disabling adaptation only prevents calculated values from changing strategy percentages. The buffer is in memory, resets when the process restarts, and is not a separate broker historical-bar feed.
 
 | Setting | Default | Meaning |
 |---|---:|---|
@@ -134,7 +137,7 @@ The reinvestment calculation uses completed cycles stored by this application, n
 |---|---:|---|
 | Block delayed data in live mode | on | Blocks a live BUY when the effective data type is not live. |
 | Run IBKR what-if check before BUY | on | Uses IBKR's dedicated what-if path; missing/error state or absent finite margin/equity output blocks the live BUY. |
-| Enable stale-data guard | on | Requires current selected price, bid/ask, and RTH status. |
+| Enable stale-data guard | on | Requires current selected-price basis, independently fresh bid and ask where a quote is required, and current RTH status. |
 | Maximum selected-price age | `3.0 s` | Maximum accepted age for the confirmed strategy price. |
 | Maximum bid/ask age | `3.0 s` | Maximum accepted age for bid/ask fields. |
 | Maximum RTH-status age | `60.0 s` | Maximum accepted age for the last RTH evaluation. |
@@ -144,13 +147,13 @@ The reinvestment calculation uses completed cycles stored by this application, n
 | Enable session-timing guard | on | Applies first/last-minute entry windows and pre-close BUY-trail cancellation. |
 | No new BUY first | `5 min` | Entry block after the regular-session open. Zero disables this sub-window. |
 | No new BUY last | `15 min` | Entry block before the regular-session close. Zero disables this sub-window. |
-| Cancel BUY before close | `5 min` | Requests cancellation of an unfilled app BUY trail before the contract's date-specific regular-session close. Zero disables this sub-window. |
-| Cancel SELL trail and liquidate before close | off | Stage 3: at the cutoff, submits an RTH-only `DAY` market SELL only when selected current price is strictly above average BUY price; commissions are ignored. A working protective SELL is cancelled and confirmed terminal first. Stage 4: cancels the final native SELL trail, waits for terminal status, then sells the remaining app-owned shares. Market execution can still realize a loss. |
+| Cancel BUY before close | `5 min` | Requests cancellation of a working app BUY order or remainder before the contract's date-specific regular-session close. Zero disables this sub-window. |
+| Cancel SELL trail and liquidate before close | off | Stage 3: at the cutoff, requires a complete independently fresh non-crossed quote within Maximum spread, then submits an RTH-only `DAY` market SELL only when the executable bid is strictly above average BUY price; commissions are ignored. A working protective SELL is cancelled and confirmed terminal first. Stage 4: cancels the final native SELL trail, waits for terminal status, then sells the remaining app-owned shares. Market execution can still realize a loss. |
 | Liquidate before close | `5 min` | Cutoff before the contract-specific RTH close. Valid range `1-240 min`. The field is active only when the optional policy is enabled. |
 
 The first/last-minute entry windows, BUY cancellation window, and optional Stage-3/Stage-4 liquidation cutoff use the exact contract's effective session boundaries. IBKR `liquidHours` and `timeZoneId` provide the date, holiday, late-open, and early-close facts. For `LSE` and `LSEETF`, BouncyBot additionally caps the window at the verified 08:00-16:30 `Europe/London` continuous session. The conservative New York fallback is used only for recognized U.S. equity primary exchanges. A non-U.S. contract with missing, invalid, or unparseable session metadata fails closed; BouncyBot does not guess U.S. hours for a European listing.
 
-The data-type, what-if, stale-data, ATR, RTH, and controller-state checks are independent of the optional hard-risk master where implemented. Turning off hard limits does not turn off the normal broker/data safety checks. Local socket state, Gateway/TWS upstream IBKR connectivity, post-reconnect reconciliation, and the requirement for an actual post-connect/post-recovery ticker event are controller invariants rather than user-disableable settings.
+The data-type, what-if, stale-data, ATR, RTH, Stage-3 field-level quote gate, and controller-state checks are independent of the optional hard-risk master where implemented. Turning off hard limits does not turn off the normal broker/data safety checks. Local socket state, Gateway/TWS upstream IBKR connectivity, post-reconnect reconciliation, and the requirement for an actual post-connect/post-recovery ticker event are controller invariants rather than user-disableable settings.
 
 ## Hard risk limits
 
@@ -163,11 +166,23 @@ The hard-risk master is off by default. When it is on, a zero value disables the
 | Maximum total daily loss | `0` | Completed application net P/L across stored tickers for the date. |
 | Maximum completed cycles | `0` | Total completed-cycle cap for the selected ticker. The persisted field retains the historical name `max_cycles_per_ticker_day`, but runtime behavior is not per-day. |
 | Maximum consecutive losses | `0` | Consecutive completed losing application cycles. |
-| Maximum spread | `1.00%` | Fixed user-configured bid/ask spread limit at BUY preflight. Live bid/ask values are compared with it but never rewrite it. It changes only through explicit user edits or loading the persisted setting. Set zero to disable. |
+| Maximum spread | `1.00%` | Fixed user-configured bid/ask spread limit at BUY preflight and at the normal Stage-3 final-SELL/Stage-3 close-before-RTH quote gate. Live bid/ask values are compared with it but never rewrite it. It changes only through explicit user edits or loading the persisted setting. Set zero to disable the percentage ceiling; Stage-3 quote completeness and per-side freshness remain required. |
 | Minimum trade price | `0` | Selected price floor. Set zero to disable. |
 | Maximum gap from previous close | `0` | Absolute percentage gap. Set zero to disable. |
 
 Hard BUY limits do not prevent an already-open application-owned position from being sold. SELL eligibility still depends on broker connection, valid state, RTH/order constraints, and cancellation sequencing.
+
+
+## Audit diagnostic cadence (runtime only)
+
+The v3.9.0 audit coalescer has no GUI control and no persisted setting. It changes only how repeated operational observations are written to SQLite; it does not change when a guard is evaluated or when trading is blocked. Current Stage-3 quote evidence remains visible in the Price Data Monitor.
+
+- Stage-3 quote, BUY-preflight, reconnect, and session conditions first summarize after 60 seconds and then at most every 300 seconds while persistent.
+- A normal unchanged native trailing order first summarizes after 900 seconds and then at most every 900 seconds.
+- Near-trigger invalid Stage-3 evidence, invalidated SELL confirmation, reconnect-outage entry, and native-stop diagnostic crossings remain immediate.
+- Safety-critical errors and decision events are not routed through this coalescer.
+
+Condition state is in memory and resets on a complete process restart. The restart may therefore create a new condition-entry event for a still-active state.
 
 ## Runtime-only cycle fields
 

@@ -1,4 +1,4 @@
-"""Fusion light/dark appearance regressions for v3.6.0."""
+"""Fusion light/dark appearance regressions for v3.9.0."""
 
 from __future__ import annotations
 

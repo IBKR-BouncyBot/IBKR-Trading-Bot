@@ -12,20 +12,20 @@ PYPROJECT = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 BUILD = (ROOT / "scripts" / "build_windows.ps1").read_text(encoding="utf-8")
 DOCS_INDEX = (ROOT / "docs" / "README.md").read_text(encoding="utf-8")
 LEGACY_INDEX = (ROOT / "docs" / "legacy" / "README.md").read_text(encoding="utf-8")
-CURRENT_RELEASE_NOTE = ROOT / "docs" / "V3_6_0_SELL_RECONCILIATION_AND_HISTORY_ROBUSTNESS.md"
+CURRENT_RELEASE_NOTE = ROOT / "docs" / "V3_9_0_AUDIT_DIAGNOSTIC_COALESCING.md"
 RELEASE_NOTE = ROOT / "docs" / "legacy" / "V3_1_2_FILL_RECONCILIATION_AND_STAGE3_CLOSE.md"
 ARCHIVED_V311_NOTE = ROOT / "docs" / "legacy" / "V3_1_1_IBKR_ORDER_VALIDATION.md"
 
 
 def test_v312_release_metadata_is_consistent() -> None:
-    assert "BouncyBot - IBKR Portable Trading Bot v3.6.0" in GUI
-    assert "This is synthetic v3.6.0 paper-trading example data." in GUI
-    assert "**Current release: v3.6.0**" in README
-    assert 'version = "3.6.0"' in PYPROJECT
-    assert '$version = "3.6.0"' in BUILD
-    assert "## v3.6.0" in CHANGELOG
+    assert "BouncyBot - IBKR Portable Trading Bot v3.9.0" in GUI
+    assert "This is synthetic v3.9.0 paper-trading example data." in GUI
+    assert "**Current release: v3.9.0**" in README
+    assert 'version = "3.9.0"' in PYPROJECT
+    assert '$version = "3.9.0"' in BUILD
+    assert "## v3.9.0" in CHANGELOG
     assert "## v3.1.2" in CHANGELOG
-    assert "current v3.6.0 behavior" in DOCS_INDEX
+    assert "current v3.9.0 behavior" in DOCS_INDEX
 
 
 def test_v312_current_and_archived_release_notes_are_in_the_correct_locations() -> None:
@@ -34,8 +34,8 @@ def test_v312_current_and_archived_release_notes_are_in_the_correct_locations() 
     assert ARCHIVED_V311_NOTE.is_file()
     assert not (ROOT / "docs" / "V3_1_2_FILL_RECONCILIATION_AND_STAGE3_CLOSE.md").exists()
     assert not (ROOT / "docs" / "V3_1_1_IBKR_ORDER_VALIDATION.md").exists()
-    assert "V3_6_0_SELL_RECONCILIATION_AND_HISTORY_ROBUSTNESS.md" in README
-    assert "V3_6_0_SELL_RECONCILIATION_AND_HISTORY_ROBUSTNESS.md" in DOCS_INDEX
+    assert "V3_9_0_AUDIT_DIAGNOSTIC_COALESCING.md" in README
+    assert "V3_9_0_AUDIT_DIAGNOSTIC_COALESCING.md" in DOCS_INDEX
     assert "V3_1_2_FILL_RECONCILIATION_AND_STAGE3_CLOSE.md" in LEGACY_INDEX
     assert "V3_1_1_IBKR_ORDER_VALIDATION.md" in LEGACY_INDEX
 
@@ -44,8 +44,8 @@ def test_v312_gui_documents_stage3_and_stage4_preclose_behavior() -> None:
     assert "Default OFF. In Stage 3" in GUI
     assert "commissions are ignored for that comparison" in GUI
     assert "In Stage 4, the app cancels the final SELL trailing-stop" in GUI
-    assert "A market fill can be below the checked price or trailing stop" in GUI
-    assert "Stage 3 requires the selected current price to be strictly above the average BUY price" in GUI
+    assert "A market fill can be below the checked bid or trailing stop" in GUI
+    assert "Stage 3 requires a complete fresh spread-checked quote and an executable bid strictly above the average BUY price" in GUI
 
 
 def test_v312_source_keeps_terminal_buy_and_exact_order_ownership_contracts() -> None:

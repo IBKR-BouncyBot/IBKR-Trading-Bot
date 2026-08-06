@@ -1,6 +1,6 @@
 # Operations guide
 
-This guide describes the normal operator workflow for v3.6.0. It does not replace the broker’s API documentation or account controls.
+This guide describes the normal operator workflow for v3.9.0. It does not replace the broker’s API documentation or account controls.
 
 ## Before starting
 
@@ -74,6 +74,21 @@ The top lock button is an accidental-edit guard. When engaged, editable settings
 
 Simple, Advanced, and Debug modes all show **Recovery / audit log** across the full dashboard width. The removed duplicate Controls panel is not needed because the fixed five-button command bar remains visible.
 
+
+## Audit-condition summaries
+
+v3.9.0 keeps persistent routine conditions visible without writing one SQLite row for every controller cadence. Stage-3 quote evidence is shown continuously in the Price Data Monitor. Reconnect, BUY-preflight, close-before-RTH, and native trailing-order waits use a condition-entry event, bounded persistence summaries, and one recovery event.
+
+Operational cadence is intentionally different by condition:
+
+- Stage-3 quote-evidence safety conditions: one INFO entry for the routine condition, first WARN summary after one minute, then at most every five minutes; near-trigger or confirmation-invalidating failures remain immediate WARN;
+- expected BUY/session waits such as RTH closed or ATR warmup: immediate INFO, first INFO summary after 15 minutes, then at most every 15 minutes; hard risk/data/broker blockers use immediate WARN, a one-minute first WARN summary, then five-minute WARN summaries;
+- reconnect outage: immediate WARN, first persistence summary after one minute as INFO, then at most every five minutes as WARN;
+- normal unchanged native trailing order: INFO summary after 15 minutes and then at most every 15 minutes;
+- selected-price/raw-Last native-stop anomalies: immediate event plus bounded anomaly summaries.
+
+A reduction in audit rows does not mean a guard is evaluated less often. Trading safeguards still run on every normal cadence. Order rejections, terminal partials, quantity mismatches, storage/worker faults, reconciliation uncertainty, and failed confirmed-SELL revalidation remain immediate. The structured raw JSON attached to condition summaries records counts, duration, latest context, reason distribution, and maximum observed numeric metrics.
+
 ## Expected pauses versus recovery errors
 
 Normal configured pauses, such as ATR warmup, closed RTH, session windows, stale data, or a hard-risk limit, are caution states. They do not mean the local database and broker disagree. Reconciliation therefore disables Reconcile-and-resume, Stop, Cancel, Sell, Leave-working, and Mark-handled actions during an ordinary guard/strategy wait; read-only **Refresh from IBKR/TWS** and audit export remain available.
@@ -106,12 +121,12 @@ Never create a manual order with an `OrderRef` beginning with `IBKRBOT|`.
 
 When **Cancel SELL trail and liquidate before close** is enabled for the active cycle, configure it before the position reaches the cutoff. The controls are locked once the Stage-4 final SELL trail is working. The default cutoff is five minutes before the contract-specific RTH close.
 
-In Stage 3, BouncyBot acts only when a fresh selected current price is strictly above the weighted average BUY price. Commissions are ignored for that eligibility comparison. If no protective SELL is working, the app submits one RTH-only `DAY` market SELL for the app-owned unsold quantity. If a protective SELL is working, the expected sequence is:
+In Stage 3, BouncyBot acts only when a complete independently fresh non-crossed quote is within the configured Maximum spread and its executable bid is strictly above the weighted average BUY price. Commissions are ignored for that eligibility comparison. If no protective SELL is working, the app submits one RTH-only `DAY` market SELL for the app-owned unsold quantity. If a protective SELL is working, the expected sequence is:
 
 1. Stage-3 profitable close workflow started;
 2. protective SELL cancellation requested;
 3. cancellation or another terminal status confirmed, including any fills during the race;
-4. selected price checked again against average BUY;
+4. fresh quote and executable bid checked again against average BUY;
 5. one RTH-only `DAY` market SELL submitted for the remaining app-owned quantity;
 6. cumulative SELL fills complete the cycle.
 
@@ -167,7 +182,7 @@ On restoration:
 - **1101 (data lost):** obsolete ticker handles are removed and new subscriptions are created;
 - **1102 (data maintained):** existing handles stay in place, but their old update identity is invalidated;
 - both paths reconcile app-owned open orders and recent executions before ordinary processing resumes;
-- both paths require a new post-recovery ticker event before a quote can advance Stage 1/3 or enter ATR/volatility history.
+- both paths require new post-recovery price-field updates before a selected-price basis can advance Stage 1/3 or enter ATR/volatility history; a callback for another field, a size, or a timestamp does not freshen cached Last/bid/ask values.
 
 Native orders already accepted by IBKR are not cancelled merely because the connection is interrupted. They may continue at the broker. A BUY fill received only after recovery can delay application-side follow-up, including protective SELL placement, until broker reconciliation succeeds.
 
@@ -193,7 +208,20 @@ After any outage or restart:
 
 ATR observation history is in-memory only and starts empty after an application or Windows restart. A stale active cycle is intentionally held for explicit reconciliation. The recovery probe itself is point-in-time: normal terminal order polls can retire an older matching probe row; after any TWS-side change, use **Refresh from IBKR/TWS** to obtain a newer authoritative probe.
 
-## v3.6.0 paper-account validation
+## v3.9.0 paper-account validation
+
+Before unattended live use, reproduce the Stage-2 partial-BUY and field-level Stage-3 gates in paper mode with a liquid and a thinly traded instrument:
+
+- verify a normal multi-execution BUY can finish during the 3.0-second grace without an unnecessary cancellation;
+- verify a still-working remainder receives one cancellation request after the grace expires;
+- verify RTH closure, stale/non-live data, the configured pre-close cutoff, excessive volatility, and an unavailable/crossed/excessive spread bypass the remaining grace;
+- verify every fill received before or during the cancellation race is included in the final Stage-3 quantity and average price;
+- verify a wide quote does not arm the final SELL even when `marketPrice` or Last is above the trigger;
+- verify a missing bid or independently stale quote side keeps Stage 3 waiting;
+- verify one qualifying quote logs the first confirmation and a second distinct qualifying quote is required;
+- verify the executable bid, not Last or midpoint alone, drives the Stage-3 transition;
+- verify a quote change between confirmation and submission produces `SELL_MARKET_DATA_REVALIDATION_BLOCKED` and no order;
+- verify an unchanged cached Last is displayed diagnostically but does not enter ATR.
 
 Before live use, validate at least one exact USD SMART stock and one exact EUR SMART stock in a paper account. Confirm contract search, conId qualification, market-data entitlement, market-rule price normalization, whole-share size rules, what-if validation, BUY and SELL order acceptance, commissions, contract-specific RTH status, reconnect/reconciliation, and pre-close behavior. A successful source test run cannot prove venue-specific broker acceptance.
 

@@ -22,7 +22,7 @@ The controller requires, as applicable:
 - no unresolved recovery/manual-review state;
 - no unsold application-owned quantity from persisted fills;
 - valid open/current RTH state;
-- selected price delivered by a newly consumed ticker event and still within the configured freshness window;
+- selected price delivered by a newly consumed ticker event whose underlying raw field/quote basis updated and remains within the configured freshness window;
 - current bid/ask and RTH facts when the stale-data guard is enabled;
 - live data in live mode when delayed-data blocking is enabled;
 - ATR readiness when the ATR entry blocker is enabled;
@@ -32,7 +32,7 @@ The controller requires, as applicable:
 
 The controller returns the first fail-closed blocker to the submission path while the GUI can display the complete evaluated list.
 
-If one of these checks blocks the action before an order intent is written, the cycle returns to Stage 1 with BUY status `PreflightBlocked`. `SubmitFailed` is reserved for a live submission attempt that raises before broker acceptance can be confirmed. An unchanged preflight blocker is enforced on every cadence but its audit warning is limited to one event per 60 seconds for the same cycle and blocker category.
+If one of these checks blocks the action before an order intent is written, the cycle returns to Stage 1 with BUY status `PreflightBlocked`. `SubmitFailed` is reserved for a live submission attempt that raises before broker acceptance can be confirmed. A preflight blocker is enforced on every cadence while its audit representation is coalesced per cycle with stable blocker reason codes: expected waits use INFO entry/15-minute summaries, hard blockers use immediate WARN plus one-minute/five-minute WARN summaries, and successful submission records one recovery event.
 
 An account-wide external stock position is not part of this BUY block. Only the local unsold quantity reconstructed from application fills is considered.
 
@@ -92,13 +92,14 @@ Order status can expose cumulative filled quantity before individual execution I
 
 After the first positive BUY fill:
 
-1. the cycle remains in Stage 2;
-2. cancellation of the unfilled remainder is requested once;
-3. the original BUY continues to be polled until terminal;
-4. additional fills received during the cancellation race update quantity, weighted average price, and commission;
-5. Stage 3 begins only after terminal settlement, using the final cumulative app-owned BUY quantity.
+1. the cycle remains in Stage 2 and starts a fixed 3.0-second grace period;
+2. the original marketable BUY is allowed to finish normally during that grace;
+3. if it remains nonterminal after the timeout, or a configured market/session safety check fails, cancellation of the unfilled remainder is requested once;
+4. the original BUY continues to be polled until terminal;
+5. additional fills received before or during cancellation update quantity, weighted average price, and commission;
+6. Stage 3 begins only after terminal settlement, using the final cumulative app-owned BUY quantity.
 
-If cancellation submission itself fails, the one-shot flag is cleared so a later poll can retry. A late BUY execution after an exit order already exists, or any SELL ledger above the app-owned BUY quantity, stops the cycle in `ERROR` for manual review.
+The timeout is measured from the first positive fill and is not reset by later partial executions. Safety cancellation covers RTH closure, configured live/stale-data requirements, the configured pre-close BUY window, the configured volatility filter, the configured minimum trade price and previous-close gap, and unavailable/crossed/excessive bid/ask spread evidence. If cancellation submission itself fails, the one-shot flag is cleared so a later poll can retry. A missing, malformed, or future first-fill timestamp starts one fresh bounded grace period instead of leaving the remainder working indefinitely. A late BUY execution after an exit order already exists, or any SELL ledger above the app-owned BUY quantity, stops the cycle in `ERROR` for manual review.
 
 ## Protective SELL flow
 
@@ -116,20 +117,22 @@ No final SELL is intentionally sent while another app-created SELL may still exe
 
 ## Final SELL order construction
 
+Before either normal Stage-3 final-SELL order type is constructed, BouncyBot requires a complete non-crossed bid/ask pair whose sides are independently fresh and whose spread is within the configured Maximum spread. The executable bid must reach the recalculated Stage-3 threshold within the exact contract's minimum-tick tolerance. One qualifying quote starts confirmation; a second distinct qualifying quote update for the same cycle and subscription is required. The confirmed quote identity and bid are then revalidated immediately before the durable order intent and immediately before broker submission. Any failure rolls the unsubmitted transition back to Stage 3 and records `SELL_MARKET_DATA_REVALIDATION_BLOCKED`.
+
 ### Native trailing SELL
 
 For a positive SELL trail, the adapter creates a SELL `TRAIL` order with:
 
 - remaining whole-share app-owned quantity;
 - configured trailing percent;
-- initial stop below the current SELL reference;
+- initial stop below the confirmed executable bid used as the current SELL reference;
 - initial stop not below the minimum-profit planning floor;
 - downward rounding to the route-specific IBKR market-rule increment, with contract `minTick` fallback only when no rule is advertised;
 - `TIF=GTC`, `outsideRth=False`, app `OrderRef`, and optional explicit account.
 
 ### Market SELL
 
-When final SELL trail is zero, Stage 3 submits a market SELL after the minimum-profit threshold is met.
+When final SELL trail is zero, Stage 3 submits a market SELL only after the same executable-bid, spread, two-update confirmation, and pre-submission revalidation gates are satisfied.
 
 The configured minimum profit is not a limit price. Both native-stop-triggered and explicit market SELLs can fill below the projected threshold.
 
@@ -137,7 +140,7 @@ The configured minimum profit is not a limit price. Both native-stop-triggered a
 
 When enabled, the controller supervises two related workflows at the contract-specific RTH cutoff.
 
-**Stage 3:** the selected current price must be strictly above the average BUY fill price; commissions are ignored for that eligibility test. With no protective SELL, one RTH-only `DAY` market SELL is submitted for the app-owned unsold quantity. With a working protective SELL, BouncyBot cancels it once, waits for a terminal broker status, accounts for fills during cancellation, rechecks the price condition, and then submits only the remainder.
+**Stage 3:** a complete independently fresh non-crossed quote must be within Maximum spread and its executable bid must be strictly above the average BUY fill price; commissions are ignored for that eligibility test. With no protective SELL, one RTH-only `DAY` market SELL is submitted for the app-owned unsold quantity. With a working protective SELL, BouncyBot cancels it once, waits for a terminal broker status, accounts for fills during cancellation, rechecks the quote/bid condition, and then submits only the remainder.
 
 **Stage 4:** BouncyBot cancels the normal final SELL trail once, waits for a terminal broker status, accounts for full or partial fills during cancellation, and submits a `DAY`, `outsideRth=False` market SELL for only the remaining app-owned quantity.
 
@@ -147,7 +150,7 @@ For both stages:
 - cumulative protective, final-trail, and replacement executions determine completion and P/L;
 - no outside-RTH fallback is sent;
 - missing timing, cancellation uncertainty, rejection, incomplete close, or quantity conflict stops in `ERROR`;
-- the Stage-3 price test does not guarantee a profitable market fill.
+- the Stage-3 executable-bid test does not guarantee a profitable market fill.
 
 The operator-requested Stop-screen market close remains a separate workflow. While automatic close-before-RTH liquidation is active, a second manual market-close request is refused to avoid duplicate SELL exposure.
 

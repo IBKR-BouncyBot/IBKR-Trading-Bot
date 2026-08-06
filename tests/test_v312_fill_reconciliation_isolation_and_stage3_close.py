@@ -165,7 +165,7 @@ def _market_orders(broker: DeterministicBrokerAdapter) -> list[dict[str, Any]]:
     return [item for item in broker.placed_orders if item.get("order_type") == "MKT"]
 
 
-def test_partial_buy_remains_stage2_until_terminal_and_reconciles_cancel_race(tmp_path, monkeypatch) -> None:
+def test_partial_buy_grace_allows_normal_multi_print_fill_to_finish(tmp_path, monkeypatch) -> None:
     controller, broker = _controller(tmp_path, monkeypatch)
     cycle = _buy_cycle(controller, broker, quantity=56)
 
@@ -181,8 +181,8 @@ def test_partial_buy_remains_stage2_until_terminal_and_reconciles_cancel_race(tm
 
     assert controller.active_cycle.stage == Stage.BUY_TRAIL_ACTIVE
     assert controller.active_cycle.buy_filled_qty == 28
-    assert controller.active_cycle.buy_remainder_cancel_requested is True
-    assert broker.cancelled_orders == [cycle.buy_order_ref]
+    assert controller.active_cycle.buy_remainder_cancel_requested is False
+    assert broker.cancelled_orders == []
 
     second = broker.fill_order(
         str(cycle.buy_order_ref),
@@ -200,7 +200,7 @@ def test_partial_buy_remains_stage2_until_terminal_and_reconciles_cancel_race(tm
     assert settled.avg_buy_price == pytest.approx(185.04)
     assert settled.buy_commission == pytest.approx(0.37)
     assert settled.buy_remainder_cancel_requested is False
-    assert broker.cancelled_orders == [cycle.buy_order_ref]
+    assert broker.cancelled_orders == []
     rows = controller.storage.get_cycle_audit_bundle(cycle.id)["executions"]
     assert {row["execution_id"] for row in rows} == {"BUY-PART-1", "BUY-PART-2"}
     assert sum(float(row["shares"]) for row in rows) == pytest.approx(56.0)
@@ -265,7 +265,6 @@ def test_terminal_cumulative_fill_is_not_double_counted_by_late_callbacks(tmp_pa
 def test_failed_partial_buy_cancel_is_retried_without_losing_fill_tracking(tmp_path, monkeypatch) -> None:
     controller, broker = _controller(tmp_path, monkeypatch)
     cycle = _buy_cycle(controller, broker, quantity=10)
-    broker.fail_operations.add("cancel")
     partial = broker.fill_order(
         str(cycle.buy_order_ref),
         shares=4,
@@ -279,6 +278,17 @@ def test_failed_partial_buy_cancel_is_retried_without_losing_fill_tracking(tmp_p
 
     assert controller.active_cycle.stage == Stage.BUY_TRAIL_ACTIVE
     assert controller.active_cycle.buy_filled_qty == 4
+    assert controller.active_cycle.buy_remainder_cancel_requested is False
+    assert broker.cancelled_orders == []
+
+    controller.active_cycle.buy_filled_at = (
+        dt.datetime.now(dt.timezone.utc)
+        - dt.timedelta(seconds=controller.BUY_PARTIAL_FILL_GRACE_SECONDS + 1.0)
+    ).isoformat()
+    controller.storage.upsert_cycle(controller.active_cycle)
+    broker.fail_operations.add("cancel")
+    controller._handle_buy_order_poll(controller.active_cycle, partial)
+
     assert controller.active_cycle.buy_remainder_cancel_requested is False
     assert broker.cancelled_orders == []
 
@@ -306,7 +316,7 @@ def test_callback_replay_and_late_commissions_are_idempotent(tmp_path, monkeypat
     assert partial.stage == Stage.BUY_TRAIL_ACTIVE
     assert partial.buy_filled_qty == 4
     assert partial.buy_commission == pytest.approx(0.12)
-    assert broker.cancelled_orders == [cycle.buy_order_ref]
+    assert broker.cancelled_orders == []
 
     second_exec = _callback_execution(cycle, "CALLBACK-2", 6, 101.0)
     second_commission = _callback_commission(cycle, "CALLBACK-2", 0.18)
@@ -494,7 +504,7 @@ def test_exact_historical_order_ref_updates_its_cycle_not_current_cycle(tmp_path
     assert controller.active_cycle.id == current.id
 
 
-def test_native_trailing_diagnostic_uses_stable_throttle_key(tmp_path, monkeypatch) -> None:
+def test_native_trailing_diagnostic_uses_stable_coalescing_key(tmp_path, monkeypatch) -> None:
     controller, _broker = _controller(tmp_path, monkeypatch)
     cycle = StrategyEngine.start_cycle(controller.strategy, 1, "SIM", 100.0, 0.0)
     cycle.stage = Stage.SELL_TRAIL_ACTIVE
@@ -509,7 +519,9 @@ def test_native_trailing_diagnostic_uses_stable_throttle_key(tmp_path, monkeypat
             "side": "SELL",
             "selected_price": 104.01,
             "raw_last_value": 104.00,
-            "displayed_initial_stop": 103.00,
+            "displayed_initial_stop": 105.00,
+            "selected_crossed_displayed_initial_stop": False,
+            "raw_last_crossed_displayed_initial_stop": False,
             "message": "waiting",
         }
     }
@@ -518,10 +530,10 @@ def test_native_trailing_diagnostic_uses_stable_throttle_key(tmp_path, monkeypat
     controller.price_snapshot["native_order_trigger"]["raw_last_value"] = 104.01
     controller._log_native_order_wait_diagnostic(cycle, "Submitted")
 
-    assert len(messages) == 1
-    assert len(controller._last_price_warning_at) == 1
-    key = next(iter(controller._last_price_warning_at))
-    assert cycle.sell_order_ref in key
+    assert messages == []
+    key = f"native_trailing_wait|{cycle.id}|SELL|{cycle.sell_order_ref}"
+    assert controller._audit_conditions[key]["occurrence_count"] == 2
+    assert controller._last_price_warning_at == {}
 
 
 def test_execution_timestamp_prefers_live_receipt_and_preserves_broker_time() -> None:
