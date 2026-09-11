@@ -1,8 +1,8 @@
 # Automated test coverage specification
 
-This document defines the automated verification scope for v3.9.0. It is the maintainer-facing map between the application modules, test layers, and repository quality gates.
+This document defines the automated verification scope for v4.0.0. It is the maintainer-facing map between the application modules, test layers, and repository quality gates.
 
-The v3.9.0 offline test architecture includes focused coverage for audit diagnostic coalescing, live Stage-3 guard status, reconnect/native-order wait aggregation, BUY partial-fill grace/timeout safety, shutdown checkpoints, event-driven worker scheduling, independent cadences, nonblocking broker reads, GUI responsiveness, broker connectivity, reconciliation, flowchart history selection, the optional Stage-3/Stage-4 close-before-RTH workflows, market-rule price normalization, strict what-if interpretation, broker error retention, rejection circuit breaking, exact USD/EUR SMART contract selection, one-currency database enforcement, atomic resume-checkpoint currency validation, qualified-currency market-data fallbacks, persistent commission-mismatch idempotence, contract capability/session validation, and fixed ten-second indefinite reconnect behavior. Tests use temporary databases, deterministic clocks and data, protocol-shaped broker doubles, and headless Qt doubles. They do not connect to IBKR, launch TWS/Gateway, or transmit orders.
+The v4.0.0 offline test architecture includes focused coverage for audit diagnostic coalescing, live Stage-3 guard status, reconnect/native-order wait aggregation, BUY partial-fill grace/timeout safety, shutdown checkpoints, event-driven worker scheduling, independent cadences, nonblocking broker reads, GUI responsiveness, broker connectivity, reconciliation, flowchart history selection, the optional Stage-3/Stage-4 close-before-RTH workflows, market-rule price normalization, strict what-if interpretation, broker error retention, rejection circuit breaking, exact USD/EUR SMART contract selection, one-currency database enforcement, atomic resume-checkpoint currency validation, qualified-currency market-data fallbacks, persistent commission-mismatch idempotence, contract capability/session validation, and fixed ten-second indefinite reconnect behavior. Tests use temporary databases, deterministic clocks and data, protocol-shaped broker doubles, and headless Qt doubles. They do not connect to IBKR, launch TWS/Gateway, or transmit orders.
 
 ## Test objectives
 
@@ -39,11 +39,13 @@ The callable gate is derived from the effective function map in `coverage.json`.
 | `app/timeline_scaling.py` | 28 / 28 | Parsing, filtering, robust bounds, downsampling, marker/time-axis placement |
 | `app/watchdog.py` | 17 / 17 | Emergency diagnostics, authenticated restart handoff, stale-request cleanup, restart rate limiting |
 | `main.py` | 11 / 11 | Light-mode startup, palette/theme helpers, application icon, single-instance startup, watchdog replacement, window lifecycle, cleanup |
-| **Total** | **1,024 / 1,024** | All effective executable application callables |
+| `app/atr_memory.py` | 9 / 9 | Validated per-contract RTH estimates, expiry, optional persistence, session rollover |
+| `app/order_edit_policy.py` | 5 / 5 | Exact-cycle pending guards, working-order isolation, safe next-order boundaries |
+| **Total** | **1,038 / 1,038** | All effective executable application callables |
 
-The counts are a snapshot of v3.9.0. The gate recalculates them from the current source and coverage report on every full test run. Adding a callable without a test causes the callable-coverage step to fail.
+The counts are a snapshot of v4.0.0. The gate recalculates them from the current source and coverage report on every full test run. Adding a callable without a test causes the callable-coverage step to fail.
 
-The v3.9.0 source tree executed **1,211/1,211** collected pytest cases across all 126 test modules with `ResourceWarning` promoted to an error. Every test module also passed in a separate fresh pytest process. The run measured **78.1%** combined statement/branch coverage and entered **1,024/1,024** executable application callables. The release also killed **17/17** targeted safety mutants and passed **58/58** deterministic simulation contracts across 54 CSV price paths.
+The corrected v4.0.0 source tree passed **1,310/1,310** pytest cases across **130 test modules**, with `ResourceWarning` promoted to an error and no skipped or expected-failure cases. The complete suite ran in one fresh Python process; per-module process-isolated reruns were not repeated for this correction. The measured combined statement/branch coverage was **78.8%** (82.3% statements; 68.1% branches), and **1,038/1,038** executable application callables were entered. The release killed **17/17** safety mutants and passed **58/58** deterministic simulation contracts across 54 CSV paths. The four v4.0.0 modules contain **99 focused regression cases**, including **26 new ATR checkpoint-timing cases**. Ruff and Pyright could not run because their packages were unavailable; native Windows/PyInstaller, real Qt, and live IBKR validation remain unperformed.
 
 ## Test layers
 
@@ -203,3 +205,13 @@ The automated suite cannot prove:
 - profitability or suitability for live trading.
 
 Those limits are addressed through paper-account integration testing, audit inspection, and the manual test plan rather than by weakening the distinction between a deterministic fake and the external system.
+
+## v4.0.0 regression layer
+
+`test_v400_atr_memory_and_order_edits.py` covers first-session warmup, weekend/restart reuse, session and contract separation, corrupt/future/expired estimates, bounded persistence failures, live takeover, same-contract volatility-history preservation, and explicit next-order guard persistence/isolation. `test_v400_gui.py` checks amber LIVE status, retained error colors, removal of only the profit banner, risk-field/manual locks, saved ATR provenance, and non-selling dialog defaults. `test_v400_release.py` checks metadata, documentation layout, compatibility, and unchanged order/broker modules.
+
+Final v4.0.0 validation results are recorded in the root `IMPLEMENTATION_TEST_REPORT.txt` and the current release note. The measured figures above correspond to the final v4.0.0 test run.
+
+### v4.0.0 same-version ATR checkpoint saving correction
+
+`test_v400_atr_close_persistence.py` covers zero routine intraday writes, the exact five-minute boundary, one-minute closing-window writes, final-value flushing, stale/missing RTH status, identity edits, broker early-close/timezone handling, same-session and next-session restoration after an orderly app close, preservation of yesterday's persisted seed during today's trading, no re-dating of reused seeds, bounded failed-write retries, and the controller-to-SQLite close/restore path. Existing ATR calculation, quote-safety, order-editing, and GUI tests remain unchanged.

@@ -1,6 +1,6 @@
 # Limitations and non-goals
 
-This document states the boundaries of v3.9.0. Treat each limitation as an operational constraint, not as a future guarantee.
+This document states the boundaries of v4.0.0. Treat each limitation as an operational constraint, not as a future guarantee.
 
 ## Strategy scope
 
@@ -47,7 +47,7 @@ Use separate accounts or deliberate operating procedures when strict position se
 
 ## Contract, route, currency, and quantity limits
 
-- v3.9.0 supports only USD and EUR ordinary `STK` contracts selected from an exact IBKR API result. Other currencies and security types remain unsupported.
+- v4.0.0 supports only USD and EUR ordinary `STK` contracts selected from an exact IBKR API result. Other currencies and security types remain unsupported.
 - Order routing is `SMART` only. The primary exchange identifies the selected native listing; direct-routing workflows are not implemented.
 - “SMART supported” is capability-driven, not a guarantee for every listing or venue. BouncyBot requires the selected contract to advertise or accept SMART, `MKT`, `TRAIL`, market-rule pricing, whole-share quantity rules, and usable regular-session metadata. A missing capability blocks the contract.
 - Each portable SQLite database is single-currency. A zero-cycle draft can switch between USD and EUR, but the first persisted cycle locks the database. Mixed USD/EUR history and automatic FX conversion are not supported.
@@ -104,4 +104,12 @@ Use separate accounts or deliberate operating procedures when strict position se
 
 ## Multi-instance ownership boundary
 
-Multiple BouncyBot copies can share a Master API feed. v3.9.0 rejects attribution of any order or callback whose complete `OrderRef` is not already persisted locally. This prevents one installation from acting on another installation's app-prefixed order, but it also means a lost or replaced local database can require manual recovery instead of broad prefix-based discovery.
+Multiple BouncyBot copies can share a Master API feed. v4.0.0 rejects attribution of any order or callback whose complete `OrderRef` is not already persisted locally. This prevents one installation from acting on another installation's app-prefixed order, but it also means a lost or replaced local database can require manual recovery instead of broad prefix-based discovery.
+
+## Prior-session volatility estimates
+
+Starting in v4.0.0, a validated ready ATR estimate is checkpointed in the existing SQLite `app_settings` table for the exact confirmed contract, currency, venue, trading/data profile, ATR period, and bar duration. At a verified open RTH session, that estimate can supply the starting ATR/ATR% while current-session bars warm up. It does not insert synthetic observations or make a quote fresh. The first ready current-session calculation replaces it. The GUI identifies the saved session and today's observed bar count.
+
+The seed must be no more than seven calendar days old and must contain finite positive, internally consistent values observed inside its recorded RTH window. Weekends and short holidays can therefore reuse the most recent observed session; the application does not guess missing exchange sessions. First use, an expired/corrupt/mismatched checkpoint, or a changed ATR period/bar duration without a matching checkpoint retains normal warmup. v3.9.0 did not store these checkpoints, so the first v4.0.0 session needs enough observations once. A same-session application/watchdog restart can also reuse a valid checkpoint. Current market-data, opening-delay, RTH, gap, spread, two-observation SELL, and broker-reconciliation guards still apply. A saved estimate is not evidence that today's volatility is unchanged.
+
+ATR memory does not detect every corporate action or guarantee suitability of the previous estimate after an overnight event. Retain gap and quote guards and inspect the saved/current source indicator. Only observed sessions can be reused; no historical data request is added.

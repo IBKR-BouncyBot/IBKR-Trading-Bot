@@ -50,7 +50,7 @@ Strategy orders use `outsideRth=False`. New order placement requires the control
 
 The production adapter obtains date-specific regular-session ranges from the exact qualified contract's IBKR `liquidHours` and `timeZoneId`. For `LSE` and `LSEETF`, the effective range is the intersection of that broker window and the verified 08:00-16:30 `Europe/London` continuous session; this prevents timing-sensitive market orders from being scheduled in a later auction/post-continuous phase. An IBKR early close remains earlier and therefore still wins. The effective boundaries drive the first-minutes, last-minutes, pre-close BUY-cancellation, Stage-3/Stage-4 liquidation, and RTH-only ATR controls. The weekday 09:30-16:00 New York fallback is permitted only for a recognized U.S. primary exchange. A non-U.S. or unknown contract with missing or unusable session metadata fails closed; BouncyBot does not guess U.S. hours for an EUR listing.
 
-A configured BUY blocker is not a broker submission failure. Before an order intent exists, BouncyBot records `PreflightBlocked` and returns the cycle to Stage 1. The guard remains active on every evaluation, but v3.9.0 coalesces repeated audit rows per cycle while retaining stable blocker reason codes. Expected waits use INFO entry/15-minute summaries; hard risk, data, or broker blockers use an immediate WARN, a one-minute first WARN summary, and later WARN summaries at five-minute intervals. Recovery is recorded once when the blocker clears.
+A configured BUY blocker is not a broker submission failure. Before an order intent exists, BouncyBot records `PreflightBlocked` and returns the cycle to Stage 1. The guard remains active on every evaluation, but v4.0.0 coalesces repeated audit rows per cycle while retaining stable blocker reason codes. Expected waits use INFO entry/15-minute summaries; hard risk, data, or broker blockers use an immediate WARN, a one-minute first WARN summary, and later WARN summaries at five-minute intervals. Recovery is recorded once when the blocker clears.
 
 Native orders accepted by IBKR can remain working according to broker rules. The application’s RTH guard controls its own submissions/activation decisions, not the broker’s entire account.
 
@@ -209,3 +209,22 @@ Risk management includes the operator’s stop choice. “Stop” must be interp
 - stop locally without broker action.
 
 Stop, exit, and Reconciliation derive market-close quantity from the persisted application-owned fill ledger rather than account-wide holdings. Recovery never assumes that a missing local callback means an order did not execute. It compares open app orders and recent executions, supersedes an older point-in-time probe with a newer terminal poll for the same app order, and requires manual review when facts remain ambiguous.
+
+## Saved ATR is not market-data freshness
+
+Starting in v4.0.0, a validated ready ATR estimate is checkpointed in the existing SQLite `app_settings` table for the exact confirmed contract, currency, venue, trading/data profile, ATR period, and bar duration. At a verified open RTH session, that estimate can supply the starting ATR/ATR% while current-session bars warm up. It does not insert synthetic observations or make a quote fresh. The first ready current-session calculation replaces it. The GUI identifies the saved session and today's observed bar count.
+
+The seed must be no more than seven calendar days old and must contain finite positive, internally consistent values observed inside its recorded RTH window. Weekends and short holidays can therefore reuse the most recent observed session; the application does not guess missing exchange sessions. First use, an expired/corrupt/mismatched checkpoint, or a changed ATR period/bar duration without a matching checkpoint retains normal warmup. v3.9.0 did not store these checkpoints, so the first v4.0.0 session needs enough observations once. A same-session application/watchdog restart can also reuse a valid checkpoint. Current market-data, opening-delay, RTH, gap, spread, two-observation SELL, and broker-reconciliation guards still apply. A saved estimate is not evidence that today's volatility is unchanged.
+
+## Risk and Timing edits before the next order
+
+Reviewed guards can be edited during an active cycle. Edits are saved as explicit intent for the exact cycle/account/contract; an unrelated ticker draft cannot override an active or auto-repeat cycle. The manual input lock still prevents editing.
+
+| Settings | Earliest application |
+|---|---|
+| Spread limit, delayed-data block, stale-data guard, selected-price age, bid/ask age, RTH-status age | While waiting in Stage 1 before a new BUY, or Stage 3 before a new final SELL. Edits entered during Stage 2 wait for BUY settlement; edits entered during Stage 4 wait for the next cycle. |
+| ATR BUY-readiness block, hard-risk enable/limits, minimum trading price, previous-close gap, what-if check, recent-volatility enable/window/ceiling, session-timing enable, opening/closing BUY windows, BUY cancellation cutoff | Before the next BUY. A cycle already holding shares carries these edits to its next BUY/auto-repeat cycle. |
+| Contract/account, entry budget/reinvestment after entry, parameters embedded in working native orders | Existing stage restrictions remain. A draft edit does not resize, modify, cancel, replace, or reprice a working order. |
+| Optional close-before-RTH liquidation policy | Existing restrictions remain; Stage-4 changes that would change cancellation/liquidation of a working SELL stay locked. |
+
+A working Stage-2 BUY retains its original partial-fill, safety-cancellation, and cutoff policy. A working Stage-4 SELL also retains its submitted terms. Quote-guard changes clear any first Stage-3 confirmation, so the next SELL requires fresh confirmation under the revised policy. BUY-only edits cannot retrospectively alter an already purchased position. Previously saved edits survive an application restart; reverting an edit clears the pending override. No change is made to the default values or trading formulas.

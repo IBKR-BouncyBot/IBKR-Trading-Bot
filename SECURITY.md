@@ -2,7 +2,7 @@
 
 ## Supported version
 
-Security and correctness fixes are applied to the current repository version, v3.9.0. Older archived release notes do not define supported behavior.
+Security and correctness fixes are applied to the current repository version, v4.0.0. Older archived release notes do not define supported behavior.
 
 ## Reporting a vulnerability
 

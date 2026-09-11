@@ -2,9 +2,12 @@
 
 These files document superseded releases and implementation history. They are retained for traceability, but they may describe old labels, defaults, layouts, tests, or limitations.
 
-For current behavior, use the [project README](../../README.md), the [current documentation index](../README.md), the [changelog](../../CHANGELOG.md), and the current [`v3.9.0 release note`](../V3_9_0_AUDIT_DIAGNOSTIC_COALESCING.md).
+For current behavior, use the [project README](../../README.md), the [current documentation index](../README.md), the [changelog](../../CHANGELOG.md), and the current [`v4.0.0 release note`](../V4_0_0_ATR_SESSION_MEMORY_AND_ORDER_EDITING.md).
 
 ## Version 3 release notes
+
+- [`V3_9_0_AUDIT_DIAGNOSTIC_COALESCING.md`](V3_9_0_AUDIT_DIAGNOSTIC_COALESCING.md) - v3.9.0 audit coalescing and live guard diagnostics.
+- [`V3_9_0_IMPLEMENTATION_TEST_REPORT.txt`](V3_9_0_IMPLEMENTATION_TEST_REPORT.txt) - retained v3.9.0 implementation and verification report.
 
 - [`V3_8_0_BUY_PARTIAL_FILL_GRACE.md`](V3_8_0_BUY_PARTIAL_FILL_GRACE.md) — v3.8.0 three-second marketable-BUY partial-fill grace, timeout cancellation, immediate safety cancellation, and restart-safe first-fill timing.
 - [`V3_8_0_IMPLEMENTATION_TEST_REPORT.txt`](V3_8_0_IMPLEMENTATION_TEST_REPORT.txt) — retained v3.8.0 implementation and verification report.
