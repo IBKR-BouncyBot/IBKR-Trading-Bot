@@ -1,10 +1,10 @@
 # BouncyBot - an IBKR Portable Trading Bot 
 
 <p align="center">
-  <img src="Images/BouncyBot_app_icon.png" alt="BouncyBot logo" width="640" />
+  <img src="Images/BouncyBot_logo.png" alt="BouncyBot logo" width="640" />
 </p>
 
-**Current release: v3.9.0**
+**Current release: v4.0.0**
 
 ![Simple-view](Images/Trading-Simple-view.png)
 
@@ -171,6 +171,12 @@ ATR mode derives selected strategy percentages from application-observed, RTH-on
 ATR adaptation is enabled by default. Minimum profit is adapted by default; protective SELL adaptation is optional and off by default. New entries are blocked during ATR warmup by default.
 
 RTH observations and diagnostic ATR bars are collected even while adaptation is disabled. In that state the GUI can show warmup/readiness, but no strategy percentage is changed. Collection pauses outside RTH. The observation buffer is held in memory for the current application session and is reset when the process restarts; it is not a broker historical-bar cache.
+
+Starting in v4.0.0, a validated ready ATR estimate is checkpointed in the existing SQLite `app_settings` table for the exact confirmed contract, currency, venue, trading/data profile, ATR period, and bar duration. At a verified open RTH session, that estimate can supply the starting ATR/ATR% while current-session bars warm up. It does not insert synthetic observations or make a quote fresh. The first ready current-session calculation replaces it. The GUI identifies the saved session and today's observed bar count.
+
+ATR continues updating in memory throughout RTH. In the corrected v4.0.0 release, checkpoints are saved only in the **last five minutes of the broker-reported RTH window** (at most once per minute), with a final session-close flush and an **orderly app-close save**. The five minutes control saving, not the ATR lookback. There are no routine intraday checkpoint writes. Transient RTH-status loss and midday identity/configuration edits do not force a save. After a crash before the closing window, the last previously saved valid estimate is reused, not necessarily today's latest intraday value; first use still warms up if no valid checkpoint exists. Failed final saves retry at a bounded one-minute interval. Existing v4.0.0 checkpoints remain compatible.
+
+The seed must be no more than seven calendar days old and must contain finite positive, internally consistent values observed inside its recorded RTH window. Weekends and short holidays can therefore reuse the most recent observed session; the application does not guess missing exchange sessions. First use, an expired/corrupt/mismatched checkpoint, or a changed ATR period/bar duration without a matching checkpoint retains normal warmup. v3.9.0 did not store these checkpoints, so the first v4.0.0 session needs enough observations once. A same-session application/watchdog restart can also reuse a valid checkpoint. Current market-data, opening-delay, RTH, gap, spread, two-observation SELL, and broker-reconciliation guards still apply. A saved estimate is not evidence that today's volatility is unchanged.
 
 ### Gateway connectivity and quote freshness
 
@@ -473,7 +479,7 @@ dist\IBKRTradingBot\IBKRTradingBot.exe
 and creates the versioned release folder and final ZIP using the same naming pattern as IBKR Market Replay Lab:
 
 ```text
-release\IBKRTradingBot_3.9.0_Windows\
+release\IBKRTradingBot_4.0.0_Windows\
   BouncyBot.lnk
   GUI\IBKRTradingBot.exe
   docs\
@@ -483,7 +489,7 @@ release\IBKRTradingBot_3.9.0_Windows\
   SECURITY.md
   QUICK_START.txt
 
-release\IBKRTradingBot_3.9.0_Windows.zip
+release\IBKRTradingBot_4.0.0_Windows.zip
 release\SHA256SUMS.txt
 ```
 
@@ -556,7 +562,9 @@ Superseded release-specific documents are indexed under [docs/legacy](docs/legac
 
 ## Release history
 
-- [v3.9.0 release note](docs/V3_9_0_AUDIT_DIAGNOSTIC_COALESCING.md) — stable diagnostic reason codes, bounded condition summaries, recovery events, quieter reconnect/native-order waits, and live Stage-3 quote-evidence status in the Price Data Monitor.
+- [v4.0.0 release note](docs/V4_0_0_ATR_SESSION_MEMORY_AND_ORDER_EDITING.md) - persisted RTH ATR starting estimates, reviewed next-order risk edits, amber LIVE profile, and non-selling exit defaults.
+
+- [v3.9.0 release note](docs/legacy/V3_9_0_AUDIT_DIAGNOSTIC_COALESCING.md) — stable diagnostic reason codes, bounded condition summaries, recovery events, quieter reconnect/native-order waits, and live Stage-3 quote-evidence status in the Price Data Monitor.
 - [v3.8.0 release note](docs/legacy/V3_8_0_BUY_PARTIAL_FILL_GRACE.md) — three-second marketable-BUY partial-fill grace, timeout cancellation, immediate market/session safety cancellation, restart-safe timing, and focused regressions.
 - [v3.7.0 release note](docs/legacy/V3_7_0_FIELD_LEVEL_MARKET_DATA_AND_STAGE3_SELL_GUARD.md) — per-field bid/ask/Last freshness, two-quote executable-bid confirmation, Stage-3 spread enforcement, pre-submit revalidation, and stale-Last ATR exclusion.
 - [v3.6.0 release note](docs/legacy/V3_6_0_SELL_RECONCILIATION_AND_HISTORY_ROBUSTNESS.md) — exact aggregate final-SELL settlement, fail-closed quantity mismatches, numeric Trade History sorting, and operator-visible audit/export failures.

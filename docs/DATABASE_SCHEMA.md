@@ -213,3 +213,12 @@ Audit bundles can contain sensitive account, order, execution, and strategy info
 Completed-cycle history is read from `cycles` and enriched in memory with display/export metrics such as gross/net percentage, configured percentages, holding time summaries, win rate, completed drawdown, and loss streak.
 
 These derived metrics do not alter stored order/fill facts and are not account-wide performance figures.
+
+## v4.0.0 optional application-settings records
+
+v4.0.0 adds no table, column, or index and does not migrate existing cycle or order rows. Two optional key families use the existing `app_settings` JSON storage:
+
+- `atr_rth_seed_v1:<identity hash>`: version, exact contract/profile/ATR configuration, RTH boundaries, observation timestamp, and a validated ready ATR snapshot. Raw tick history is not persisted by this feature. Automatic writes occur at most once per minute only in the final five minutes of the broker-reported RTH window, plus a final recorded-session-close flush. Orderly application shutdown may save earlier. Midday identity/configuration edits or transient status loss do not force writes. Failed final saves retry no faster than once per minute; successful unchanged estimates are not repeatedly written overnight. The observed RTH timestamp is not advanced to the save time. The record format is unchanged by this same-version saving-policy correction.
+- `next_order_risk_edits_v1`: version, exact originating cycle ID/account/contract, and the reviewed guard values explicitly edited by the operator. Invalid or mismatched records are ignored; working order fields are not rewritten from this record.
+
+Normal SQLite backups include these records. Copy the existing database when upgrading; do not copy another running bot's database or share an active database between instances. v3.9.0 has no ATR seed to import, so the first valid v4.0.0 observation window still warms normally.

@@ -1,5 +1,20 @@
 # Changelog
 
+## v4.0.0
+
+### ATR, settings, and GUI
+
+- Same-version correction: retain the latest ready ATR in memory all day, but save checkpoints only during the final five minutes of the broker-reported RTH window (at most once per minute), at recorded session close, or on orderly app close. Do not force intraday saves on identity/configuration edits or transient RTH-status loss. Keep final-write retries bounded and preserve existing checkpoint compatibility.
+- Save validated ready RTH ATR estimates per confirmed contract/profile/period/bar duration, using them as starting values while the next session collects its own bars. Keep current quote, session, entry, and SELL validation unchanged. Reject malformed, mismatched, future, or over-seven-day checkpoints and fall back to normal warmup.
+- Permit reviewed Risk and Timing edits before the next eligible new order. Quote guards can update while waiting in Stage 3; BUY-only guards carry to the next BUY. Persist explicit cycle-scoped edit intent; do not modify working orders or their safety/cancellation policy.
+- Use amber for the LIVE Profile card; remove only the redundant green minimum-profit banner and retain the actual guard and graph.
+- Place non-selling exit/resume, stop-after, and Cancel choices before the optional market SELL. Make exit/resume bold and Cancel the focused default; retain separate market-SELL confirmation.
+- Preserve database schema, existing order/fill/recovery behavior, light-mode startup, and release layout. Archive the v3.9.0 note/report. See the [current release note](docs/V4_0_0_ATR_SESSION_MEMORY_AND_ORDER_EDITING.md) and implementation/test report for measured verification.
+
+### Measured verification
+
+The corrected v4.0.0 source tree passed **1,310/1,310** pytest cases across **130 test modules**, with `ResourceWarning` promoted to an error and no skipped or expected-failure cases. The complete suite ran in one fresh Python process; per-module process-isolated reruns were not repeated for this correction. The measured combined statement/branch coverage was **78.8%** (82.3% statements; 68.1% branches), and **1,038/1,038** executable application callables were entered. The release killed **17/17** safety mutants and passed **58/58** deterministic simulation contracts across 54 CSV paths. The four v4.0.0 modules contain **99 focused regression cases**, including **26 new ATR checkpoint-timing cases**. Ruff and Pyright could not run because their packages were unavailable; native Windows/PyInstaller, real Qt, and live IBKR validation remain unperformed.
+
 ## v3.9.0
 
 ### Audit diagnostic coalescing
@@ -22,7 +37,7 @@
 
 - Added focused regressions for changing-age Stage-3 messages, a 705-observation NBIS-style stale-ask sequence, GUI-only non-price callbacks, immediate near-trigger invalid evidence, native-order summary/anomaly cadence, reconnect aggregation/recovery, BUY-preflight condition recovery, and the Price Data Monitor guard display.
 - Final validation passed 1,211/1,211 pytest cases, all 126 test modules in fresh processes, 33 focused v3.9.0 tests, 78.1% combined statement/branch coverage, 1,024/1,024 callable-entry checks, 17/17 safety mutants, and 58/58 deterministic simulations across 54 CSV paths.
-- Added [`docs/V3_9_0_AUDIT_DIAGNOSTIC_COALESCING.md`](docs/V3_9_0_AUDIT_DIAGNOSTIC_COALESCING.md), archived the v3.8.0 release note/report, and updated application, build, documentation, and test metadata to v3.9.0.
+- Added [`docs/legacy/V3_9_0_AUDIT_DIAGNOSTIC_COALESCING.md`](docs/legacy/V3_9_0_AUDIT_DIAGNOSTIC_COALESCING.md), archived the v3.8.0 release note/report, and updated application, build, documentation, and test metadata to v3.9.0.
 
 ## v3.8.0
 

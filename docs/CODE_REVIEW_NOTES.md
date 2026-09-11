@@ -1,6 +1,6 @@
 # Maintainer review notes
 
-This file records the current review boundaries for v3.9.0. It is not a release changelog and should not be used instead of the behavioral guides.
+This file records the current review boundaries for v4.0.0. It is not a release changelog and should not be used instead of the behavioral guides.
 
 ## Source-of-truth order
 
@@ -97,7 +97,7 @@ When behavior changes:
 
 The public-repository documentation set:
 
-- keeps the application and package version at v3.9.0 for documentation-only revisions within this release;
+- keeps the application and package version at v4.0.0 for documentation-only revisions within this release;
 - keeps current operational material in `docs/` and superseded release notes in `docs/legacy/`;
 - treats SQLite files, backups, audit bundles, reports, captures, screenshots, and broker/account data as private unless deliberately sanitized;
 - uses the unmodified PolyForm Noncommercial License 1.0.0 text in the repository root;
@@ -106,3 +106,9 @@ The public-repository documentation set:
 - requires license terms to accompany redistributed copies as specified by the license.
 
 Documentation-only maintenance must not alter application runtime source, strategy rules, broker actions, storage schemas, or GUI behavior.
+
+## v4.0.0 review boundary
+
+`atr_memory.py` validates and checkpoints only volatility estimates. It cannot generate a price event or broker action. The controller keeps the established live ATR formula, excludes preceding-window bars from a fresh RTH calculation, and retains same-contract raw history for the separate recent-volatility guard. `order_edit_policy.py` defines a strict reviewed field allowlist and exact-cycle edit intent. Stage-2 and Stage-4 working-order policy is unchanged. Existing market-data selection, partial fills, order construction, ownership, reconciliation, and watchdog replacement code are retained.
+
+The optional ATR record falls back to ordinary warmup on validation/read failure. Write failures keep the live calculation available and produce non-throwing emergency diagnostics with bounded retry frequency. GUI changes do not remove the real minimum-profit guard. Native Windows appearance and a two-session paper-account test remain required outside this Linux/headless validation environment.

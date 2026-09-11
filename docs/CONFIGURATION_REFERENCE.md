@@ -1,6 +1,6 @@
 # Configuration reference
 
-This document describes the persisted connection and strategy settings in v3.9.0. Values shown as defaults are the dataclass defaults used for a new configuration. Saved SQLite settings override them after the first run.
+This document describes the persisted connection and strategy settings in v4.0.0. Values shown as defaults are the dataclass defaults used for a new configuration. Saved SQLite settings override them after the first run.
 
 ## Connection settings
 
@@ -91,6 +91,12 @@ With both ATR mode and the warmup blocker enabled:
 - a subsequent update is required before the ATR-derived drop can trigger entry.
 
 If the warmup blocker is off, the strategy can use the currently configured percentages before ATR becomes ready.
+
+### Saved RTH ATR starting estimate
+
+Starting in v4.0.0, a validated ready ATR estimate is checkpointed in the existing SQLite `app_settings` table for the exact confirmed contract, currency, venue, trading/data profile, ATR period, and bar duration. At a verified open RTH session, that estimate can supply the starting ATR/ATR% while current-session bars warm up. It does not insert synthetic observations or make a quote fresh. The first ready current-session calculation replaces it. The GUI identifies the saved session and today's observed bar count.
+
+The seed must be no more than seven calendar days old and must contain finite positive, internally consistent values observed inside its recorded RTH window. Weekends and short holidays can therefore reuse the most recent observed session; the application does not guess missing exchange sessions. First use, an expired/corrupt/mismatched checkpoint, or a changed ATR period/bar duration without a matching checkpoint retains normal warmup. v3.9.0 did not store these checkpoints, so the first v4.0.0 session needs enough observations once. A same-session application/watchdog restart can also reuse a valid checkpoint. Current market-data, opening-delay, RTH, gap, spread, two-observation SELL, and broker-reconciliation guards still apply. A saved estimate is not evidence that today's volatility is unchanged.
 
 ## Protective SELL
 
@@ -196,3 +202,16 @@ The active `CycleState` stores a snapshot of settings and operational state, inc
 - recovery-required, requested-market-close, close-before-RTH cancellation/liquidation, stop-after-cycle, and error state.
 
 These fields are persisted for restart/recovery. They are not all editable from the GUI.
+
+## Risk and Timing edits before the next order
+
+Reviewed guards can be edited during an active cycle. Edits are saved as explicit intent for the exact cycle/account/contract; an unrelated ticker draft cannot override an active or auto-repeat cycle. The manual input lock still prevents editing.
+
+| Settings | Earliest application |
+|---|---|
+| Spread limit, delayed-data block, stale-data guard, selected-price age, bid/ask age, RTH-status age | While waiting in Stage 1 before a new BUY, or Stage 3 before a new final SELL. Edits entered during Stage 2 wait for BUY settlement; edits entered during Stage 4 wait for the next cycle. |
+| ATR BUY-readiness block, hard-risk enable/limits, minimum trading price, previous-close gap, what-if check, recent-volatility enable/window/ceiling, session-timing enable, opening/closing BUY windows, BUY cancellation cutoff | Before the next BUY. A cycle already holding shares carries these edits to its next BUY/auto-repeat cycle. |
+| Contract/account, entry budget/reinvestment after entry, parameters embedded in working native orders | Existing stage restrictions remain. A draft edit does not resize, modify, cancel, replace, or reprice a working order. |
+| Optional close-before-RTH liquidation policy | Existing restrictions remain; Stage-4 changes that would change cancellation/liquidation of a working SELL stay locked. |
+
+A working Stage-2 BUY retains its original partial-fill, safety-cancellation, and cutoff policy. A working Stage-4 SELL also retains its submitted terms. Quote-guard changes clear any first Stage-3 confirmation, so the next SELL requires fresh confirmation under the revised policy. BUY-only edits cannot retrospectively alter an already purchased position. Previously saved edits survive an application restart; reverting an edit clears the pending override. No change is made to the default values or trading formulas.

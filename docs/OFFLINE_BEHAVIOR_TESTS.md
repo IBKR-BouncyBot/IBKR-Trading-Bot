@@ -1,6 +1,6 @@
 # Deterministic offline behavior tests
 
-This document describes the current non-GUI, non-Windows, non-network test layer in v3.9.0. It covers strategy behavior, controller state transitions, audit diagnostic coalescing, BUY partial-fill grace/timeout safety, broker-event handling, persistence and recovery, shutdown checkpoints, GUI contracts, and bounded performance behavior.
+This document describes the current non-GUI, non-Windows, non-network test layer in v4.0.0. It covers strategy behavior, controller state transitions, audit diagnostic coalescing, BUY partial-fill grace/timeout safety, broker-event handling, persistence and recovery, shutdown checkpoints, GUI contracts, and bounded performance behavior.
 
 The suite deliberately avoids:
 
@@ -156,7 +156,7 @@ The complete Windows launcher runs the deterministic layers in this order:
 
 The Unix `scripts/run_tests.sh` helper still separates non-soak coverage from the soak subset to keep that development-host command practical.
 
-The v3.9.0 source tree executed **1,211/1,211** collected pytest cases across all 126 test modules with `ResourceWarning` promoted to an error. Every test module also passed in a separate fresh pytest process. The run measured **78.1%** combined statement/branch coverage and entered **1,024/1,024** executable application callables. The release also killed **17/17** targeted safety mutants and passed **58/58** deterministic simulation contracts across 54 CSV price paths. The three former strict expected failures remain ordinary passing regressions.
+The v4.0.0 source tree passed **1,284/1,284** pytest cases across **129 test modules**, with `ResourceWarning` promoted to an error. All 129 modules also passed individually in fresh Python processes. The measured combined statement/branch coverage was **78.8%** (82.3% statements; 68.1% branches), and **1,038/1,038** executable application callables were entered. The release killed **17/17** safety mutants and passed **58/58** deterministic simulation contracts across 54 CSV paths. The three new v4.0.0 modules contain **73 focused regression cases**. Ruff, Pyright, native Windows/PyInstaller, and live IBKR testing were not available in this environment.
 
 The CSV matrix itself passes cleanly in the offline Linux environment. The full Windows launcher remains the authoritative combined run for Coverage.py, Ruff, Pyright, and native launcher behavior.
 
@@ -173,3 +173,9 @@ The following still require separate environments and are intentionally not part
 - hardware-specific latency, CPU, memory, and endurance qualification.
 
 Use [`TEST_PLAN.md`](TEST_PLAN.md) for those manual and integration checks.
+
+## v4.0.0 regression layer
+
+`test_v400_atr_memory_and_order_edits.py` covers first-session warmup, weekend/restart reuse, session and contract separation, corrupt/future/expired estimates, bounded persistence failures, live takeover, same-contract volatility-history preservation, and explicit next-order guard persistence/isolation. `test_v400_gui.py` checks amber LIVE status, retained error colors, removal of only the profit banner, risk-field/manual locks, saved ATR provenance, and non-selling dialog defaults. `test_v400_release.py` checks metadata, documentation layout, compatibility, and unchanged order/broker modules.
+
+Final v4.0.0 validation results are recorded in the root `IMPLEMENTATION_TEST_REPORT.txt` and the current release note. The measured figures above correspond to the final v4.0.0 test run.

@@ -57,7 +57,7 @@ For `LSE` and `LSEETF`, the Live Strategy RTH status should show an effective cl
 
 ## The bot keeps reconnecting every 10 seconds
 
-After an established local API socket is lost, v3.9.0 retries the saved TWS/Gateway endpoint every 10 seconds without a retry limit. This is expected. Start or log into the selected platform, correct the host/port/client ID, or click **Disconnect** to stop the attempts. Application shutdown also stops them.
+After an established local API socket is lost, v4.0.0 retries the saved TWS/Gateway endpoint every 10 seconds without a retry limit. This is expected. Start or log into the selected platform, correct the host/port/client ID, or click **Disconnect** to stop the attempts. Application shutdown also stops them.
 
 A local reconnect is not enough for trading: the upstream IBKR link, broker reconciliation, exact contract, and a new actual market-data event must recover before strategy processing resumes.
 
@@ -79,12 +79,12 @@ Hover the **Trading** box. It lists all currently evaluated blockers, not only t
 
 A blocker is usually intentional. Do not disable it solely to make the status green; verify the underlying data and operating assumption. A normal guard pause is not a recovery fault, so the Reconciliation tab intentionally disables Reconcile and resume and other broker/local-state-changing buttons while leaving Refresh from IBKR/TWS and audit export available.
 
-When no live order was attempted, the cycle status should read `PreflightBlocked`, not `SubmitFailed`. v3.9.0 coalesces a persistent blocker by stable category. Expected waits such as RTH closed, ATR warmup, or session timing start as INFO and summarize after 15 minutes and then every 15 minutes. Hard risk/data/broker blockers start as WARN, summarize after one minute and then every five minutes. Recovery is recorded once when the condition clears. The guard is still evaluated and enforced on every strategy cadence; fewer audit rows do not mean the blocker stopped running.
+When no live order was attempted, the cycle status should read `PreflightBlocked`, not `SubmitFailed`. v4.0.0 coalesces a persistent blocker by stable category. Expected waits such as RTH closed, ATR warmup, or session timing start as INFO and summarize after 15 minutes and then every 15 minutes. Hard risk/data/broker blockers start as WARN, summarize after one minute and then every five minutes. Recovery is recorded once when the condition clears. The guard is still evaluated and enforced on every strategy cadence; fewer audit rows do not mean the blocker stopped running.
 
 
 ## The audit log no longer repeats the same warning every few seconds
 
-This is intentional in v3.9.0. Persistent Stage-3 quote-evidence, reconnect, BUY-preflight, close-before-RTH, and native trailing-order wait states are represented as one active diagnostic condition rather than one SQLite row per controller cadence. The condition entry, bounded persistence summaries, and recovery event retain structured occurrence counts, reason counts, duration, latest context, and observed maximum values.
+This is intentional in v4.0.0. Persistent Stage-3 quote-evidence, reconnect, BUY-preflight, close-before-RTH, and native trailing-order wait states are represented as one active diagnostic condition rather than one SQLite row per controller cadence. The condition entry, bounded persistence summaries, and recovery event retain structured occurrence counts, reason counts, duration, latest context, and observed maximum values.
 
 The current Stage-3 quote reason remains visible in the Price Data Monitor even when no new audit row is written. A normal complete quote whose executable bid is below the profit trigger is ordinary waiting and does not generate repeated warnings. Cached/non-price callbacks also remain GUI-only. Invalid evidence near or above the trigger, invalidation after the first SELL confirmation, broker order failures, quantity mismatches, worker/storage faults, reconciliation uncertainty, and final pre-submit revalidation failures remain immediate.
 
@@ -92,7 +92,7 @@ After a process restart, in-memory coalescing state starts again. A still-active
 
 ## A BUY becomes Inactive or Rejected
 
-Open the Live Strategy event list or the Cycle Audit broker/decision events and locate the retained IBKR error code and message. In v3.9.0 a definitive no-fill rejection moves the cycle to `ERROR` and does not automatically retry. This is intentional; restarting the same invalid request can produce repeated broker rejections.
+Open the Live Strategy event list or the Cycle Audit broker/decision events and locate the retained IBKR error code and message. In v4.0.0 a definitive no-fill rejection moves the cycle to `ERROR` and does not automatically retry. This is intentional; restarting the same invalid request can produce repeated broker rejections.
 
 For `Invalid Price`, minimum-variation, or invalid-stop errors:
 
@@ -134,7 +134,7 @@ ATR will not warm up from time while the application is closed, from pre/post-ma
 - the selected-price basis update timestamp advances; a size/timestamp callback or unchanged cached Last is not an ATR observation;
 - the ATR period and bar duration are not set unnecessarily high.
 
-When the warmup blocker is enabled, the initial-drop trigger remains unset until readiness. The readiness update creates a new anchor and cannot itself trigger a BUY. Observation/bar collection continues when adaptation is off, but the in-memory history resets whenever the application restarts and pauses outside RTH.
+When the warmup blocker is enabled, the initial-drop trigger remains unset until readiness. The readiness update creates a new anchor and cannot itself trigger a BUY. Observation/bar collection continues when adaptation is off, but raw in-memory history resets whenever the application restarts and pauses outside RTH. A valid v4.0.0 saved RTH estimate can supply readiness during the new warmup. Check the saved-session timestamp, contract/profile, period/bar duration, and seven-day age limit when no starting estimate is used. Missing or rejected checkpoints fall back to ordinary warmup; checkpoint I/O errors are reported through the emergency diagnostic log.
 
 ## An external long position exists, but the app still allows a BUY
 
@@ -220,7 +220,7 @@ Some stop actions wait for broker cancellation status before submitting a replac
 
 ## The GUI is responsive, but price age or RTH appears frozen
 
-This indicates that the Qt interface may still be running while the controller worker has stopped delivering snapshots. v3.9.0 treats the snapshot stream as a separate health signal:
+This indicates that the Qt interface may still be running while the controller worker has stopped delivering snapshots. v4.0.0 treats the snapshot stream as a separate health signal:
 
 - after 3 seconds the GUI reports **Worker delayed**;
 - after 15 seconds it reports **Worker unresponsive**, invalidates cached connection/data/RTH indicators, and keeps increasing the displayed data age;
@@ -264,7 +264,7 @@ The common `IBKRBOT|` prefix is not sufficient ownership proof. This installatio
 
 ## The displayed price crossed the Stage-3 trigger, but no final SELL was armed
 
-v3.9.0 deliberately does not arm the normal final SELL from Last, midpoint, mark, close, or `marketPrice` alone. Check the Price data monitor and Cycle Audit for the exact blocker:
+v4.0.0 deliberately does not arm the normal final SELL from Last, midpoint, mark, close, or `marketPrice` alone. Check the Price data monitor and Cycle Audit for the exact blocker:
 
 - one bid/ask side is missing, crossed, or older than **Maximum bid/ask age**;
 - the current spread exceeds **Maximum spread**;

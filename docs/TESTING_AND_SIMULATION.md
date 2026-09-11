@@ -182,7 +182,7 @@ The callable gate proves entry, not exhaustive path coverage. Assertions, branch
 
 The non-GUI offline expansion adds broker callback permutations, generated controller invariants, numerical/payload properties, recovery decision matrices, differential simulation, multi-instance isolation, subprocess crash/restart tests, schema migration and restore fixtures, sanitized production-incident replays, storage fault injection, Gateway outage sequences, bounded soak tests, and a seventeen-mutant safety gate. The complete scope and exclusions are in [`OFFLINE_BEHAVIOR_TESTS.md`](OFFLINE_BEHAVIOR_TESTS.md). The incident-derived layer is documented in [`PRODUCTION_INCIDENT_REPLAY_TESTS.md`](PRODUCTION_INCIDENT_REPLAY_TESTS.md).
 
-The v3.9.0 source tree executed **1,211/1,211** collected pytest cases across all 126 test modules with `ResourceWarning` promoted to an error. Every test module also passed in a separate fresh pytest process. The run measured **78.1%** combined statement/branch coverage and entered **1,024/1,024** executable application callables. The release also killed **17/17** targeted safety mutants and passed **58/58** deterministic simulation contracts across 54 CSV price paths. All three former strict expected-failure sentinels are ordinary passing regressions; no known-gap xfail is retained for these behaviors.
+The v4.0.0 source tree passed **1,284/1,284** pytest cases across **129 test modules**, with `ResourceWarning` promoted to an error. All 129 modules also passed individually in fresh Python processes. The measured combined statement/branch coverage was **78.8%** (82.3% statements; 68.1% branches), and **1,038/1,038** executable application callables were entered. The release killed **17/17** safety mutants and passed **58/58** deterministic simulation contracts across 54 CSV paths. The three new v4.0.0 modules contain **73 focused regression cases**. Ruff, Pyright, native Windows/PyInstaller, and live IBKR testing were not available in this environment.
 
 ### Build-script tests
 
@@ -250,3 +250,9 @@ A successful build requires both a zero PyInstaller exit code and the expected e
 ## Live integration testing
 
 Automated tests cannot prove end-to-end broker behavior. Before live deployment, execute the manual plan in [`TEST_PLAN.md`](TEST_PLAN.md), beginning with an IBKR paper account and observing actual TWS/Gateway order fields, fills, cancellations, and recovery.
+
+## v4.0.0 regression layer
+
+`test_v400_atr_memory_and_order_edits.py` covers first-session warmup, weekend/restart reuse, session and contract separation, corrupt/future/expired estimates, bounded persistence failures, live takeover, same-contract volatility-history preservation, and explicit next-order guard persistence/isolation. `test_v400_gui.py` checks amber LIVE status, retained error colors, removal of only the profit banner, risk-field/manual locks, saved ATR provenance, and non-selling dialog defaults. `test_v400_release.py` checks metadata, documentation layout, compatibility, and unchanged order/broker modules.
+
+Final v4.0.0 validation results are recorded in the root `IMPLEMENTATION_TEST_REPORT.txt` and the current release note. The measured figures above correspond to the final v4.0.0 test run.

@@ -1,0 +1,11 @@
+﻿BouncyBot - IBKR Portable Trading Bot 4.0.0
+
+Start the application:
+  Double-click BouncyBot.lnk in this folder.
+  Direct executable: GUI\IBKRTradingBot.exe
+
+Keep the complete GUI folder together. Do not copy only the executable.
+The release folder must be writable because the SQLite database and generated
+runtime folders are created beside the executable.
+
+Use an IBKR paper account for initial validation before live trading.
