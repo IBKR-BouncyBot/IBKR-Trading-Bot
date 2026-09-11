@@ -1,0 +1,8 @@
+time,price,note
+09:30:00,100.00,initial anchor
+09:31:00,104.00,anchor resets upward
+09:32:00,108.00,anchor resets upward again
+09:33:00,107.00,no order yet
+09:34:00,102.60,drop threshold reached from updated anchor
+09:35:00,101.00,buy trail follows down
+09:36:00,103.02,buy trail triggers

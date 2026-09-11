@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "incident_id": "vwra_lse_continuous_close_mismatch_20260724",
+  "title": "IBKR liquidHours extended twenty minutes beyond the LSE continuous session",
+  "sanitized": true,
+  "source_evidence": [
+    {
+      "kind": "audit_bundle",
+      "sha256": "217aa5cda96a7afa9035c7f0bf8a078eb97c83cb729f04d8e0da54605bdff8f8"
+    }
+  ],
+  "contract": {
+    "ticker": "VWRA",
+    "con_id": 375855577,
+    "sec_type": "STK",
+    "exchange": "SMART",
+    "primary_exchange": "LSEETF",
+    "currency": "USD",
+    "ibkr_time_zone": "MET",
+    "ibkr_liquid_hours": "20260724:0900-20260724:1750"
+  },
+  "independent_session_oracle": {
+    "time_zone": "Europe/London",
+    "continuous_open_local": "2026-07-24T08:00:00+01:00",
+    "continuous_close_local": "2026-07-24T16:30:00+01:00",
+    "continuous_close_utc": "2026-07-24T15:30:00+00:00"
+  },
+  "observed_workflow": {
+    "stage4_submitted_utc": "2026-07-24T15:28:08+00:00",
+    "close_workflow_started_utc": "2026-07-24T15:45:00+00:00",
+    "replacement_market_sell_submitted_utc": "2026-07-24T15:45:01+00:00",
+    "ibkr_liquid_close_utc": "2026-07-24T15:50:00+00:00",
+    "replacement_status": "Cancelled",
+    "replacement_filled": 0,
+    "shares_remaining": 53,
+    "terminal_stage": "ERROR"
+  },
+  "expected": {
+    "liquid_close_minus_continuous_close_minutes": 20,
+    "replacement_was_after_continuous_close": true,
+    "continuous_market_order_should_be_submitted_after_close": false
+  }
+}

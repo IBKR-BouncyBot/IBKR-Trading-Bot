@@ -1,0 +1,178 @@
+IBKR Trading Bot 3.0.18 - Event-Driven Cadences Implementation and Test Report
+Date: 2026-07-18
+
+SCOPE
+-----
+Implemented the requested performance changes:
+
+1. Replaced the fixed one-second controller-loop delay.
+2. Removed the unconditional 250 ms market-price wait.
+3. Separated broker, strategy, GUI, database-snapshot, and maintenance work onto independent monotonic cadences.
+4. Released the behavior-changing work as v3.0.18 rather than leaving it under v3.0.17 metadata.
+
+IMPLEMENTATION
+--------------
+Controller scheduling
+- The worker no longer calls time.sleep(1.0).
+- Queue.get(timeout=...) provides an interruptible wait: GUI commands wake the worker immediately.
+- Independent default cadences are:
+  - broker callbacks/connectivity: 0.05 seconds
+  - strategy evaluation/order polling: 0.10 seconds
+  - GUI snapshots: 0.50 seconds
+  - read-heavy database snapshot data: 1.00 second
+  - maintenance scheduling: 1.00 second
+- The next wait is calculated from the earliest monotonic deadline and capped by MAX_IDLE_WAIT_SECONDS.
+- Broker callbacks and connectivity are processed before strategy evaluation.
+- A failed/unready broker cycle prevents the associated strategy cycle.
+- Command bursts are bounded so periodic responsibilities regain control.
+- Shutdown checks the stop event immediately after queue wake and does not execute an older queued broker command after shutdown begins.
+
+Market data
+- The initial subscription snapshot is inspected before any wait.
+- Scheduled strategy reads use timeout=0 and return cached subscription state without sleeping.
+- Explicit operations that intentionally allow a positive timeout wait only while data is absent, in slices no larger than 50 ms.
+- Changing the TWS market-data type no longer inserts an unconditional 250 ms sleep.
+- Nonblocking auto-mode reads use the currently selected/cached concrete mode and do not synchronously qualify new contract variants.
+
+Order polling
+- Periodic cached order polling no longer sleeps for 100 ms.
+- A cache miss may request an open-order refresh, but the periodic path waits for later broker callbacks rather than blocking the strategy cadence.
+- Explicit recovery/cancel/open-order operations retain bounded waits where synchronous confirmation is part of the operator action.
+
+Database and maintenance separation
+- GUI snapshots consume a database snapshot cache refreshed on the database cadence.
+- Recent events, history summaries, and GUI-only risk/position facts are no longer reread on every GUI render.
+- Critical persistence remains synchronous: order intent, order identifiers, fills, cancellations, state transitions, reconciliation, recovery, and shutdown checkpoints were not moved behind a delayed cache.
+- Final BUY authorization and risk preflight continue to query live SQLite state; cached GUI facts cannot authorize an order.
+- Human-readable debug-report writing and stale-cycle housekeeping are owned by the maintenance cadence rather than GUI rendering.
+
+THREADING AND SAFETY BOUNDARY
+-----------------------------
+- Broker callbacks, commands, strategy evaluation, and critical persistence remain serialized on the existing single worker thread.
+- No parallel access to the broker adapter was introduced.
+- Connectivity callbacks are pumped before command dispatch to preserve fail-closed submission behavior.
+- The GUI/database cache affects display work only, not live order authorization.
+
+Release metadata
+- GUI title and built-in example-data text: v3.0.18.
+- Python package metadata: 3.0.18.
+- Windows release-builder metadata: 3.0.18.
+- Current documentation and regression assertions: v3.0.18.
+- The v3.0.17 release note is retained under docs/legacy/ rather than overwritten.
+
+AUTOMATED VERIFICATION
+----------------------
+Focused changed-area run
+Command:
+  python3 -X utf8 -W error::ResourceWarning -m pytest -q --tb=short -ra \
+    tests/test_v3018_event_driven_release.py \
+    tests/test_v3017_flowchart_history_selector_modes.py \
+    tests/test_v121_gui_static.py \
+    tests/test_event_driven_cadences.py \
+    tests/test_comprehensive_ib_adapter.py \
+    tests/test_v226_reliability_performance.py \
+    tests/test_storage_fault_injection_and_retention.py
+Result:
+  79 passed in 2.30 seconds
+
+Complete unfiltered pytest collection
+Command:
+  python3 -X utf8 -W error::ResourceWarning -m pytest -q --tb=short -ra
+Result:
+  827 passed, 1 expected xfail, 0 failures in 30.81 seconds
+  ResourceWarning was promoted to an error; the run completed cleanly.
+
+Expected xfail
+- tests/test_multi_instance_isolation.py::test_master_style_foreign_event_is_not_attributed_to_the_active_cycle
+- Existing documented limitation: Master-client feeds share the IBKRBOT prefix and do not encode installation-specific ownership.
+
+Repository verification gate
+Command:
+  ./scripts/run_tests.sh
+Exit status:
+  0
+Results:
+- Non-soak: 822 passed, 1 expected xfail, 5 deselected in 33.87 seconds
+- Bounded soak: 5 passed, 823 deselected in 1.99 seconds
+- Combined statement/branch coverage: 76.3% (75% minimum passed)
+- Executable application callable entry: 822/822
+- Safety mutation smoke: 6/6 mutants killed
+- Deterministic CSV simulations: 58/58 contracts passed across 54 price-path files
+
+Static verification
+- git diff --check: passed
+- python3 -m compileall -q app tests scripts main.py: passed
+- AST parsing of every changed Python file: passed
+- Newly introduced duplicate definitions: 0
+- Fixed-delay source audit: no app time.sleep(1.0)
+- Market-data source audit: no fixed self.ib.sleep(0.25) in the price or market-data-mode path; bounded 50 ms slices are used for explicit positive waits
+
+Test environment
+- Python 3.13.5
+- Linux x86_64, headless Qt test mode
+
+QUALITY-TOOL LIMITATION
+-----------------------
+Ruff and Pyright were not installed in the offline execution environment; direct module checks reported both as unavailable. Therefore, this report does not claim that the Windows-required Ruff/Pyright stage passed.
+
+EXTERNAL INTEGRATION LIMITS
+---------------------------
+The automated verification does not replace:
+- a native Windows PyInstaller build and launch test;
+- real PySide6 rendering/DPI interaction checks;
+- a live TWS or IB Gateway session;
+- paper-account order lifecycle testing;
+- real market-data entitlement, pacing, reconnect, fill, and exchange-latency testing.
+
+The suite executed 100% of the repository's 828 collected pytest cases, with one pre-existing strict expected failure. This is not a claim of 100% statement, branch, timing-interleaving, or external-system coverage. Measured combined statement/branch coverage is 76.3%, and all 822 effective executable application callables were entered.
+
+CHANGED FILES
+-------------
+Runtime and scheduling
+- app/controller.py
+- app/ib_adapter.py
+- app/gui.py (v3.0.18 runtime title/example metadata)
+
+Release and build metadata
+- pyproject.toml
+- scripts/build_windows.ps1
+- README.md
+- CHANGELOG.md
+- SECURITY.md
+
+Current and historical documentation
+- docs/ARCHITECTURE.md
+- docs/AUTOMATED_TEST_COVERAGE.md
+- docs/CODE_REVIEW_NOTES.md
+- docs/CONFIGURATION_REFERENCE.md
+- docs/CSV_SIMULATION_SCENARIO_MATRIX.md
+- docs/LIMITATIONS.md
+- docs/OFFLINE_BEHAVIOR_TESTS.md
+- docs/OPERATIONS.md
+- docs/README.md
+- docs/STRATEGY_RULES.md
+- docs/TESTING_AND_SIMULATION.md
+- docs/V3_0_18_EVENT_DRIVEN_CADENCES.md (new)
+- docs/V3_0_17_FLOWCHART_HISTORY_SELECTOR.md moved to docs/legacy/
+- docs/legacy/README.md
+
+Tests
+- tests/test_event_driven_cadences.py (new)
+- tests/test_v3018_event_driven_release.py (new)
+- tests/test_comprehensive_ib_adapter.py
+- tests/test_storage_fault_injection_and_retention.py
+- tests/test_v226_reliability_performance.py
+- existing release-metadata regression tests updated from v3.0.17 to v3.0.18
+
+Report
+- IMPLEMENTATION_TEST_REPORT.txt (new)
+
+DELIVERABLE VERIFICATION
+------------------------
+- The final unified patch passed git diff --check and git apply --check against a fresh extraction of the original v3.0.17 ZIP.
+- After applying the patch, the reconstructed tree matched the staged v3.0.18 source byte-for-byte.
+- The patch contains 48 tracked change entries: 43 modified files, 4 added files, and 1 exact rename into docs/legacy/.
+- ZIP integrity passed with no compressed-data errors.
+- Manifest comparison: the original archive contained 271 files; the v3.0.18 archive contains 275. The v3.0.17 release note is retained byte-for-byte at its archived path, and the four net additions are IMPLEMENTATION_TEST_REPORT.txt, docs/V3_0_18_EVENT_DRIVEN_CADENCES.md, tests/test_event_driven_cadences.py, and tests/test_v3018_event_driven_release.py.
+- Exclusion audit: no .git metadata, Coverage.py data, pytest cache, debug captures, __pycache__, .pyc, or .pyo files are included.
+- A clean extraction of the code and test payload contained in the final archive passed all 828 collected pytest cases: 827 passed, 1 expected xfail, and 0 failures in 30.11 seconds. The report was finalized afterward without changing executable, application, documentation, or test source files.

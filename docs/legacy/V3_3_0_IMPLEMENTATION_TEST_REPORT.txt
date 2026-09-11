@@ -1,0 +1,199 @@
+BouncyBot - IBKR Portable Trading Bot v3.3.0
+Worker watchdog, fail-closed storage recovery, and unattended restart report
+Release date: 2026-07-27
+
+LINEAGE AND VERSION
+===================
+
+This corrective release remains version 3.3.0. It is based on the corrected
+v3.3.0 source tree that was produced from the user-supplied v3.2.2 archive, so
+the user's local documentation changes and all earlier v3.3.0 dark-mode, About,
+audit-layout, and Windows-release corrections remain present.
+
+The version was deliberately not increased, as requested.
+
+CORRECTIVE FAILURE ADDRESSED
+============================
+
+The incident audit showed a responsive Qt GUI displaying a frozen controller
+snapshot. The selected price, 27.4-second market-data age, connection state, and
+RTH calculation all stopped advancing because the single controller worker had
+stopped making progress. Evidence placed the failure boundary around the cycle
+SQLite write/error-reporting path, but the old build did not preserve a worker
+traceback or stack that could distinguish a blocked call from an escaping second
+exception.
+
+IMPLEMENTED CHANGES
+===================
+
+1. Non-throwing emergency diagnostics
+
+- Controller event logging can no longer terminate the worker when SQLite event
+  persistence fails.
+- SQLite and Qt-signal failures are isolated from each other.
+- Final fallback diagnostics are appended to
+  debug_reports/worker_emergency.log without using SQLite.
+- An outer BaseException boundary records unexpected worker termination and the
+  operation that was in progress.
+
+2. Fail-closed SQLite fault handling
+
+- A sqlite3.Error activates an in-memory storage-fault state rather than being
+  handled as an ordinary strategy exception.
+- Strategy evaluation and every broker-changing action are blocked while the
+  fault is active.
+- The worker continues servicing the IBKR transport and, while still healthy,
+  continues emitting health snapshots.
+- A separate short-timeout BEGIN IMMEDIATE transaction performs an actual DDL
+  and insert, then rolls the transaction back. No probe table, row, index, or
+  schema migration remains after a successful probe.
+- A healthy worker is restarted only after the write probe proves that SQLite
+  is writable again. A dead or hard-stalled worker takes precedence and may be
+  replaced even when the last snapshot reported a storage fault.
+
+3. Persist-before-publish transition ordering
+
+- Market-driven Stage 1 and Stage 3 transitions that can produce a broker action
+  are persisted before the next cycle is published in memory or its action is
+  executed.
+- A failed persistence attempt retains the previous authoritative in-memory
+  cycle and submits no corresponding broker action.
+
+4. Independent GUI watchdog
+
+- The Qt main thread checks controller snapshot delivery once per second.
+- More than 3 seconds without a snapshot produces a Worker delayed state.
+- More than 15 seconds produces a red Worker unresponsive state.
+- At 30 seconds, or when the worker thread is confirmed dead after startup, the
+  watchdog requests complete process replacement.
+- Cached green connection/live states are overridden, RTH becomes Unknown, and
+  displayed market-data age continues increasing independently.
+- Broker-dependent controls are disabled; audit export and application close
+  remain available.
+
+5. Safe full-process automatic restart
+
+- BouncyBot never creates a second controller worker or overlapping trading
+  process.
+- Qt exits with an internal watchdog code, controller shutdown is bounded, the
+  portable single-instance lock is released, and os.execv replaces the complete
+  source or frozen process.
+- A private random one-time token and short-lived handoff file authorize only
+  the immediate replacement. The handoff is consumed and deleted before the
+  replacement worker starts.
+- Tokens are redacted from emergency diagnostics and audit bundles. Handoff and
+  restart-history files are atomically written and use owner-only POSIX mode
+  where the platform supports it.
+- If Qt exit, handoff creation, restart-history persistence, or exec replacement
+  fails, no fallback process is launched. The app remains fail-closed and writes
+  an emergency diagnostic.
+
+6. Exact-cycle automatic continuation
+
+- Ordinary application launches remain manual and still require Start for a
+  stored active cycle.
+- Automatic continuation is available only to the authenticated immediate
+  replacement of a process whose final snapshot proved that an exact Stage 1-4
+  cycle was already being monitored without an existing startup or recovery
+  requirement.
+- The replacement re-reads SQLite and requires the exact cycle ID, stage, ticker,
+  conId, stored order references, broker-relevant recovery signature, and newest
+  active-cycle identity to match.
+- It then uses the existing connection and broker reconciliation path. Any
+  contract, order, execution, fill, position, recovery, or fresh-data ambiguity
+  blocks automatic continuation and leaves the app in manual Reconciliation.
+- The handoff never creates a new cycle and never submits an order merely because
+  the previous process intended one.
+
+7. Restart-loop protection and operator control
+
+- Three rapid automatic replacement attempts are allowed in a rolling 15-minute
+  window.
+- Further attempts are limited to one every five minutes while attempts remain
+  in that window.
+- Missing, malformed, unreadable, or unwritable restart history blocks automatic
+  restart fail-closed.
+- Set IBKR_BOT_AUTO_RESTART=0 to retain watchdog warnings while disabling
+  automatic process replacement. Values false, no, and off are also recognized.
+
+8. Audit support and documentation
+
+- Audit bundles include the emergency log and restart history when available.
+- A pending handoff is included only as a token-redacted copy; the raw request is
+  never added to an audit bundle.
+- README, changelog, security guidance, architecture, operations, recovery,
+  troubleshooting, limitations, release notes, and test documentation describe
+  the new behavior and its boundaries.
+
+SAFETY AND COMPATIBILITY
+========================
+
+- Strategy formulas, price-source priority, quantity calculations, order types,
+  order construction, RTH/session rules, risk limits, fill accounting,
+  commissions, P/L calculations, and account-position scope are unchanged.
+- The single-worker ownership model remains unchanged.
+- No persistent SQLite table, column, index, migration, or setting was added.
+- Existing v3.2.2/v3.3.0 databases, settings, active cycles, orders, executions,
+  audit events, backups, exports, and market captures remain compatible.
+- Automatic continuation is fail-closed and narrower than the existing manual
+  startup/reconciliation path.
+
+FINAL VERIFICATION
+==================
+
+Repository tests
+----------------
+
+- 1,089/1,089 collected pytest cases passed across isolated instrumented test
+  partitions.
+- ResourceWarning was promoted to an error throughout the runs.
+- The partitioned execution covered all ordinary tests, all five accelerated
+  soak tests, and both elapsed-time-bound large-database performance tests.
+- 30 focused v3.3.0 worker-watchdog/restart regressions passed.
+- No test was skipped or retained as an expected failure in the completed
+  partition set.
+
+Coverage and deterministic verification
+---------------------------------------
+
+- 77.5% combined statement/branch coverage for app/ and main.py; required gate:
+  75.0%.
+- 991/991 executable application callables were entered.
+- 17/17 targeted safety mutants were killed.
+- 58/58 deterministic simulation contracts passed across 54 CSV price-path
+  files.
+
+Supplemental verification
+-------------------------
+
+- Python compileall passed for app/, tests/, scripts/, and main.py.
+- git diff --check passed.
+- Ruff and Pyright were not installed in the offline Linux environment and are
+  not recorded as passing. The Windows run_all_tests.bat workflow still requires
+  both tools.
+
+PLATFORM-SPECIFIC BOUNDARY
+==========================
+
+A native Windows executable was not built in this Linux environment. The source
+implementation and mocked process-replacement paths passed, but PyInstaller and
+Windows os.execv behavior must be smoke-tested after running build_windows.bat on
+Windows.
+
+The built-in watchdog depends on the Qt main event loop. It cannot restart a
+fully frozen GUI/main thread, a crashed operating system, a powered-off machine,
+a missing executable, or an IB Gateway login/2FA failure. Those conditions need
+external machine/process/platform supervision and must not bypass BouncyBot's
+one-instance and broker-reconciliation gates.
+
+SOURCE RELEASE DELIVERABLE
+==========================
+
+IBKR_Trading_Bot_3.3.0_Worker_Watchdog_Auto_Recovery_Corrected_Source.zip
+
+The source ZIP is assembled from Git-tracked files and excludes .git data,
+virtual environments, caches, bytecode, coverage output, runtime databases,
+logs, exports, backups, debug captures, and build output. The complete source
+Images/ directory remains present for README and documentation assets. The
+Windows build script continues to package only the required runtime image assets
+inside GUI/ and omits a top-level Images/ directory from the binary release.

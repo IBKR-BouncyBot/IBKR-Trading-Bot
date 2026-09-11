@@ -1,0 +1,129 @@
+BouncyBot - IBKR Portable Trading Bot v3.6.0
+SELL reconciliation and Trade History robustness report
+Release date: 2026-07-29
+
+LINEAGE AND REVIEW
+==================
+
+This release is based on the final v3.5.0 source archive. The submitted local
+v3.5.0 source and patch were compared with that baseline, reviewed, integrated,
+and advanced to v3.6.0.
+
+The submitted changes added fail-closed final/protective SELL quantity gates,
+numeric sorting for formatted Trade History columns, and operator-visible GUI
+errors for audit reads and history exports. Review identified and corrected
+related edge cases around cancel-and-replace exit aggregation, a still-working
+partially filled SELL, missing persisted execution proof, missing aggregate fill
+price, and non-finite numeric sort values.
+
+IMPLEMENTED CHANGES
+===================
+
+1. Exact aggregate final-SELL settlement
+
+- A cycle completes only when persisted cycle SELL executions exactly equal the
+  app-owned BUY-filled quantity, no broker remainder is still working, and an
+  aggregate fill price is available.
+- Nonterminal partial fills are persisted and remain under supervision.
+- Terminal partials enter Stage.ERROR with SELL_PARTIAL_TERMINAL.
+- Underfills, overfills, contradictory remainders, missing execution proof, and
+  missing aggregate fill prices enter Stage.ERROR with SELL_QUANTITY_MISMATCH.
+- Cancel-and-replace and manual-close remainder orders are validated against all
+  app-owned SELL executions for the cycle. Weighted aggregate price, commission,
+  and final P/L therefore include both the earlier partial and replacement fill.
+- A partially filled order remains working until its broker status is terminal,
+  so manual market close cancels and confirms the existing remainder before a
+  replacement can be submitted.
+
+2. Protective-SELL terminal consistency
+
+- A terminal protective SELL that reports the full app-owned filled quantity and
+  a positive remainder is treated as an unprovable quantity mismatch. It cannot
+  remain in an endless polling state or be interpreted as exact closure.
+- The existing v3.4.0 exact-quantity, terminal-partial, recovery, and fail-closed
+  protective-SELL gates remain in force.
+
+3. Trade History and audit GUI robustness
+
+- Formatted currency, percentage, and quantity cells sort by their raw finite
+  numeric values instead of lexical display text.
+- Blank, invalid, NaN, and infinite values group deterministically below finite
+  values.
+- Audit-detail read failures and Trade History export failures are shown in an
+  operator dialog. A failed export does not display a success message, and a
+  failed audit read does not open a partially initialized dialog.
+
+SAFETY AND COMPATIBILITY
+========================
+
+- Ambiguous SELL facts fail closed for manual reconciliation instead of
+  completing a cycle without exact broker/local proof.
+- Entry logic, ATR calculations, strategy percentages, BUY construction,
+  position sizing, normal SELL order construction, market-data selection, quote
+  freshness, RTH/session behavior, complete-OrderRef ownership, watchdog
+  restart, and account/contract scope are unchanged.
+- v3.6.0 adds no SQLite table, column, index, migration, or persisted setting.
+- Existing v3.5.0 databases, active cycles, execution rows, checkpoints,
+  watchdog files, captures, backups, and portable folders remain compatible.
+
+FINAL VERIFICATION
+==================
+
+Repository tests
+----------------
+
+- 1,140/1,140 collected pytest cases passed across all 122 test modules.
+- Each module was executed in a fresh pytest process in the Linux headless
+  environment to isolate Qt-stub module state; the aggregate contained no
+  failed, skipped, or xfailed case.
+- ResourceWarning was promoted to an error in every test process.
+- The run included the accelerated-soak tests and the elapsed-time-bound
+  large-database performance tests.
+- 16 focused v3.6.0 regressions cover the submitted changes and review findings.
+
+Coverage and deterministic verification
+---------------------------------------
+
+- 78.0% combined statement/branch coverage for app/ and main.py; required gate:
+  75.0%.
+- 996/996 executable application callables were entered.
+- 17/17 targeted safety mutants were killed.
+- 58/58 deterministic simulation contracts passed across 54 CSV price-path
+  files.
+
+Supplemental verification
+-------------------------
+
+- Python compileall passed for app/, tests/, scripts/, and main.py.
+- Git whitespace validation passed.
+- Release metadata, current/archived documentation placement, schema
+  compatibility statements, and focused release tests passed.
+- The source archive is assembled only from committed repository files beneath
+  one IBKR-Trading-Bot-main/ root. It contains exactly 353 tracked files,
+  including all 22 source image assets, and excludes Git metadata, virtual
+  environments, caches, bytecode, coverage output, logs, databases, watchdog
+  handoffs, captures, backups, exports, and build output.
+- ZIP integrity and extracted-file byte comparison passed. The extracted source
+  independently collected all 1,140 tests and passed the 81 focused release,
+  compatibility, documentation, and GUI tests.
+- The v3.6.0 upgrade patch applies cleanly to the exact v3.5.0 baseline; the
+  patched 353-file tree is byte-identical to the released source tree.
+- Ruff and Pyright were not installed in the offline Linux environment and are
+  therefore not recorded as passing. The configured Pyright application scope
+  (app/models.py, app/strategy.py, and app/storage.py) is unchanged by the
+  runtime implementation. The Windows run_all_tests.bat workflow remains the
+  authoritative Ruff/Pyright gate.
+
+PLATFORM-SPECIFIC BOUNDARY
+==========================
+
+A native Windows/PyInstaller executable was not built in this Linux environment.
+The existing Windows build and portable-release scripts were versioned to
+v3.6.0 but still require a native Windows smoke test. Recommended checks are:
+
+- run the complete Windows pytest/Ruff/Pyright gate;
+- build and launch the onedir executable from a path containing spaces;
+- verify numeric ascending/descending Trade History sorting;
+- verify audit/export error dialogs with a locked/read-only test folder;
+- paper-test partial final/protective SELL reconciliation and manual close;
+- confirm the Windows shortcut and versioned release-folder names.

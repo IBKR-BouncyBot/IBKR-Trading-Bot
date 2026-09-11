@@ -1,0 +1,9 @@
+time,price,note
+09:30:00,100.0000,anchor
+09:31:00,95.0000,BUY trail submits
+09:32:00,93.0000,low watermark sets stop to 94.86
+09:33:00,100.0000,gap above stop; simulated fill occurs at observed price
+09:34:00,111.0000,still below safe final SELL activation
+09:35:00,112.0000,SELL trail submits
+09:36:00,113.0000,SELL trail ratchets
+09:37:00,111.8700,exact 1 percent trail stop; SELL fills

@@ -1,0 +1,140 @@
+BouncyBot v3.9.0 - Audit Diagnostic Coalescing and Live Guard Status
+Implementation and Test Report
+Date: 2026-08-06
+
+1. Release basis
+
+This release was implemented on top of the finalized BouncyBot v3.8.0 BUY
+partial-fill-grace source tree. It advances the project to v3.9.0 and changes
+only audit/diagnostic emission policy, live operator visibility for the current
+Stage-3 SELL evidence condition, corresponding documentation, regression tests,
+and release metadata.
+
+The v3.8.0 strategy formulas, field-level market-data safety rules, two-update
+Stage-3 confirmation requirement, pre-submit revalidation gates, order types,
+quantity calculations, broker mutation paths, RTH decisions, ATR inputs, fill
+reconciliation, risk limits, and watchdog recovery behavior are unchanged.
+
+No SQLite table, column, index, migration, or persisted setting was added.
+Existing v3.8.0 databases, cycles, orders, executions, settings, backups,
+checkpoints, captures, and portable state remain compatible.
+
+2. Implemented behavior
+
+A generic in-memory diagnostic-condition coalescer now tracks persistent
+operational conditions with stable keys and reason codes. Changing values such
+as quote age, price, spread, timestamp, or reconnect attempt number remain in
+structured context but no longer form the suppression identity.
+
+Each condition can retain:
+
+- first/latest observation timestamps;
+- occurrence and per-reason counts;
+- latest detailed message and structured context;
+- observed maximum numeric metrics;
+- immediate and periodic audit-emission counts; and
+- the number of cadence observations actually suppressed from SQLite.
+
+Depending on operational relevance, the audit sequence is bounded to an initial
+condition event, delayed persistence summaries, and one recovery event. The
+underlying safety condition is still evaluated on every controller cadence.
+Coalescing affects only diagnostic persistence and presentation.
+
+3. Stage-3 SELL quote evidence
+
+The final-SELL guard now reports stable reason codes including incomplete,
+crossed, stale, independently stale bid/ask, wide-spread, unavailable tracking,
+missing distinct update, unavailable trigger, and trigger-not-reached states.
+
+Routine cached/non-price callbacks remain GUI-only. A complete valid quote whose
+executable bid is below the profit trigger is treated as ordinary waiting rather
+than a warning. Invalid evidence is still immediate when it occurs near or above
+the trigger, invalidates an accepted first confirmation, removes critical field
+or upstream proof, or fails the final submission revalidation.
+
+The Price Data Monitor continuously shows the current Stage-3 evidence state,
+reason code, detailed explanation, executable bid, trigger, percentage distance,
+confirmation state, observation count, and accurately calculated suppressed-row
+count.
+
+The complete v3.7.0/v3.8.0 SELL-safety boundary remains unchanged: independently
+fresh bid and ask fields, complete positive non-crossed quote, configured spread
+limit, executable bid confirmation, two distinct qualifying updates, durable-
+intent revalidation, and broker-call revalidation.
+
+4. Other coalesced diagnostics
+
+- Reconnect attempts use one outage condition: an immediate WARN, an INFO
+  persistence summary after one minute, WARN summaries every five minutes, and
+  one INFO recovery event. Retry behavior remains every ten seconds.
+- Normal unchanged native BUY/SELL trailing-order waits summarize as INFO no
+  more often than every 15 minutes. Selected-price or raw-Last trigger anomalies
+  remain immediately visible and receive bounded anomaly summaries.
+- Repeated BUY preflight blockers are grouped per cycle with stable blocker reason codes.
+  Expected ATR/RTH/session waits use informational 15-minute summaries; hard
+  data, broker, and risk blockers use immediate WARN and one-/five-minute
+  persistence cadence.
+- Stage-3/Stage-4 close-before-RTH timing and settlement waits use the same
+  condition model. Missing session-boundary proof remains an immediate warning.
+- Critical order rejection, terminal partial fill, quantity mismatch,
+  reconciliation uncertainty, storage/worker failure, failed durable
+  submission, and ERROR/MANUAL_REVIEW transitions remain unthrottled.
+
+5. Regression coverage
+
+The focused v3.9.0 tests cover:
+
+- changing Stage-3 age text retaining one stable condition identity;
+- a 705-observation NBIS-shaped stale-ask sequence producing bounded events;
+- exact suppressed-observation accounting;
+- current GUI status for cached/non-price callbacks without SQLite flooding;
+- immediate near-trigger invalid evidence and confirmation invalidation;
+- all documented Stage-3 stable reason-code mappings;
+- native-order normal-wait and anomaly cadences, including explicit anomaly
+  recovery back to the ordinary INFO cadence;
+- reconnect aggregation and one recovery event;
+- expected and hard BUY-preflight escalation/recovery;
+- close-before-RTH session-boundary coalescing and recovery; and
+- Price Data Monitor rendering of current Stage-3 guard evidence.
+
+Existing historical release, incident, recovery, order, storage, GUI, simulation,
+and packaging regressions remain in the complete suite.
+
+6. Validation results
+
+Final source validation:
+
+- 1,211/1,211 collected pytest cases passed with ResourceWarning promoted to an
+  error.
+- All 126 test modules passed when executed independently in fresh pytest
+  processes, with no failed module.
+- 33 focused v3.9.0 coalescing, GUI-status, metadata, compatibility, and release
+  tests passed.
+- 78.1% combined statement/branch coverage was measured on the finalized
+  application code.
+- 1,024/1,024 executable application callables were entered by the coverage
+  gate.
+- 17/17 targeted safety mutants were killed.
+- 58/58 deterministic simulation contracts passed across 54 CSV price paths.
+- Python compileall passed for app, tests, scripts, and main.py.
+- Git whitespace validation passed.
+- All 22 source image assets remain present.
+
+7. Tooling limitations
+
+Ruff and Pyright were not installed in the offline Linux release environment and
+are therefore not recorded as passing. The final Windows run_all_tests.bat gate
+must still run both tools before a native executable is produced.
+
+A native Windows/PyInstaller executable was not built in this environment. The
+Windows smoke test should confirm the packaged GUI status display, reconnect
+summaries, native trailing-order wait summaries, SQLite audit output, and normal
+IB Gateway operation during an extended Stage-3 wait.
+
+8. Operational boundary
+
+The diagnostic coalescer is intentionally in memory. A process restart clears
+its housekeeping state, so a still-active condition can create a new entry event
+and starts a new bounded summary interval. Trading and recovery do not depend on
+coalescer persistence. The emergency log, critical decision events, and all
+broker/order safety paths remain independent of this diagnostic suppression.

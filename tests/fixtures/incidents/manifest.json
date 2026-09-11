@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "description": "Sanitized production-incident fixtures derived from user-supplied BouncyBot audit bundles and one IB Gateway log. Private source artifacts are not included.",
+  "fixtures": [
+    {
+      "file": "foreign_order_ref_isolation.json",
+      "incident_id": "foreign_order_ref_isolation_20260723",
+      "source_evidence": [
+        {
+          "kind": "audit_bundle",
+          "sha256": "6d176e46b14c0bc5da377d79c2ad247d9732e062005b8697ec9916bb07cab511"
+        }
+      ],
+      "fixture_sha256": "ca5545752705606a0b1a473a1222dba9064e0a544d3111d624faf75ceb4ef852"
+    },
+    {
+      "file": "iren_invalid_price.json",
+      "incident_id": "iren_invalid_price_20260722",
+      "source_evidence": [
+        {
+          "kind": "audit_bundle",
+          "sha256": "c6490618a31e10a9822ebe96debfe59fc210fd3d7f6219710bf4087c74640d0c"
+        },
+        {
+          "kind": "gateway_log",
+          "sha256": "7da6a1df2eb771bee134b4e5a5308a55d73a496cf2637604150955f1dbd2915f"
+        }
+      ],
+      "fixture_sha256": "85f12de28e4146c5984e8297e986b91fe8fb7b7bc2c45903e87f576237b76743"
+    },
+    {
+      "file": "nbis_partial_fill_cancel_race.json",
+      "incident_id": "nbis_partial_fill_cancel_race_20260720",
+      "source_evidence": [
+        {
+          "kind": "audit_bundle",
+          "sha256": "7c092f6f7a935cc1e9a2bd9b6717e1b754cfcb998390aa40ef62cf43582c9de5"
+        }
+      ],
+      "fixture_sha256": "067344785cfc00da2dab104185c440c61a2d6bdc32eeff05b74d1817e80ff96a"
+    },
+    {
+      "file": "vwra_delayed_data_block.json",
+      "incident_id": "vwra_delayed_data_block_20260724",
+      "source_evidence": [
+        {
+          "kind": "audit_bundle",
+          "sha256": "acb3012ded3ecb82c1898c094235a38685caa4dc93ae92fdfeceb75baaa6c867"
+        }
+      ],
+      "fixture_sha256": "20028f723b15a726d8a4ed4337819198329b531b057ba73a8ee75ac86995ca2f"
+    },
+    {
+      "file": "vwra_lse_continuous_close_mismatch.json",
+      "incident_id": "vwra_lse_continuous_close_mismatch_20260724",
+      "source_evidence": [
+        {
+          "kind": "audit_bundle",
+          "sha256": "217aa5cda96a7afa9035c7f0bf8a078eb97c83cb729f04d8e0da54605bdff8f8"
+        }
+      ],
+      "fixture_sha256": "bd357771e79c477fafb1f55b0811b48d7b805b3b761c86cde1839319a1918504"
+    },
+    {
+      "file": "vwra_stage3_market_rule_rounding.json",
+      "incident_id": "vwra_stage3_market_rule_rounding_20260724",
+      "source_evidence": [
+        {
+          "kind": "audit_bundle",
+          "sha256": "19ca6430eaa7c38940ab03c2838ff76fe4a2a07ba49a8a1c4a7a0caaf7152dd8"
+        }
+      ],
+      "fixture_sha256": "82b14705fd6d4f29b3124a1030949d242ee3d1b42171b74b98e69df57eb1c1da"
+    }
+  ]
+}

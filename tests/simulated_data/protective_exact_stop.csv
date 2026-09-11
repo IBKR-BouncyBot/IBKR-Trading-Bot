@@ -1,0 +1,6 @@
+time,price,note
+09:30:00,100.0000,anchor
+09:31:00,95.0000,BUY trail submits
+09:32:00,93.0000,low watermark
+09:33:00,94.8600,BUY fills and protective SELL submits
+09:34:00,92.0142,exact initial 3 percent protective stop

@@ -1,0 +1,8 @@
+time,price,note
+09:30:00,800.0000,high-price anchor
+09:31:00,760.0000,exact 5 percent drop; planned quantity is one
+09:32:00,750.0000,BUY trail lower low
+09:33:00,765.0000,exact 2 percent rebound; one share fills
+09:34:00,850.0000,exact safe SELL activation for 10 percent minimum profit
+09:35:00,860.0000,SELL trail ratchets
+09:36:00,851.4000,exact 1 percent stop; one share exits

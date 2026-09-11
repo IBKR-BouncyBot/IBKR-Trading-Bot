@@ -1,0 +1,181 @@
+# Deterministic offline behavior tests
+
+This document describes the current non-GUI, non-Windows, non-network test layer in v4.0.0. It covers strategy behavior, controller state transitions, audit diagnostic coalescing, BUY partial-fill grace/timeout safety, broker-event handling, persistence and recovery, shutdown checkpoints, GUI contracts, and bounded performance behavior.
+
+The suite deliberately avoids:
+
+- launching the PySide6 GUI;
+- Windows-specific executable, registry, process, DPI, or native-widget behavior;
+- a real TWS or IB Gateway process;
+- paper or live IBKR accounts;
+- real market data, account data, orders, fills, or network traffic.
+
+The tests use temporary SQLite databases, deterministic clocks and prices, protocol-shaped broker doubles, subprocesses, and generated event sequences. They verify the application contract at its internal and adapter boundaries, not the behavior of IBKR's external systems.
+
+## Test layers
+
+### Broker callback replay and permutation
+
+v3.2.0 retains the broker-validation and v3.1.2 reconciliation coverage and adds focused tests for exact USD/EUR SMART contract selection, one-currency database enforcement, capability and market-session validation, commission-currency mismatch handling, and fixed ten-second indefinite reconnect behavior.
+
+`tests/test_broker_event_replay_permutations.py` replays equivalent order histories with callbacks in different orders. It covers open-order, order-status, execution, and commission events; duplicate execution identifiers; repeated terminal polls; persisted raw events; and idempotent replay.
+
+The primary invariant is that harmless callback ordering and duplicate delivery must not change the final cycle, quantity, commission, or database state.
+
+### Generated controller state sequences
+
+`tests/test_stateful_controller_invariants.py` drives the real controller, strategy engine, and SQLite storage through deterministic generated scenarios. It covers complete and partial BUY/SELL paths, zero and nonzero trails, external positions, app-owned quantities, connectivity failures, retry behavior, and maximum-cycle enforcement.
+
+The assertions include:
+
+- no order transmission while a required guard is active;
+- no SELL above app-owned unsold quantity;
+- external positions do not become app-owned;
+- no extra cycle after the configured maximum;
+- completed cycles have no remaining app-owned quantity;
+- repeated recovery information is idempotent.
+
+### Generated numerical and malformed-payload properties
+
+`tests/test_generated_numeric_and_payload_properties.py` applies deterministic generated inputs to pricing, quantity, profit-protection, serialization, and broker-payload normalization functions. It includes threshold-adjacent values, large and small finite values, malformed fields, and nonfinite values.
+
+These are property-style tests: they assert invariants across many generated cases rather than checking only one example.
+
+### Recovery and guard decision matrices
+
+`tests/test_recovery_and_guard_decision_matrix.py` exercises combinations of local/upstream connectivity, missing or stale prices, RTH state, ATR readiness, app-owned positions, external positions, and recovery confidence.
+
+The matrix verifies that normal trading guards remain distinct from recovery-required states and that fail-closed behavior is consistent across combinations.
+
+### Differential simulation
+
+`tests/test_differential_simulation_equivalence.py` runs generated price paths through independent simulation paths and compares stage transitions, order actions, trigger behavior, filled quantity, completion, and P/L within the documented rounding tolerance.
+
+The comparison is intended to detect drift between simulation implementations. It does not model exchange queue priority, latency, broker-side trigger details, or real slippage.
+
+### Multi-instance isolation
+
+`tests/test_multi_instance_isolation.py` creates two controllers with separate roots, SQLite databases, client IDs, tickers, local ledgers, backups, and audit output while sharing one deterministic Gateway model.
+
+It verifies normal client-isolated operation and Master-client shared-feed behavior. The current implementation requires the complete persisted `OrderRef`, so an unmatched order from another installation remains unowned even when it shares the `IBKRBOT` prefix.
+
+### Crash, restart, migration, and restore
+
+`tests/test_crash_restart_and_migration_matrix.py` uses child processes and abrupt `os._exit()` termination to test committed and uncommitted SQLite boundaries. It also covers zero-byte databases, reconstructed legacy schemas, migration idempotence, corrupt databases, startup backups, and backup validity after an abrupt writer exit.
+
+These tests verify SQLite/application recovery semantics. They do not claim to reproduce every operating-system cache, filesystem, or hardware power-loss behavior.
+
+### Storage fault injection and retention
+
+`tests/test_storage_fault_injection_and_retention.py` injects failures into readable audit logging, restore-copy creation, backup integrity validation, validation-report writing, capture ZIP writing, and backup rotation. It verifies exact retention behavior at multiple limits and checks filename sanitation and fallback exports.
+
+### Gateway outage and stale-data sequences
+
+`tests/test_gateway_fault_injection_sequences.py` generates local and upstream connection failures, codes 1100 and 2110, restoration with and without market-data loss, repeated flapping, stale cached snapshots, recovery failures, and a connectivity race at the final order-placement boundary.
+
+The deterministic assertions verify that:
+
+- cached pre-outage data is never reclassified as fresh;
+- ATR and generic strategy-price advancement require a new event in which the selected raw field/quote basis updated; the Stage-3 final SELL additionally requires independently fresh bid/ask evidence on two distinct quote events;
+- new orders remain blocked while connectivity or reconciliation is uncertain;
+- subscription replacement/retention follows the restoration mode;
+- a final connectivity check prevents a late-race order submission.
+
+### v3.9.0 audit-condition coalescing sequences
+
+`tests/test_v390_audit_diagnostic_coalescing.py` drives the real controller and headless Price Data Monitor through persistent diagnostic conditions. It verifies stable reason-based keys, bounded entry/summary/recovery events, changing-age suppression, a 705-observation NBIS-style stale-ask sequence, GUI-only non-price callbacks, immediate near-trigger invalid evidence, native-order normal/anomaly cadence, reconnect aggregation/recovery, BUY-preflight recovery, and live Stage-3 status rendering. The tests assert that every source observation remains counted while SQLite event production stays bounded and all existing trading guards continue to run.
+
+### v3.8.0 BUY partial-fill grace and cancellation sequences
+
+`tests/test_v380_buy_partial_fill_grace.py` drives real controller, strategy, storage, and deterministic broker boundaries through the revised Stage-2 policy. It verifies a fixed 3.0-second grace from the first positive fill, full native-TRAIL and MKT completion without cancellation, a timeout that is not reset by later partial progress, immediate cancellation when enabled RTH/data/session/volatility/minimum-price/gap/spread safeguards become unsafe, retry and duplicate suppression, clock-rollback recovery, terminal partial settlement, and complete reconciliation when the remaining shares fill after cancellation was requested.
+
+The historical NBIS replay now proves that the second 28-share print can complete inside the grace without an unnecessary cancellation. Separate focused tests age the persisted first-fill timestamp to exercise the timeout and cancellation-race branches deterministically.
+
+### Bounded soak tests
+
+`tests/test_accelerated_soak_bounds.py` is marked `soak`. The complete Windows `run_all_tests.bat` gate now runs it inside the same Coverage.py invocation as every other pytest test; the Unix helper retains a separate non-instrumented soak pass. It verifies bounded behavior under:
+
+- 25,000 market-data capture snapshots;
+- 2,000 ATR bar buckets;
+- 22,500 unique price events plus 1,000 duplicate reads;
+- 250 completed persisted cycles;
+- 1,000 upstream disconnect/restore cycles.
+
+The tests check configured deque limits, ATR history limits, price-history limits, sequence deduplication, cycle/reinvestment totals, event draining, subscription generations, and thread-count stability. They are deterministic functional soak tests, not hardware performance benchmarks.
+
+### Sanitized production-incident replay
+
+`tests/test_production_incident_replays.py` uses compact fixtures reduced from the available IREN, NBIS, and VWRA audit evidence. `tests/test_v370_stage3_market_data_guard.py` adds the field-level CHIP cycle-3 incident reconstruction without retaining account-identifying data. The tests drive production controller, storage, strategy, and adapter-normalization paths for invalid-price rejection, BUY multi-print/grace behavior and cancellation races, late commissions, strict foreign-`OrderRef` isolation, delayed data, broker-valid Stage-3 SELL rounding, and LSE session characterization. `tests/test_v321_incident_gap_fixes.py` verifies the corrected LSE/LSEETF continuous boundary, stable repeated-block throttling, and the distinct `PreflightBlocked` status. `tests/test_incident_fixture_integrity.py` enforces fixture provenance and privacy. See [`PRODUCTION_INCIDENT_REPLAY_TESTS.md`](PRODUCTION_INCIDENT_REPLAY_TESTS.md).
+
+### Safety mutation smoke gate
+
+`scripts/run_mutation_smoke.py` copies the application package into temporary directories, applies one deliberate defect at a time, and runs an independent probe. Production sources are never edited in place.
+
+The gate currently requires tests to kill seventeen safety mutations:
+
+1. reversing BUY slippage sizing;
+2. excluding an exact BUY trailing-stop boundary;
+3. excluding an exact SELL trailing-stop boundary;
+4. excluding the exact initial-drop boundary;
+5. using the larger instead of overlapping BUY/SELL quantity for P/L;
+6. using the wrong completed-exit leg when calculating app-owned unsold quantity;
+7. rounding a BUY order price downward instead of upward;
+8. rounding a SELL order price upward instead of downward;
+9. selecting the old market-rule band at an exact low-edge boundary;
+10. sending a what-if trailing order with `transmit=False`;
+11. allowing a second contract currency into a locked database;
+12. changing the automatic reconnect interval away from ten seconds;
+13. counting the same IBKR execution identifier more than once;
+14. allowing a late zero commission to erase an already recorded non-zero commission;
+15. moving the verified LSE continuous close from 16:30 to 16:50 London;
+16. relabelling a local BUY preflight block as `SubmitFailed`; and
+17. suppressing the first throttled/coalesced warning when monotonic time starts at zero.
+
+A surviving mutant fails the validation run.
+
+## Deterministic broker support
+
+`tests/support/deterministic_broker.py` implements the application-visible broker boundary in memory. It provides independent local and upstream connection states, event-stamped market data, order placement/cancellation, partial and terminal fills, execution history, recovery snapshots, account lists, and injected failures.
+
+`tests/support/controller_harness.py` creates controllers with isolated SQLite storage and permissive settings so tests can focus on the behavior under examination.
+
+The doubles intentionally do not import a live IB session, open sockets, or claim to reproduce undocumented server behavior.
+
+## Validation sequence
+
+The complete Windows launcher runs the deterministic layers in this order:
+
+1. Compile `app`, `tests`, `scripts`, and `main.py`.
+2. Run every collected pytest test, including the bounded soak tests, with `ResourceWarning` promoted to an error and Coverage.py branch tracking enabled. No marker filter is applied.
+3. Enforce the 75% combined statement/branch threshold.
+4. Write `coverage.json` and `coverage.xml`.
+5. Require entry into every effective executable application callable.
+6. Run the seventeen-mutant safety smoke gate.
+7. Run all deterministic CSV simulations.
+8. Run Ruff and Pyright through `run_all_tests.bat`.
+
+The Unix `scripts/run_tests.sh` helper still separates non-soak coverage from the soak subset to keep that development-host command practical.
+
+The v4.0.0 source tree passed **1,284/1,284** pytest cases across **129 test modules**, with `ResourceWarning` promoted to an error. All 129 modules also passed individually in fresh Python processes. The measured combined statement/branch coverage was **78.8%** (82.3% statements; 68.1% branches), and **1,038/1,038** executable application callables were entered. The release killed **17/17** safety mutants and passed **58/58** deterministic simulation contracts across 54 CSV paths. The three new v4.0.0 modules contain **73 focused regression cases**. Ruff, Pyright, native Windows/PyInstaller, and live IBKR testing were not available in this environment.
+
+The CSV matrix itself passes cleanly in the offline Linux environment. The full Windows launcher remains the authoritative combined run for Coverage.py, Ruff, Pyright, and native launcher behavior.
+
+## Scope that remains external
+
+The following still require separate environments and are intentionally not part of this offline layer:
+
+- actual PySide6 widget rendering and user interaction;
+- native Windows locking, process, DPI, and packaged-executable behavior;
+- a real TWS/IB Gateway handshake and callback stream;
+- paper-account or live-account order lifecycle tests;
+- real market-data entitlements, pacing, fills, commissions, margin, and exchange behavior;
+- true Internet interruption between Gateway and IBKR;
+- hardware-specific latency, CPU, memory, and endurance qualification.
+
+Use [`TEST_PLAN.md`](TEST_PLAN.md) for those manual and integration checks.
+
+## v4.0.0 regression layer
+
+`test_v400_atr_memory_and_order_edits.py` covers first-session warmup, weekend/restart reuse, session and contract separation, corrupt/future/expired estimates, bounded persistence failures, live takeover, same-contract volatility-history preservation, and explicit next-order guard persistence/isolation. `test_v400_gui.py` checks amber LIVE status, retained error colors, removal of only the profit banner, risk-field/manual locks, saved ATR provenance, and non-selling dialog defaults. `test_v400_release.py` checks metadata, documentation layout, compatibility, and unchanged order/broker modules.
+
+Final v4.0.0 validation results are recorded in the root `IMPLEMENTATION_TEST_REPORT.txt` and the current release note. The measured figures above correspond to the final v4.0.0 test run.

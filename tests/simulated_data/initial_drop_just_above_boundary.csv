@@ -1,0 +1,3 @@
+time,price,note
+09:30:00,100.0000,initial anchor
+09:31:00,95.0001,one ten-thousandth above the 5 percent trigger; no order

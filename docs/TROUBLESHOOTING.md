@@ -1,0 +1,280 @@
+# Troubleshooting
+
+## The application cannot connect
+
+Check, in order:
+
+1. TWS or IB Gateway is running and fully logged in.
+2. API/socket clients are enabled.
+3. The selected profile matches the platform and live/paper session.
+4. Host and port match the platform configuration.
+5. The API client ID is not already in use.
+6. A firewall or security product is not blocking the local socket.
+7. The API is not configured read-only when live orders are expected.
+
+Long connection errors wrap in the connection area. Preserve the full error text in an audit report when requesting help.
+
+## The app says an exact contract is required
+
+The live adapter no longer qualifies a stock from a symbol alone. Click **2. Search/select ticker** and choose an ordinary `STK` result in USD or EUR with a positive conId. The result supplies the read-only currency, primary exchange, and conId fields while order routing remains `SMART`. Manually editing the ticker or primary exchange clears the selection, so search and select again.
+
+If the selected result is still rejected, inspect the message for a conId/currency mismatch, missing SMART route, missing `MKT`/`TRAIL` capability, or missing ContractDetails. Do not substitute a different listing merely because its symbol is similar.
+
+## The database is locked to USD or EUR
+
+Each portable SQLite database can contain cycles in one contract currency only. A zero-cycle draft may switch between USD and EUR, but the first stored cycle locks the database. An upgraded v3.1.2 database is inferred from its historical cycles and will normally be USD.
+
+Use another portable folder/database for the other currency. Do not copy mixed-currency cycle rows into one database. BouncyBot performs no FX conversion for P/L, limits, reinvestment, or commissions.
+
+## Connected, but no usable price appears
+
+Review the Price data monitor and event log:
+
+- contract qualification may be incomplete or ambiguous;
+- the account may lack the required market-data subscription;
+- the selected data type may be delayed/frozen;
+- the market may be closed;
+- bid, ask, last, close, and delayed fields may all be unavailable;
+- a stale subscription from a disconnected socket may not yet have refreshed.
+
+After reconnect, confirm that the **actual update** timestamp/count/sequence advances. A non-null bid, ask, or last value marked cached-only does not prove that new data is arriving. Reconfirm the ticker when the selected contract changed.
+
+## Gateway is running, but the app shows Gateway only, Reconciling, or Data pending
+
+These states intentionally distinguish the local API socket from the Gateway/TWS connection to IBKR servers:
+
+- **Gateway only:** the local socket is alive, but IBKR reported upstream connectivity unavailable (normally code 1100 or 2110). Trading, app-order polling, strategy advancement, and broker-dependent workflow commands are paused.
+- **Reconciling:** code 1101/1102 restored the upstream link, but app-owned open orders and recent executions are still being checked.
+- **Data pending:** connectivity/reconciliation is available, but no new post-connect/post-recovery ticker event has arrived. Cached fields remain non-tradeable.
+
+Inspect Gateway/TWS messages and Internet connectivity. After restoration, wait for the state to clear and confirm an actual update arrives. If it does not, disconnect/reconnect the app, reconfirm the ticker, refresh Reconciliation, and inspect market-data permissions. Do not rely solely on a populated cached quote.
+
+## An EUR contract reports RTH unavailable
+
+BouncyBot requires usable IBKR `liquidHours` and `timeZoneId` for a non-U.S. or unknown primary exchange. It deliberately does not apply the 09:30–16:00 New York fallback to an EUR listing. Re-select the exact contract, confirm Gateway/TWS returns ContractDetails, and inspect the contract's primary exchange, timezone, holiday, and session metadata. Leave trading blocked when those facts cannot be verified.
+
+For `LSE` and `LSEETF`, the Live Strategy RTH status should show an effective close no later than 16:30 `Europe/London` (for example 17:30 CEST when IBKR reports the contract in `MET`). The audit status retains the later raw IBKR `liquidHours` close for comparison. If the effective policy cannot be applied, trading fails closed rather than reverting to the broader broker window.
+
+## The bot keeps reconnecting every 10 seconds
+
+After an established local API socket is lost, v4.0.0 retries the saved TWS/Gateway endpoint every 10 seconds without a retry limit. This is expected. Start or log into the selected platform, correct the host/port/client ID, or click **Disconnect** to stop the attempts. Application shutdown also stops them.
+
+A local reconnect is not enough for trading: the upstream IBKR link, broker reconciliation, exact contract, and a new actual market-data event must recover before strategy processing resumes.
+
+## Trading says BUY blocked
+
+Hover the **Trading** box. It lists all currently evaluated blockers, not only the first one. Common reasons include:
+
+- ATR warmup;
+- closed or unknown RTH;
+- first/last-minute session window;
+- stale selected price, bid/ask, or RTH status;
+- delayed data in live mode;
+- spread, gap, price, volatility, loss, cycle, or streak limit;
+- failed IBKR what-if/preflight;
+- disconnected local API socket, lost upstream IBKR link, or post-reconnect reconciliation;
+- waiting for an actual post-connect/post-recovery ticker event;
+- unsold application-owned shares;
+- retained order-submission/recovery error.
+
+A blocker is usually intentional. Do not disable it solely to make the status green; verify the underlying data and operating assumption. A normal guard pause is not a recovery fault, so the Reconciliation tab intentionally disables Reconcile and resume and other broker/local-state-changing buttons while leaving Refresh from IBKR/TWS and audit export available.
+
+When no live order was attempted, the cycle status should read `PreflightBlocked`, not `SubmitFailed`. v4.0.0 coalesces a persistent blocker by stable category. Expected waits such as RTH closed, ATR warmup, or session timing start as INFO and summarize after 15 minutes and then every 15 minutes. Hard risk/data/broker blockers start as WARN, summarize after one minute and then every five minutes. Recovery is recorded once when the condition clears. The guard is still evaluated and enforced on every strategy cadence; fewer audit rows do not mean the blocker stopped running.
+
+
+## The audit log no longer repeats the same warning every few seconds
+
+This is intentional in v4.0.0. Persistent Stage-3 quote-evidence, reconnect, BUY-preflight, close-before-RTH, and native trailing-order wait states are represented as one active diagnostic condition rather than one SQLite row per controller cadence. The condition entry, bounded persistence summaries, and recovery event retain structured occurrence counts, reason counts, duration, latest context, and observed maximum values.
+
+The current Stage-3 quote reason remains visible in the Price Data Monitor even when no new audit row is written. A normal complete quote whose executable bid is below the profit trigger is ordinary waiting and does not generate repeated warnings. Cached/non-price callbacks also remain GUI-only. Invalid evidence near or above the trigger, invalidation after the first SELL confirmation, broker order failures, quantity mismatches, worker/storage faults, reconciliation uncertainty, and final pre-submit revalidation failures remain immediate.
+
+After a process restart, in-memory coalescing state starts again. A still-active condition may therefore create a new entry event; this is expected and does not alter the persisted trading state.
+
+## A BUY becomes Inactive or Rejected
+
+Open the Live Strategy event list or the Cycle Audit broker/decision events and locate the retained IBKR error code and message. In v4.0.0 a definitive no-fill rejection moves the cycle to `ERROR` and does not automatically retry. This is intentional; restarting the same invalid request can produce repeated broker rejections.
+
+For `Invalid Price`, minimum-variation, or invalid-stop errors:
+
+1. confirm that the selected contract and route are correct;
+2. inspect the contract's advertised market-rule ID and the increment selected at the proposed price;
+3. confirm the submitted stop is aligned to that increment, not merely to `ContractDetails.minTick`;
+4. preserve the audit bundle and Gateway/TWS log; and
+5. do not restart the cycle until the structural cause is understood.
+
+A normal operator or session cancellation should report `Cancelled` or `ApiCancelled`. Code 202 by itself is an ordinary cancellation notification and should return an unfilled BUY to Stage 1.
+
+## The what-if check reports a failure
+
+The check now requires a real IBKR `OrderState` with non-error status and at least one finite margin/equity result. `ValidationError`, missing state, rejection warnings, and IBKR unset sentinels fail closed. Review the retained message and Gateway/TWS API log. Do not treat an empty warning as approval when the status is a validation error.
+
+A successful what-if result is only a preflight. A later live order can still be rejected if price, account, permissions, market rules, or broker controls change.
+
+## A commission-currency mismatch appears
+
+The execution remains stored, but BouncyBot does not subtract a commission reported in a currency different from the cycle/database currency. It records `COMMISSION_CURRENCY_MISMATCH`, excludes that amount from local net P/L, and disables Auto-repeat for the cycle because no FX conversion is implemented. Compare the IBKR statement and resolve the currency/account configuration before relying on net P/L or reinvestment.
+
+## Maximum spread appears to change by itself
+
+The **Maximum spread %** setting is not derived from live bid/ask and is never rewritten by quote updates. The live spread changes; the configured threshold does not. It can change only when:
+
+- the user edits the field; or
+- persisted strategy settings are loaded when the GUI initializes or a saved configuration is restored.
+
+If the displayed threshold still changes without one of those events, confirm the running executable/version and preserve the current settings plus audit bundle. A changing live spread can repeatedly cross a fixed threshold and alternate the blocker state without changing the setting itself.
+
+## ATR never becomes ready
+
+ATR requires application-observed prices during open RTH and at least `period + 1` distinct bar buckets. The newest bucket may still be forming. With the defaults, usable observations must span at least 15 distinct 60-second buckets.
+
+ATR will not warm up from time while the application is closed, from pre/post-market data, or from a separate historical feed. Confirm:
+
+- the regular-session status is open and current;
+- usable prices are arriving even if adaptation is currently disabled;
+- the selected-price basis update timestamp advances; a size/timestamp callback or unchanged cached Last is not an ATR observation;
+- the ATR period and bar duration are not set unnecessarily high.
+
+When the warmup blocker is enabled, the initial-drop trigger remains unset until readiness. The readiness update creates a new anchor and cannot itself trigger a BUY. Observation/bar collection continues when adaptation is off, but raw in-memory history resets whenever the application restarts and pauses outside RTH. A valid v4.0.0 saved RTH estimate can supply readiness during the new warmup. Check the saved-session timestamp, contract/profile, period/bar duration, and seven-day age limit when no starting estimate is used. Missing or rejected checkpoints fall back to ordinary warmup; checkpoint I/O errors are reported through the emergency diagnostic log.
+
+## An external long position exists, but the app still allows a BUY
+
+This behavior is intentional. The application ignores account-wide external positions for entry blocking and uses only unsold quantities reconstructed from its own fill records.
+
+The broker position and local application ledger are not separate broker lots. Avoid manual activity that makes the local ledger misleading. Use Reconciliation and **Mark manually handled** after resolving an app-recorded quantity externally.
+
+## The app blocks a BUY because it thinks application shares remain
+
+Open Reconciliation and compare:
+
+- the local cycle’s BUY and SELL filled quantities;
+- app-owned order references;
+- recent IBKR executions;
+- whether a SELL was completed manually or in another client.
+
+Refresh from IBKR/TWS. If the app-owned quantity was resolved outside the application and no app order remains, use **Mark manually handled** with an explanatory note. Do not edit SQLite directly.
+
+## A completed max-cycle run still reports an active order or offers SELL
+
+A cycle that reached its completed-cycle cap should remain in `CYCLE_COMPLETE` with auto-repeat stopped. The Stop dialog, window-close path, and Reconciliation tab calculate unsold quantity from the persisted application fill ledger, not the account-wide broker position. A newer terminal order poll also removes the matching older row from the cached recovery probe.
+
+If a warning remains:
+
+1. Refresh from IBKR/TWS.
+2. Verify whether the refreshed probe is newer than the local terminal fill and still reports the order.
+3. Compare BUY, final SELL, and protective SELL filled quantities in the audit bundle.
+4. Treat a genuinely later broker report of a working app order as an inconsistency; do not suppress it manually.
+
+External/manual shares of the same ticker should not create the app SELL option.
+
+## A protective SELL and final SELL transition appears stuck
+
+The controller intentionally waits for IBKR to confirm that the protective SELL is no longer working before it submits the final SELL. This avoids two app-created SELL orders for the same local quantity.
+
+Check TWS/Gateway for the protective order’s actual state, reconnect if necessary, and refresh Reconciliation. Do not manually create another SELL until the working-order state is known.
+
+## The application says recovery is required
+
+Recovery is required when local state cannot be safely matched to broker facts or when a stored active cycle is stale. The application deliberately does not guess.
+
+1. Inspect app-owned orders in TWS/Gateway.
+2. Refresh from IBKR/TWS.
+3. Compare order references, IDs, statuses, and executions.
+4. Export an audit bundle before destructive action.
+5. Resume monitoring only when the state is coherent, or mark it manually handled after external resolution.
+
+## A lock-file error appears after a crash
+
+First verify in Task Manager that no application/Python process from the same portable folder is still running. A valid running instance must not be bypassed.
+
+If no process exists, the next launch normally detects and removes a stale PID lock. If it cannot, close all copies and remove `ibkr_trading_bot.lock` from the application folder.
+
+## Tests pass, but Ruff or Pyright fails
+
+`run_all_tests.bat` treats the quality tools as required gates. Read the exact Ruff/Pyright output; pytest success does not override a quality failure.
+
+Reinstall the pinned tool set when the environment is inconsistent:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install --upgrade --force-reinstall -r requirements.txt
+```
+
+Then run:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\run_quality_checks.py --require-tools
+```
+
+## PyInstaller output is red, but an executable is produced
+
+The current build wrapper redirects stdout/stderr, displays the combined log, and determines success from the integer process exit code plus existence of `dist\IBKRTradingBot\IBKRTradingBot.exe`. Informational PyInstaller stderr should not create a false failure.
+
+The current build wrapper contains this fix. Inspect `build_pyinstaller.log`: a normal success ends with the portable-build path, while a real nonzero exit or missing executable still fails.
+
+## The packaged executable cannot find its data
+
+PyInstaller creates an onedir application. Keep the complete `dist\IBKRTradingBot` folder together; do not copy only the `.exe`. The database and generated folders are created beside the executable, so the directory must be writable.
+
+## The app appears frozen after pressing Stop or closing
+
+Some stop actions wait for broker cancellation status before submitting a replacement market SELL or finalizing the local state. Check the event log and TWS/Gateway. Avoid force-closing while a cancellation is unresolved unless continued operation is less safe.
+
+## The GUI is responsive, but price age or RTH appears frozen
+
+This indicates that the Qt interface may still be running while the controller worker has stopped delivering snapshots. v4.0.0 treats the snapshot stream as a separate health signal:
+
+- after 3 seconds the GUI reports **Worker delayed**;
+- after 15 seconds it reports **Worker unresponsive**, invalidates cached connection/data/RTH indicators, and keeps increasing the displayed data age;
+- after 30 seconds it requests a full-process replacement, unless automatic restart is disabled or restart-loop protection is active;
+- a dead worker is handled immediately after startup grace.
+
+Check `debug_reports/worker_emergency.log`, `watchdog_restart_history.json`, and the audit bundle. A storage fault is shown separately and blocks all broker-changing actions. Automatic continuation occurs only when the one-time exact-cycle handoff and normal IBKR reconciliation both succeed; otherwise use the Reconciliation tab. `IBKR_BOT_AUTO_RESTART=0` disables replacement for diagnostic sessions.
+
+## Collecting diagnostics
+
+For a reproducible report, include:
+
+- application version;
+- connection profile, mode, host/port, and client ID (redact account IDs as needed);
+- exact UTC time of the issue;
+- current stage and Trading blockers;
+- relevant app order references;
+- `debug_reports/latest_state_report.txt`;
+- an exported audit bundle;
+- the relevant completed market-capture ZIP when available;
+- test or PyInstaller log for build problems.
+
+Audit bundles and databases may contain sensitive account/trading information. Share them only through an appropriate secure channel.
+
+## Close-before-RTH liquidation requires manual review
+
+This message means the optional Stage-4 workflow could not prove a safe cancel-confirm-replace sequence before the regular-session boundary. Common causes are an unconfirmed trailing-order cancellation, unavailable contract-hours metadata, a replacement rejection, or a replacement that remained incomplete at the close.
+
+Check TWS/Gateway first. Confirm whether the original trailing SELL or replacement market SELL is still open, cancelled, partially filled, or filled. Do not submit another SELL until the app-owned unsold quantity and every app-created SELL order are reconciled. BouncyBot deliberately does not send an outside-RTH fallback or silently recreate the cancelled trail. Use the Reconciliation tab and export an audit bundle before marking the situation manually handled.
+
+
+## A partial BUY was not cancelled immediately
+
+This behavior was introduced in v3.8.0 and remains current. After the first positive fill, BouncyBot gives the triggered marketable BUY a fixed 3.0-second grace period to finish an ordinary multi-print execution. The order remains in Stage 2 during that interval. If it is still nonterminal after the timeout, or an enabled market/session safety check becomes unsafe, BouncyBot requests cancellation of the working remainder once.
+
+More fills can still arrive before or after the cancellation request because cancellation and exchange execution race each other. Compare IBKR cumulative filled quantity with the cycle BUY quantity and execution table. Duplicate execution IDs should appear only once; late commission reports should enrich the existing row. If a late BUY arrives after an exit order already exists, BouncyBot stops in `ERROR` for manual quantity reconciliation.
+
+## Another BouncyBot instance appears in the Master feed
+
+The common `IBKRBOT|` prefix is not sufficient ownership proof. This installation applies, cancels, and attributes an order only when the complete `OrderRef` already exists in its local SQLite data. Unmatched events can remain in raw broker diagnostics with no cycle link but must not alter the active cycle.
+
+## The displayed price crossed the Stage-3 trigger, but no final SELL was armed
+
+v4.0.0 deliberately does not arm the normal final SELL from Last, midpoint, mark, close, or `marketPrice` alone. Check the Price data monitor and Cycle Audit for the exact blocker:
+
+- one bid/ask side is missing, crossed, or older than **Maximum bid/ask age**;
+- the current spread exceeds **Maximum spread**;
+- the executable bid has not reached the recalculated rise trigger, even though Last or midpoint has;
+- only the first of two required distinct qualifying quote updates has arrived;
+- an intervening non-quote, incomplete, stale, over-wide, or below-trigger event reset the first confirmation;
+- the quote changed or aged out during order construction, causing `SELL_MARKET_DATA_REVALIDATION_BLOCKED` before intent or broker submission.
+
+This is a normal fail-closed wait, not evidence that the strategy worker is stalled. A stale Last can remain visible for a thinly traded instrument while fresh bid/ask updates continue; that unchanged Last is diagnostic and cannot enter ATR or arm Stage 3.
+
+## Stage 3 did not liquidate at the pre-close cutoff
+
+The option acts in Stage 3 only when a complete independently fresh non-crossed quote is within Maximum spread and its executable bid is strictly above the weighted average BUY fill price. Commissions are ignored for that eligibility comparison. If the quote is invalid or the bid is equal or lower, no SELL is submitted at that observation. Even when eligible, the resulting market fill is not guaranteed to remain profitable.

@@ -1,0 +1,9 @@
+time,price,rth_open,note
+09:30:00,100.00,1,anchor
+09:31:00,95.00,0,drop reached while closed and should be blocked
+09:32:00,94.00,0,still blocked
+09:33:00,93.00,1,RTH opens and buy trail can be submitted
+09:34:00,94.86,1,buy trigger
+09:35:00,105.60,1,sell trail submitted
+09:36:00,107.00,1,sell trail follows
+09:37:00,105.80,1,sell trigger

@@ -1,0 +1,10 @@
+time,price,note
+09:30:00,100.0000,anchor
+09:31:00,103.0000,anchor reset
+09:32:00,101.0000,pullback below trigger
+09:33:00,104.0000,second anchor reset
+09:34:00,103.0000,minor pullback
+09:35:00,100.0000,still above 98.8 drop trigger
+09:36:00,98.8000,exact drop trigger; one BUY trail only
+09:37:00,97.0000,BUY trail ratchets lower
+09:38:00,98.9400,exact rebound; BUY fills

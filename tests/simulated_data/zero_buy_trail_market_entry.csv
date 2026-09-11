@@ -1,0 +1,6 @@
+time,price,note
+09:30:00,100.0000,anchor
+09:31:00,95.0000,exact drop; 0 percent BUY trail becomes market BUY
+09:32:00,105.6000,safe SELL trail activation
+09:33:00,107.0000,SELL trail ratchets
+09:34:00,105.9300,exact 1 percent stop; SELL fills

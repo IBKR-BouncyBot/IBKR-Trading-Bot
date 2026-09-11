@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "incident_id": "iren_invalid_price_20260722",
+  "title": "IREN BUY trail rejected after minTick was treated as the executable increment",
+  "sanitized": true,
+  "source_evidence": [
+    {
+      "kind": "audit_bundle",
+      "sha256": "c6490618a31e10a9822ebe96debfe59fc210fd3d7f6219710bf4087c74640d0c"
+    },
+    {
+      "kind": "gateway_log",
+      "sha256": "7da6a1df2eb771bee134b4e5a5308a55d73a496cf2637604150955f1dbd2915f"
+    }
+  ],
+  "contract": {
+    "ticker": "IREN",
+    "con_id": 526906130,
+    "sec_type": "STK",
+    "exchange": "SMART",
+    "primary_exchange": "NASDAQ",
+    "currency": "USD",
+    "min_tick": 0.0001,
+    "valid_exchanges": ["SMART", "NASDAQ"],
+    "market_rule_ids": [557, 557],
+    "market_rule_id": 557,
+    "market_rule_bands": [
+      {"low_edge": 0.0, "increment": 0.0001},
+      {"low_edge": 1.0, "increment": 0.01}
+    ]
+  },
+  "replay": {
+    "quantity": 234,
+    "trailing_percent": 0.14,
+    "proposed_stop": 42.5996,
+    "what_if": {
+      "status": "ValidationError",
+      "error_code": 321,
+      "message": "What-If order should have transmit flag set to TRUE."
+    },
+    "live_order": {
+      "status": "Inactive",
+      "filled": 0,
+      "remaining": 234,
+      "error_code": 201,
+      "message": "Order rejected - reason: Invalid Price"
+    }
+  },
+  "expected": {
+    "normalized_buy_stop": 42.6,
+    "what_if_ok": false,
+    "terminal_stage": "ERROR",
+    "automatic_retry": false
+  }
+}

@@ -1,0 +1,129 @@
+BouncyBot - IBKR Portable Trading Bot v3.5.0
+GUI layout, light-mode startup, and theme-state restoration report
+Release date: 2026-07-29
+
+LINEAGE AND VERSION
+===================
+
+This release is based on the final v3.4.0 source archive with the Windows pytest
+and Ruff F401 corrections already applied. Application, package, Windows build,
+documentation, and current release-test metadata were advanced to v3.5.0.
+
+The release is intentionally limited to GUI presentation and GUI startup state.
+No strategy, controller, broker-adapter, storage, recovery, market-data, order,
+position, RTH, ATR, risk, or database-schema implementation was changed.
+
+IMPLEMENTED CHANGES
+===================
+
+1. Price data monitor placement
+
+- The Price data monitor is now created directly below the stage ribbon.
+- In Advanced and Debug views it therefore appears before the IBKR connection
+  and strategy-configuration panels.
+- Simple view retains the same first visible operational section because those
+  configuration panels remain hidden there.
+
+2. Always-light application startup
+
+- Every ordinary start and watchdog replacement process applies the validated
+  light Qt Fusion palette during QApplication initialization.
+- The operating-system theme hook is no longer installed by the startup path.
+- View > Light mode and View > Dark mode remain available for an explicit
+  in-session appearance change.
+- Theme choice is not persisted to SQLite or another settings store, so the next
+  application process again starts in light mode.
+
+3. Workflow-button state after a theme switch
+
+- A command card whose semantic state is unchanged now still reasserts the
+  actual QPushButton enabled state.
+- After a Fusion palette/stylesheet change, the command-bar parent and view-mode
+  selector are restored and the existing input-lock and workflow gating logic
+  is reapplied from the current snapshot/stage.
+- The reconciliation runs immediately and once more on the next Qt event-loop
+  turn, after deferred style rebuilding has completed.
+- The correction does not bypass any connection, recovery, stage, data, risk,
+  or manual-lock condition; it calls the existing gating functions again.
+
+SAFETY AND COMPATIBILITY
+========================
+
+- The five-stage strategy and every broker-facing action path are unchanged.
+- Order construction, position sizing, protective/final SELL behavior, partial
+  fill handling, recovery, watchdog restart, account/contract ownership,
+  market-data freshness, RTH handling, ATR calculations, and P/L accounting are
+  unchanged.
+- v3.5.0 adds no SQLite table, column, index, migration, or persisted setting.
+- Existing v3.4.0 databases, active cycles, orders, executions, checkpoints,
+  watchdog state, captures, backups, and portable directories remain compatible.
+
+FINAL VERIFICATION
+==================
+
+Repository tests
+----------------
+
+- 1,124/1,124 collected pytest cases passed across all 121 test modules.
+- Each module was executed in a fresh pytest process in the Linux headless
+  environment to isolate Qt-stub module state; the aggregate contained no
+  skipped, xfailed, or failed case.
+- ResourceWarning was promoted to an error in every test process.
+- The run included the accelerated-soak suite and elapsed-time-bound
+  large-database performance tests.
+- 6 focused v3.5.0 regressions cover layout order, light startup, retained manual
+  theme controls, cached button enablement, immediate/deferred workflow-state
+  restoration, and preservation of the stale-worker fail-closed override.
+- A 225-case current-release GUI, documentation, packaging, and compatibility
+  selection also passed after the final documentation and metadata updates.
+
+Coverage and deterministic verification
+---------------------------------------
+
+- 77.9% combined statement/branch coverage for app/ and main.py; required gate:
+  75.0%.
+- 993/993 executable application callables were entered.
+- 17/17 targeted safety mutants were killed.
+- 58/58 deterministic simulation contracts passed across 54 CSV price-path
+  files.
+
+Supplemental verification
+-------------------------
+
+- Python compileall passed for app/, tests/, scripts/, and main.py.
+- Git whitespace validation passed.
+- Release review confirmed that the only runtime-source changes are app/gui.py
+  and the GUI startup path in main.py; trading and persistence modules are
+  byte-identical to the v3.4.0 baseline.
+- Ruff 0.16.0 and Pyright 1.1.411 were not available in the offline Linux
+  environment and could not be installed without network access, so they are
+  not recorded as passing for v3.5.0. The configured Pyright scope
+  (app/models.py, app/strategy.py, and app/storage.py) is unchanged. The Windows
+  run_all_tests.bat workflow remains the authoritative Ruff/Pyright gate.
+
+PLATFORM-SPECIFIC BOUNDARY
+==========================
+
+PySide6 and the Windows PyInstaller toolchain were not available in this Linux
+environment. GUI behavior was verified through the repository's headless Qt
+layer, source/layout assertions, command-card component tests, startup-path
+tests, and the complete offline suite. A native Windows executable was not
+built. The generated Windows build should still be smoke-tested for:
+
+- visual Price data monitor order in maximized Advanced view;
+- light appearance after ordinary and watchdog-replacement startup;
+- Light -> Dark -> Light switching while connected and while a strategy is
+  running;
+- correct command-button states with the input lock both locked and unlocked;
+- Windows packaging and shortcut creation.
+
+SOURCE RELEASE CONTENT
+======================
+
+The source archive is assembled from committed repository files beneath one
+IBKR-Trading-Bot-main/ root. It excludes Git metadata, virtual environments,
+__pycache__, bytecode, pytest/coverage caches, generated coverage reports,
+runtime databases, logs, watchdog handoffs/history, backups, exports, captures,
+and build output. The source Images/ directory remains included for repository
+and README assets; the Windows build continues to bundle only its required
+runtime icon and About-logo assets inside GUI/.

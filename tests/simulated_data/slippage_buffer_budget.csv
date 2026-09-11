@@ -1,0 +1,9 @@
+time,price,note
+09:30:00,100.00,anchor
+09:31:00,95.00,drop reached
+09:32:00,93.00,buy trail follows down
+09:33:00,94.86,buy trail triggers
+09:34:00,100.00,position open
+09:35:00,106.00,minimum profit condition can be reached with buffer
+09:36:00,107.00,sell trails
+09:37:00,105.80,sell triggers

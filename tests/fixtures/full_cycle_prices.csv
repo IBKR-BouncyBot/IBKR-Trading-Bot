@@ -1,0 +1,15 @@
+index,price,note
+0,100.00,initial anchor
+1,102.00,anchor resets upward
+2,98.00,fall but not enough
+3,96.80,initial drop reached and BUY trail submitted
+4,94.00,BUY trail follows downward
+5,92.00,new low watermark
+6,93.00,not enough rebound
+7,94.00,BUY trail triggers
+8,98.00,position open but below minimum-profit trigger
+9,100.00,still below required SELL activation
+10,101.00,SELL trail submitted
+11,103.00,SELL trail follows upward
+12,104.00,new high watermark
+13,102.50,SELL trail triggers

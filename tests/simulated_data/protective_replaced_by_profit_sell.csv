@@ -1,0 +1,10 @@
+time,price,note
+09:30:00,100.00,anchor
+09:31:00,95.00,drop reached and buy trail submitted
+09:32:00,93.00,buy trail follows down
+09:33:00,94.86,buy trail triggers
+09:34:00,100.00,position open below final profit trigger
+09:35:00,105.60,minimum profit reached and protective sell is cancelled
+09:36:00,105.70,final profit sell trail submitted after protective cancellation
+09:37:00,107.00,final sell trail follows upward
+09:38:00,105.80,final sell trail triggers
