@@ -20,7 +20,11 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
+<<<<<<< Updated upstream
 $version = "3.9.0"
+=======
+$version = "4.0.0"
+>>>>>>> Stashed changes
 $appName = "IBKRTradingBot"
 $releaseName = "${appName}_${version}_Windows"
 $releaseDirectory = Join-Path $root "release"

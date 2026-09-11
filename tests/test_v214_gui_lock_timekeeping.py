@@ -9,9 +9,15 @@ PYPROJECT = Path("pyproject.toml").read_text(encoding="utf-8")
 
 
 def test_v215_version_metadata_and_package_docs_are_current():
+<<<<<<< Updated upstream
     assert "BouncyBot - IBKR Portable Trading Bot v3.9.0" in GUI
     assert "# BouncyBot - an IBKR Portable Trading Bot " in README
     assert 'version = "3.9.0"' in PYPROJECT
+=======
+    assert "BouncyBot - IBKR Portable Trading Bot v4.0.0" in GUI
+    assert "# BouncyBot - an IBKR Portable Trading Bot " in README
+    assert 'version = "4.0.0"' in PYPROJECT
+>>>>>>> Stashed changes
     assert Path("docs/legacy/V2_20_RECOVERY_GRAPH_RECOVERY_UI.md").exists()
 
 
@@ -59,7 +65,11 @@ def test_v215_rth_text_and_utc_timekeeping_are_visible_and_consistent():
 
 
 def test_v215_default_history_example_uses_current_utc_audit_data():
+<<<<<<< Updated upstream
     assert 'This is synthetic v3.9.0 paper-trading example data.' in GUI
+=======
+    assert 'This is synthetic v4.0.0 paper-trading example data.' in GUI
+>>>>>>> Stashed changes
     assert '"created_at": "2026-07-16T13:35:00+00:00"' in GUI
     assert '"buy_filled_at": "2026-07-16T14:08:27+00:00"' in GUI
     assert '"sell_filled_at": "2026-07-16T15:55:14+00:00"' in GUI

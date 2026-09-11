@@ -116,9 +116,15 @@ def test_v300_metadata_reconciliation_ui_and_quality_config_are_present():
     readme = Path("README.md").read_text(encoding="utf-8")
     script = Path("scripts/run_quality_checks.py").read_text(encoding="utf-8")
 
+<<<<<<< Updated upstream
     assert "BouncyBot - IBKR Portable Trading Bot v3.9.0" in gui
     assert "# BouncyBot - an IBKR Portable Trading Bot " in readme
     assert 'version = "3.9.0"' in pyproject
+=======
+    assert "BouncyBot - IBKR Portable Trading Bot v4.0.0" in gui
+    assert "# BouncyBot - an IBKR Portable Trading Bot " in readme
+    assert 'version = "4.0.0"' in pyproject
+>>>>>>> Stashed changes
     assert 'self.tabs.addTab(self.recovery_tab, "Reconciliation")' in gui
     assert "Reconciliation screen: SQLite vs IBKR/TWS" in gui
     assert "Export audit bundle" in gui

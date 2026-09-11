@@ -1,4 +1,8 @@
+<<<<<<< Updated upstream
 """v3.9.0 reviewed local-fix and fail-closed regression coverage."""
+=======
+"""v4.0.0 reviewed local-fix and fail-closed regression coverage."""
+>>>>>>> Stashed changes
 
 from __future__ import annotations
 
@@ -370,12 +374,17 @@ def test_v360_release_metadata_and_documentation_locations_are_current() -> None
     security = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
     docs_index = (ROOT / "docs" / "README.md").read_text(encoding="utf-8")
     legacy_index = (ROOT / "docs" / "legacy" / "README.md").read_text(encoding="utf-8")
+<<<<<<< Updated upstream
     current_note = ROOT / "docs" / "V3_9_0_AUDIT_DIAGNOSTIC_COALESCING.md"
+=======
+    current_note = ROOT / "docs" / "V4_0_0_ATR_SESSION_MEMORY_AND_ORDER_EDITING.md"
+>>>>>>> Stashed changes
     archived_v350_note = ROOT / "docs" / "legacy" / "V3_5_0_GUI_LIGHT_MODE_AND_LAYOUT.md"
     archived_v350_report = ROOT / "docs" / "legacy" / "V3_5_0_IMPLEMENTATION_TEST_REPORT.txt"
     archived_v360_note = ROOT / "docs" / "legacy" / "V3_6_0_SELL_RECONCILIATION_AND_HISTORY_ROBUSTNESS.md"
     archived_v360_report = ROOT / "docs" / "legacy" / "V3_6_0_IMPLEMENTATION_TEST_REPORT.txt"
 
+<<<<<<< Updated upstream
     assert 'APP_VERSION = "3.9.0"' in gui
     assert "BouncyBot - IBKR Portable Trading Bot v3.9.0" in gui
     assert "This is synthetic v3.9.0 paper-trading example data." in gui
@@ -385,6 +394,17 @@ def test_v360_release_metadata_and_documentation_locations_are_current() -> None
     assert "## v3.9.0" in changelog
     assert "current repository version, v3.9.0" in security
     assert "current v3.9.0 behavior" in docs_index
+=======
+    assert 'APP_VERSION = "4.0.0"' in gui
+    assert "BouncyBot - IBKR Portable Trading Bot v4.0.0" in gui
+    assert "This is synthetic v4.0.0 paper-trading example data." in gui
+    assert 'version = "4.0.0"' in pyproject
+    assert '$version = "4.0.0"' in build
+    assert "**Current release: v4.0.0**" in readme
+    assert "## v4.0.0" in changelog
+    assert "current repository version, v4.0.0" in security
+    assert "current v4.0.0 behavior" in docs_index
+>>>>>>> Stashed changes
     assert current_note.is_file()
     assert archived_v350_note.is_file()
     assert archived_v350_report.is_file()

@@ -1,4 +1,8 @@
+<<<<<<< Updated upstream
 """v3.9.0 audit-diagnostic coalescing and operator-status regressions."""
+=======
+"""v4.0.0 audit-diagnostic coalescing and operator-status regressions."""
+>>>>>>> Stashed changes
 
 from __future__ import annotations
 

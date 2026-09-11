@@ -1,4 +1,8 @@
+<<<<<<< Updated upstream
 """v3.9.0 release metadata, compatibility, and documentation regressions."""
+=======
+"""v4.0.0 release metadata, compatibility, and documentation regressions."""
+>>>>>>> Stashed changes
 
 from pathlib import Path
 
@@ -15,12 +19,17 @@ BUILD = (ROOT / "scripts" / "build_windows.ps1").read_text(encoding="utf-8")
 SECURITY = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
 DOCS_INDEX = (ROOT / "docs" / "README.md").read_text(encoding="utf-8")
 LEGACY_INDEX = (ROOT / "docs" / "legacy" / "README.md").read_text(encoding="utf-8")
+<<<<<<< Updated upstream
 CURRENT_NOTE = ROOT / "docs" / "V3_9_0_AUDIT_DIAGNOSTIC_COALESCING.md"
+=======
+CURRENT_NOTE = ROOT / "docs" / "V4_0_0_ATR_SESSION_MEMORY_AND_ORDER_EDITING.md"
+>>>>>>> Stashed changes
 ARCHIVED_V330_NOTE = ROOT / "docs" / "legacy" / "V3_3_0_DARK_MODE_AUDIT_AND_WINDOWS_RELEASE.md"
 ARCHIVED_V322_NOTE = ROOT / "docs" / "legacy" / "V3_2_2_GUI_INFORMATION_AND_AUDIT_LAYOUT.md"
 
 
 def test_v330_release_metadata_is_consistent() -> None:
+<<<<<<< Updated upstream
     assert 'APP_VERSION = "3.9.0"' in GUI
     assert "BouncyBot - IBKR Portable Trading Bot v3.9.0" in GUI
     assert "This is synthetic v3.9.0 paper-trading example data." in GUI
@@ -30,6 +39,17 @@ def test_v330_release_metadata_is_consistent() -> None:
     assert "## v3.9.0" in CHANGELOG
     assert "current repository version, v3.9.0" in SECURITY
     assert "current v3.9.0 behavior" in DOCS_INDEX
+=======
+    assert 'APP_VERSION = "4.0.0"' in GUI
+    assert "BouncyBot - IBKR Portable Trading Bot v4.0.0" in GUI
+    assert "This is synthetic v4.0.0 paper-trading example data." in GUI
+    assert "**Current release: v4.0.0**" in README
+    assert 'version = "4.0.0"' in PYPROJECT
+    assert '$version = "4.0.0"' in BUILD
+    assert "## v4.0.0" in CHANGELOG
+    assert "current repository version, v4.0.0" in SECURITY
+    assert "current v4.0.0 behavior" in DOCS_INDEX
+>>>>>>> Stashed changes
 
 
 def test_v330_release_note_is_current_and_v322_is_archived() -> None:

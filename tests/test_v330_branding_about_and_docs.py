@@ -1,4 +1,8 @@
+<<<<<<< Updated upstream
 """v3.9.0 branding, About layout, packaging, and documentation cleanup."""
+=======
+"""v4.0.0 branding, About layout, packaging, and documentation cleanup."""
+>>>>>>> Stashed changes
 
 from __future__ import annotations
 
@@ -17,7 +21,11 @@ README = (ROOT / "README.md").read_text(encoding="utf-8")
 GUI_SOURCE = (ROOT / "app" / "gui.py").read_text(encoding="utf-8")
 MAIN_SOURCE = (ROOT / "main.py").read_text(encoding="utf-8")
 BUILD_SOURCE = (ROOT / "scripts" / "build_windows.ps1").read_text(encoding="utf-8")
+<<<<<<< Updated upstream
 CURRENT_NOTE = ROOT / "docs" / "V3_9_0_AUDIT_DIAGNOSTIC_COALESCING.md"
+=======
+CURRENT_NOTE = ROOT / "docs" / "V4_0_0_ATR_SESSION_MEMORY_AND_ORDER_EDITING.md"
+>>>>>>> Stashed changes
 LEGACY_DIR = ROOT / "docs" / "legacy"
 LOGO_PATH = ROOT / "Images" / "BouncyBot_logo.png"
 ICON_PNG_PATH = ROOT / "Images" / "BouncyBot_app_icon.png"
@@ -60,7 +68,11 @@ def test_about_dialog_contains_logo_links_version_and_readme_support_data(gui_mo
     dialog = gui_module.AboutInfoDialog()
 
     assert dialog.title_label.text() == "BouncyBot - IBKR Portable Trading Bot"
+<<<<<<< Updated upstream
     assert dialog.version_label.text() == "Version 3.9.0"
+=======
+    assert dialog.version_label.text() == "Version 4.0.0"
+>>>>>>> Stashed changes
     assert gui_module.BOUNCYBOT_GITHUB_URL in dialog.repository_link.text()
     assert gui_module.BOUNCYBOT_REFERRAL_URL in dialog.referral_link.text()
     assert set(dialog.support_address_fields) == {
@@ -170,7 +182,11 @@ def test_windows_build_creates_release_root_shortcut_and_checksums_it() -> None:
 
 
 def test_only_current_release_note_remains_in_docs_root() -> None:
+<<<<<<< Updated upstream
     root_version_notes = sorted(path.name for path in (ROOT / "docs").glob("V3_*") if path.is_file())
+=======
+    root_version_notes = sorted(path.name for path in (ROOT / "docs").glob("V[0-9]_*") if path.is_file())
+>>>>>>> Stashed changes
     assert root_version_notes == [CURRENT_NOTE.name]
     assert (LEGACY_DIR / "V3_2_2_GUI_INFORMATION_AND_AUDIT_LAYOUT.md").is_file()
 

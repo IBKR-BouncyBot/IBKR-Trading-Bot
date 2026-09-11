@@ -66,6 +66,12 @@ def test_command_bar_done_search_and_confirm_are_disabled_while_strategy_runs():
 
 
 def test_v221_version_strings():
+<<<<<<< Updated upstream
     assert "BouncyBot - IBKR Portable Trading Bot v3.9.0" in GUI
     assert '# BouncyBot - an IBKR Portable Trading Bot ' in Path("README.md").read_text(encoding="utf-8")
     assert 'version = "3.9.0"' in Path("pyproject.toml").read_text(encoding="utf-8")
+=======
+    assert "BouncyBot - IBKR Portable Trading Bot v4.0.0" in GUI
+    assert '# BouncyBot - an IBKR Portable Trading Bot ' in Path("README.md").read_text(encoding="utf-8")
+    assert 'version = "4.0.0"' in Path("pyproject.toml").read_text(encoding="utf-8")
+>>>>>>> Stashed changes

@@ -6,9 +6,15 @@ PYPROJECT = Path("pyproject.toml").read_text(encoding="utf-8")
 
 
 def test_v218_version_and_package_metadata_are_current():
+<<<<<<< Updated upstream
     assert "BouncyBot - IBKR Portable Trading Bot v3.9.0" in GUI
     assert "# BouncyBot - an IBKR Portable Trading Bot " in README
     assert 'version = "3.9.0"' in PYPROJECT
+=======
+    assert "BouncyBot - IBKR Portable Trading Bot v4.0.0" in GUI
+    assert "# BouncyBot - an IBKR Portable Trading Bot " in README
+    assert 'version = "4.0.0"' in PYPROJECT
+>>>>>>> Stashed changes
     assert Path("docs/legacy/V2_20_RECOVERY_GRAPH_RECOVERY_UI.md").exists()
     assert Path("docs/legacy/V2_20_RECOVERY_GRAPH_RECOVERY_UI.md").exists()
 

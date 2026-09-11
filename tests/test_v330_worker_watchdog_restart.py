@@ -1,4 +1,8 @@
+<<<<<<< Updated upstream
 """v3.9.0 fail-closed worker watchdog and replacement-process regressions."""
+=======
+"""v4.0.0 fail-closed worker watchdog and replacement-process regressions."""
+>>>>>>> Stashed changes
 
 from __future__ import annotations
 

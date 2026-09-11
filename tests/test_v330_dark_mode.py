@@ -1,4 +1,8 @@
+<<<<<<< Updated upstream
 """Fusion light/dark appearance regressions for v3.9.0."""
+=======
+"""Fusion light/dark appearance regressions for v4.0.0."""
+>>>>>>> Stashed changes
 
 from __future__ import annotations
 

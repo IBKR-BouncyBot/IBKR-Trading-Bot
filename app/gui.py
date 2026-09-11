@@ -90,6 +90,10 @@ from .models import (
     suggested_broker_timing_defaults,
     suggested_hard_risk_defaults,
 )
+<<<<<<< Updated upstream
+=======
+from .order_edit_policy import NEXT_ORDER_QUOTE_GUARD_FIELDS, NEXT_ORDER_RISK_FIELDS
+>>>>>>> Stashed changes
 from .paths import debug_captures_dir, resource_path
 from .timeline_scaling import (
     choose_timestamp_for_display,
@@ -148,7 +152,11 @@ CURRENCY_SYMBOLS = {"USD": "$", "EUR": "€"}
 ACTIVE_CONTRACT_CURRENCY = "USD"
 CURRENCY_SYMBOL = CURRENCY_SYMBOLS[ACTIVE_CONTRACT_CURRENCY]
 
+<<<<<<< Updated upstream
 APP_VERSION = "3.9.0"
+=======
+APP_VERSION = "4.0.0"
+>>>>>>> Stashed changes
 DARK_MODE_APP_PROPERTY = "bouncybotDarkMode"
 
 LIGHT_FUSION_PALETTE_COLORS = {
@@ -1677,7 +1685,11 @@ class LiveStatusBar(QFrame):
 
         platform = platform_label(connection.get("platform") or GATEWAY_PLATFORM)
         mode = str(connection.get("trading_mode") or "live").upper()
+<<<<<<< Updated upstream
         self.pills["Profile"].set_value(f"{platform} {mode}", "risk" if mode == "LIVE" else "success")
+=======
+        self.pills["Profile"].set_value(f"{platform} {mode}", "waiting" if mode == "LIVE" else "success")
+>>>>>>> Stashed changes
         account_candidates = [
             cycle.get("account"),
             connection.get("account"),
@@ -4989,7 +5001,11 @@ class StopDialog(QDialog):
         self.stop_exit_btn = QPushButton("Stop strategy and exit app")
         self.exit_resume_later_btn = QPushButton("Exit app and resume/recover later")
         self.exit_only_btn = QPushButton("Exit app")
+<<<<<<< Updated upstream
         self.close_btn = QPushButton("Cancel" if self.safe_to_exit else "Do not stop")
+=======
+        self.close_btn = QPushButton("Cancel")
+>>>>>>> Stashed changes
 
         self.sell_market_btn.setToolTip(
             "Opens a second OK/Cancel warning because a market fill may realize a loss. After OK, the bot cancels any app-owned working orders first. "
@@ -5025,8 +5041,11 @@ class StopDialog(QDialog):
                 count_label.setWordWrap(True)
                 layout.addWidget(count_label)
             layout.addWidget(self.cancel_btn)
+<<<<<<< Updated upstream
             if self.show_position_close_action:
                 layout.addWidget(self.sell_market_btn)
+=======
+>>>>>>> Stashed changes
             layout.addWidget(self.leave_btn)
             if self.show_resume_later_exit_action:
                 resume_note = QLabel(
@@ -5038,6 +5057,7 @@ class StopDialog(QDialog):
                 layout.addWidget(self.exit_resume_later_btn)
             layout.addWidget(self.after_btn)
         elif self.show_position_close_action:
+<<<<<<< Updated upstream
             position_note = QLabel(
                 f"No app-owned open TWS orders are visible, but SQLite shows {self.unsold_quantity:g} app-bought unsold share(s) for the active cycle. "
                 "To exit the strategy and flatten the app-owned position, use the market SELL option. Refresh from IBKR/TWS in Reconciliation if this does not match TWS."
@@ -5046,6 +5066,8 @@ class StopDialog(QDialog):
             position_note.setWordWrap(True)
             layout.addWidget(position_note)
             layout.addWidget(self.sell_market_btn)
+=======
+>>>>>>> Stashed changes
             if self.show_resume_later_exit_action:
                 resume_note = QLabel(
                     "Exit app and resume/recover later leaves the app-owned position recorded in SQLite and sends no broker command. On next start, reconnect and click 4. Start strategy to resume monitoring/recovery."
@@ -5078,6 +5100,33 @@ class StopDialog(QDialog):
                 layout.addWidget(self.stop_exit_btn)
 
         layout.addWidget(self.close_btn)
+<<<<<<< Updated upstream
+=======
+        if self.show_position_close_action and not self.safe_to_exit:
+            position_note = QLabel(
+                f"Optional market SELL: SQLite shows {self.unsold_quantity:g} app-bought unsold share(s). "
+                "This cancels app-owned working orders before selling the remaining app-owned position and may realize a loss. "
+                "It is not required to exit and resume later. Refresh Reconciliation if the quantity differs from IBKR/TWS."
+            )
+            position_note.setObjectName("Muted")
+            position_note.setWordWrap(True)
+            layout.addWidget(position_note)
+            layout.addWidget(self.sell_market_btn)
+
+        resume_font = self.exit_resume_later_btn.font()
+        resume_font.setBold(True)
+        self.exit_resume_later_btn.setFont(resume_font)
+        # Enter/Escape must not accidentally liquidate or cancel broker orders.
+        for button in (
+            self.cancel_btn, self.sell_market_btn, self.leave_btn, self.after_btn,
+            self.stop_now_btn, self.stop_exit_btn, self.exit_resume_later_btn,
+            self.exit_only_btn, self.close_btn,
+        ):
+            button.setAutoDefault(False)
+            button.setDefault(False)
+        self.close_btn.setDefault(True)
+        self.close_btn.setFocus()
+>>>>>>> Stashed changes
 
         self.cancel_btn.clicked.connect(lambda: self._choose(StopAction.CANCEL_OPEN_BOT_ORDERS))
         self.sell_market_btn.clicked.connect(self._confirm_sell_market)
@@ -6042,7 +6091,11 @@ class CycleAuditDialog(QDialog):
             lines.extend([
                 "BUILT-IN EXAMPLE CYCLE",
                 "=" * 80,
+<<<<<<< Updated upstream
                 "This is synthetic v3.9.0 paper-trading example data. It is not an actual market record, is not stored in SQLite, and cannot affect trading or risk totals.",
+=======
+                "This is synthetic v4.0.0 paper-trading example data. It is not an actual market record, is not stored in SQLite, and cannot affect trading or risk totals.",
+>>>>>>> Stashed changes
                 "The scenario models a liquid U.S. stock pullback, a multi-execution trailing BUY fill, a temporary protective SELL, and a modest trailing-stop profit exit.",
                 "",
             ])
@@ -6167,7 +6220,11 @@ class MainWindow(QMainWindow):
         self._watchdog_shutdown_expected = False
         auto_restart_value = str(os.environ.get("IBKR_BOT_AUTO_RESTART", "1") or "1").strip().lower()
         self._watchdog_auto_restart_enabled = auto_restart_value not in {"0", "false", "no", "off"}
+<<<<<<< Updated upstream
         self.setWindowTitle("BouncyBot - IBKR Portable Trading Bot v3.9.0")
+=======
+        self.setWindowTitle("BouncyBot - IBKR Portable Trading Bot v4.0.0")
+>>>>>>> Stashed changes
         icon_path = resource_path("Images", "BouncyBot_app_icon.png")
         if icon_path.is_file():
             self.setWindowIcon(QIcon(str(icon_path)))
@@ -7555,6 +7612,7 @@ class MainWindow(QMainWindow):
         self.edit_lock_label.setWordWrap(True)
         grid.addWidget(self.edit_lock_label, 6, 0, 1, 4)
 
+<<<<<<< Updated upstream
         self.profit_guard_label = QLabel("")
         self.profit_guard_label.setObjectName("ProfitGuardGood")
         self.profit_guard_label.setWordWrap(True)
@@ -7566,6 +7624,14 @@ class MainWindow(QMainWindow):
         self.native_trail_note.setObjectName("Muted")
         self.native_trail_note.setWordWrap(True)
         grid.addWidget(self.native_trail_note, 9, 0, 1, 4)
+=======
+        self.profit_guard_graph = ProfitGuardWidget()
+        grid.addWidget(self.profit_guard_graph, 7, 0, 1, 4)
+        self.native_trail_note = QLabel("Trailing percentages above 0 use native TWS/IB Gateway trailing-stop orders after acceptance; 0 disables trailing for that side and uses a market order at the configured trigger. Chart levels are app-side planning estimates.")
+        self.native_trail_note.setObjectName("Muted")
+        self.native_trail_note.setWordWrap(True)
+        grid.addWidget(self.native_trail_note, 8, 0, 1, 4)
+>>>>>>> Stashed changes
 
         self.ticker_search_btn.clicked.connect(self._search_ticker_clicked)
         self.ticker_use_match_btn.clicked.connect(self._use_selected_ticker_match)
@@ -8248,6 +8314,13 @@ class MainWindow(QMainWindow):
         category = str(self._field_change_widgets.get(key).property("changeFieldCategory") if key in self._field_change_widgets else "")
         if not self._is_active_stage(stage):
             return "Idle", "No active cycle. The value will be used when the next cycle starts."
+<<<<<<< Updated upstream
+=======
+        if key in NEXT_ORDER_RISK_FIELDS and stage != Stage.WAIT_INITIAL_DROP.value:
+            if key in NEXT_ORDER_QUOTE_GUARD_FIELDS and stage in {Stage.BUY_TRAIL_ACTIVE.value, Stage.WAIT_RISE_TRIGGER.value}:
+                return "Next order", "Used before the next unsubmitted final SELL (and later BUY); an existing BUY/SELL and its cancellation policy are not changed."
+            return "Next order", "Queued for the next BUY admission, including auto-repeat. Existing broker orders, fills and their cancellation policy are unchanged."
+>>>>>>> Stashed changes
         if category == "contract":
             return "Next cycle only", "Ticker, conId, exchange, and contract identity are fixed for the active cycle and recovery matching."
         if stage == Stage.WAIT_INITIAL_DROP.value:
@@ -8832,6 +8905,7 @@ class MainWindow(QMainWindow):
             buy_rebound = float(self.buy_rebound_spin.value())
             minimum_profit = float(self.rise_trigger_spin.value())
             sell = float(self.sell_trail_spin.value())
+<<<<<<< Updated upstream
             levels = projected_minimum_profit_levels(
                 initial,
                 buy_rebound,
@@ -8857,6 +8931,8 @@ class MainWindow(QMainWindow):
                 self.profit_guard_label.setObjectName("ProfitGuardGood")
                 self.profit_guard_label.style().unpolish(self.profit_guard_label)
                 self.profit_guard_label.style().polish(self.profit_guard_label)
+=======
+>>>>>>> Stashed changes
             if hasattr(self, "profit_guard_graph"):
                 reference, reference_label = self._strategy_map_reference() if hasattr(self, "_strategy_map_reference") else (100.0, "normalized baseline")
                 self.profit_guard_graph.set_values(
@@ -9491,7 +9567,18 @@ class MainWindow(QMainWindow):
                 bars = price_snapshot.get("atr_bars_available") or atr.get("bars_available")
                 profit_mode = "Minimum profit is ATR-adaptive." if self.atr_min_profit_adaptive_check.isChecked() else "Minimum profit remains manually set."
                 protective_mode = "Protective SELL is ATR-adaptive." if self.atr_protective_sell_adaptive_check.isChecked() else "Protective SELL remains manually set."
+<<<<<<< Updated upstream
                 self.atr_status_label.setText(f"ATR adaptive ON: ATR {_format_field_value('atr_pct', atr_pct)} from {bars or '-'} RTH-only app-observed bars. {profit_mode} {protective_mode}")
+=======
+                if atr.get("seeded"):
+                    source_text = (
+                        f"saved RTH estimate from {atr.get('seed_observed_at', '-')}; "
+                        f"current-session bars {atr.get('live_bars_available', 0)}/{atr.get('bars_required', '-')}"
+                    )
+                else:
+                    source_text = f"{bars or '-'} RTH-only app-observed bars"
+                self.atr_status_label.setText(f"ATR adaptive ON: ATR {_format_field_value('atr_pct', atr_pct)} from {source_text}. {profit_mode} {protective_mode}")
+>>>>>>> Stashed changes
             else:
                 reason = atr.get("reason") or "waiting for enough price observations"
                 bars = price_snapshot.get("atr_bars_available") or atr.get("bars_available") or 0
@@ -10495,6 +10582,16 @@ class MainWindow(QMainWindow):
             self._set_widgets_enabled([self.investment_spin, self.initial_drop_spin, self.buy_rebound_spin, self.rise_trigger_spin, self.sell_trail_spin, self.protective_sell_check, self.protective_sell_trail_spin, self.slippage_buffer_check, self.slippage_buffer_spin, self.hard_risk_limits_check, self.max_daily_loss_ticker_spin, self.max_daily_loss_total_spin, self.max_cycles_ticker_day_spin, self.max_consecutive_losses_spin, self.max_spread_pct_spin, self.min_trade_price_spin, self.max_gap_pct_spin, self.block_delayed_live_check, self.what_if_check, self.stale_data_guard_check, self.max_price_age_spin, self.max_bidask_age_spin, self.max_rth_age_spin, self.volatility_filter_check, self.volatility_window_spin, self.max_recent_move_spin, self.session_timing_guard_check, self.no_new_buy_first_spin, self.no_new_buy_last_spin, self.cancel_buy_before_close_spin, self.cancel_sell_and_liquidate_before_close_check, self.liquidate_before_close_spin, self.reinvest_check], True)
             message = "Fields lock automatically when changing them would require replacing an active native order."
 
+<<<<<<< Updated upstream
+=======
+        if active:
+            self._set_widgets_enabled([
+                widget for key, widget in getattr(self, "_field_change_widgets", {}).items()
+                if key in NEXT_ORDER_RISK_FIELDS
+            ], True)
+            message += " Risk/timing edits apply to the next eligible new order, not to working orders; see each field's applicability."
+
+>>>>>>> Stashed changes
         self._set_widgets_enabled(self._atr_config_widgets(), True)
         self._set_atr_percentage_field_state(bool(self.atr_adaptive_check.isChecked()))
         self._set_widgets_enabled([self.auto_repeat_check], True)

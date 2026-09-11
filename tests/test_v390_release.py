@@ -1,4 +1,8 @@
+<<<<<<< Updated upstream
 """v3.9.0 release metadata, compatibility, and packaging regressions."""
+=======
+"""Archived v3.9.0 behavior with current release metadata regressions."""
+>>>>>>> Stashed changes
 
 from __future__ import annotations
 
@@ -14,13 +18,18 @@ BUILD = (ROOT / "scripts" / "build_windows.ps1").read_text(encoding="utf-8")
 SECURITY = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
 DOCS_INDEX = (ROOT / "docs" / "README.md").read_text(encoding="utf-8")
 LEGACY_INDEX = (ROOT / "docs" / "legacy" / "README.md").read_text(encoding="utf-8")
+<<<<<<< Updated upstream
 CURRENT_NOTE = ROOT / "docs" / "V3_9_0_AUDIT_DIAGNOSTIC_COALESCING.md"
+=======
+CURRENT_NOTE = ROOT / "docs" / "legacy" / "V3_9_0_AUDIT_DIAGNOSTIC_COALESCING.md"
+>>>>>>> Stashed changes
 ARCHIVED_V380_NOTE = ROOT / "docs" / "legacy" / "V3_8_0_BUY_PARTIAL_FILL_GRACE.md"
 ARCHIVED_V380_REPORT = ROOT / "docs" / "legacy" / "V3_8_0_IMPLEMENTATION_TEST_REPORT.txt"
 CURRENT_REPORT = ROOT / "IMPLEMENTATION_TEST_REPORT.txt"
 
 
 def test_v390_release_metadata_is_consistent() -> None:
+<<<<<<< Updated upstream
     assert 'APP_VERSION = "3.9.0"' in GUI
     assert "BouncyBot - IBKR Portable Trading Bot v3.9.0" in GUI
     assert "This is synthetic v3.9.0 paper-trading example data." in GUI
@@ -30,6 +39,17 @@ def test_v390_release_metadata_is_consistent() -> None:
     assert "## v3.9.0" in CHANGELOG
     assert "current repository version, v3.9.0" in SECURITY
     assert "current v3.9.0 behavior" in DOCS_INDEX
+=======
+    assert 'APP_VERSION = "4.0.0"' in GUI
+    assert "BouncyBot - IBKR Portable Trading Bot v4.0.0" in GUI
+    assert "This is synthetic v4.0.0 paper-trading example data." in GUI
+    assert "**Current release: v4.0.0**" in README
+    assert 'version = "4.0.0"' in PYPROJECT
+    assert '$version = "4.0.0"' in BUILD
+    assert "## v4.0.0" in CHANGELOG
+    assert "current repository version, v4.0.0" in SECURITY
+    assert "current v4.0.0 behavior" in DOCS_INDEX
+>>>>>>> Stashed changes
 
 
 def test_v390_release_note_is_current_and_v380_material_is_archived() -> None:
@@ -38,7 +58,11 @@ def test_v390_release_note_is_current_and_v380_material_is_archived() -> None:
     assert ARCHIVED_V380_REPORT.is_file()
     assert not (ROOT / "docs" / ARCHIVED_V380_NOTE.name).exists()
     assert CURRENT_REPORT.is_file()
+<<<<<<< Updated upstream
     assert "BouncyBot v3.9.0" in CURRENT_REPORT.read_text(encoding="utf-8")
+=======
+    assert "BouncyBot v4.0.0" in CURRENT_REPORT.read_text(encoding="utf-8")
+>>>>>>> Stashed changes
     assert CURRENT_NOTE.name in README
     assert CURRENT_NOTE.name in DOCS_INDEX
     assert ARCHIVED_V380_NOTE.name in README

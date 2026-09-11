@@ -11,11 +11,16 @@ PYPROJECT = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 BUILD_SCRIPT = (ROOT / "scripts" / "build_windows.ps1").read_text(encoding="utf-8")
 DOCS_INDEX = (ROOT / "docs" / "README.md").read_text(encoding="utf-8")
 LEGACY_INDEX = (ROOT / "docs" / "legacy" / "README.md").read_text(encoding="utf-8")
+<<<<<<< Updated upstream
 CURRENT_RELEASE_NOTE = ROOT / "docs" / "V3_9_0_AUDIT_DIAGNOSTIC_COALESCING.md"
+=======
+CURRENT_RELEASE_NOTE = ROOT / "docs" / "V4_0_0_ATR_SESSION_MEMORY_AND_ORDER_EDITING.md"
+>>>>>>> Stashed changes
 V310_RELEASE_NOTE = ROOT / "docs" / "legacy" / "V3_1_0_CLOSE_BEFORE_RTH_LIQUIDATION.md"
 
 
 def test_current_release_metadata_is_consistent_and_v310_note_is_archived() -> None:
+<<<<<<< Updated upstream
     assert "BouncyBot - IBKR Portable Trading Bot v3.9.0" in GUI
     assert "This is synthetic v3.9.0 paper-trading example data." in GUI
     assert README.startswith("# BouncyBot - an IBKR Portable Trading Bot \n")
@@ -24,6 +29,16 @@ def test_current_release_metadata_is_consistent_and_v310_note_is_archived() -> N
     assert '$version = "3.9.0"' in BUILD_SCRIPT
     assert "## v3.9.0" in CHANGELOG
     assert "current v3.9.0 behavior" in DOCS_INDEX
+=======
+    assert "BouncyBot - IBKR Portable Trading Bot v4.0.0" in GUI
+    assert "This is synthetic v4.0.0 paper-trading example data." in GUI
+    assert README.startswith("# BouncyBot - an IBKR Portable Trading Bot \n")
+    assert "**Current release: v4.0.0**" in README
+    assert 'version = "4.0.0"' in PYPROJECT
+    assert '$version = "4.0.0"' in BUILD_SCRIPT
+    assert "## v4.0.0" in CHANGELOG
+    assert "current v4.0.0 behavior" in DOCS_INDEX
+>>>>>>> Stashed changes
     assert CURRENT_RELEASE_NOTE.is_file()
     assert V310_RELEASE_NOTE.is_file()
     assert not (ROOT / "docs" / "V3_1_0_CLOSE_BEFORE_RTH_LIQUIDATION.md").exists()

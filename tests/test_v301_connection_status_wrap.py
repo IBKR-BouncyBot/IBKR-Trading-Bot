@@ -7,9 +7,15 @@ DOC = Path("docs/legacy/V3_0_1_CONNECTION_STATUS_WRAP.md").read_text(encoding="u
 
 
 def test_v301_version_metadata_is_current():
+<<<<<<< Updated upstream
     assert "BouncyBot - IBKR Portable Trading Bot v3.9.0" in GUI
     assert "# BouncyBot - an IBKR Portable Trading Bot " in README
     assert 'version = "3.9.0"' in PYPROJECT
+=======
+    assert "BouncyBot - IBKR Portable Trading Bot v4.0.0" in GUI
+    assert "# BouncyBot - an IBKR Portable Trading Bot " in README
+    assert 'version = "4.0.0"' in PYPROJECT
+>>>>>>> Stashed changes
     assert "v3.0.1 connection-status wrapping" in DOC
 
 

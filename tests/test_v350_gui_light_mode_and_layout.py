@@ -1,4 +1,8 @@
+<<<<<<< Updated upstream
 """v3.9.0 GUI layout, startup-theme, and theme-switch state regressions."""
+=======
+"""v4.0.0 GUI layout, startup-theme, and theme-switch state regressions."""
+>>>>>>> Stashed changes
 
 from __future__ import annotations
 

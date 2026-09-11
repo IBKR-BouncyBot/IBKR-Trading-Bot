@@ -8,9 +8,15 @@ PYPROJECT = Path("pyproject.toml").read_text(encoding="utf-8")
 
 
 def test_v220_version_metadata_updated():
+<<<<<<< Updated upstream
     assert "BouncyBot - IBKR Portable Trading Bot v3.9.0" in GUI
     assert "# BouncyBot - an IBKR Portable Trading Bot " in README
     assert 'version = "3.9.0"' in PYPROJECT
+=======
+    assert "BouncyBot - IBKR Portable Trading Bot v4.0.0" in GUI
+    assert "# BouncyBot - an IBKR Portable Trading Bot " in README
+    assert 'version = "4.0.0"' in PYPROJECT
+>>>>>>> Stashed changes
 
 
 def test_rth_status_is_human_readable_with_hours_and_countdown():

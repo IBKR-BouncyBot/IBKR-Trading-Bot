@@ -57,6 +57,10 @@ if os.environ.get("IBKR_BOT_HEADLESS_SIGNALS") == "1":
 else:
     from PySide6.QtCore import QObject, Signal
 
+<<<<<<< Updated upstream
+=======
+from .atr_memory import AtrSessionMemory, atr_seed_identity
+>>>>>>> Stashed changes
 from .ib_adapter import (
     BrokerAdapterError,
     IbAsyncTwsAdapter,
@@ -80,6 +84,17 @@ from .models import (
     utc_now_iso,
 )
 from .order_diagnostics import native_trailing_order_diagnostics
+<<<<<<< Updated upstream
+=======
+from .order_edit_policy import (
+    NEXT_ORDER_RISK_FIELDS,
+    apply_repeat_order_guards,
+    apply_waiting_order_guards,
+    pending_risk_settings,
+    risk_edit_request,
+    settings_match_cycle,
+)
+>>>>>>> Stashed changes
 from .paths import database_path, debug_captures_dir, exports_dir
 from .storage import BotStorage
 from .strategy import StrategyAction, StrategyEngine, make_order_ref
@@ -267,12 +282,26 @@ class TradingController:
         # fixed-time RTH OHLC bars keep ATR work bounded per quote.
         self._atr_bars: "deque[dict[str, float]]" = deque(maxlen=512)
         self._atr_bar_seconds_cache = 0
+<<<<<<< Updated upstream
+=======
+        self._atr_history_floor_monotonic = float("-inf")
+>>>>>>> Stashed changes
         self._atr_history_signature: tuple[Any, ...] = (0, None, None)
         self._market_capture = MarketDataCaptureManager(debug_captures_dir(), pre_window_seconds=15*60, post_window_seconds=15*60, async_writes=True)
         self._last_atr_snapshot: dict[str, Any] = {}
         self._last_atr_snapshot_monotonic = 0.0
         self._last_atr_snapshot_config: tuple[int, int, bool, bool] | None = None
         self._last_atr_adaptive_values: dict[str, float] = {}
+<<<<<<< Updated upstream
+=======
+        self._atr_session_memory = AtrSessionMemory(self.storage, self._write_emergency_log)
+        self._atr_history_contract: Optional[tuple[Any, ...]] = None
+        try:
+            self._pending_order_risk_edits = self.storage.get_json("next_order_risk_edits_v1", {})
+        except Exception as exc:
+            self._pending_order_risk_edits = {}
+            self._write_emergency_log("Could not load queued next-order risk edits; retaining the cycle's existing guards.", exc=exc)
+>>>>>>> Stashed changes
         self._last_human_report_monotonic = 0.0
         self._recovery_required = False
         self._last_recovery_probe: dict[str, Any] = {}
@@ -1763,6 +1792,10 @@ class TradingController:
             except Exception:
                 pass
             if unexpected_failure is None and not self._storage_fault_active:
+<<<<<<< Updated upstream
+=======
+                self._atr_session_memory.flush()
+>>>>>>> Stashed changes
                 self._log("INFO", "Application worker stopped cleanly during app shutdown.")
                 try:
                     self.storage.backup_database("app_shutdown")
@@ -3322,10 +3355,32 @@ class TradingController:
         cycle = self.active_cycle
         if cycle is None or cycle.stage in {Stage.IDLE, Stage.CYCLE_COMPLETE, Stage.STOPPED, Stage.ERROR, Stage.MANUAL_REVIEW}:
             return
+<<<<<<< Updated upstream
         if settings.normalized_ticker() != cycle.ticker:
             return
         realized = self.storage.get_realized_net_profit_for_ticker(cycle.ticker, con_id=cycle.con_id)
         updated, changed_fields = StrategyEngine.apply_editable_settings(cycle, settings, realized)
+=======
+        if not settings_match_cycle(cycle, settings):
+            return
+        realized = self.storage.get_realized_net_profit_for_ticker(cycle.ticker, con_id=cycle.con_id)
+        updated, changed_fields = StrategyEngine.apply_editable_settings(cycle, settings, realized)
+        if any(getattr(settings, name) != getattr(cycle, name) for name in NEXT_ORDER_RISK_FIELDS):
+            request = risk_edit_request(cycle, settings)
+            if request != self._pending_order_risk_edits:
+                self.storage.set_json("next_order_risk_edits_v1", request)
+                self._pending_order_risk_edits = request
+                self._log("INFO", "Saved risk/timing edits for the next eligible order; working orders and their cancellation policy are unchanged.", cycle)
+        elif pending_risk_settings(self._pending_order_risk_edits, cycle) is not None:
+            # Reverting an edit while an order is working must cancel the queued
+            # override too, rather than applying a no-longer-requested policy.
+            self.storage.set_json("next_order_risk_edits_v1", {})
+            self._pending_order_risk_edits = {}
+        updated, guard_changes = apply_waiting_order_guards(updated, settings)
+        changed_fields.extend(guard_changes)
+        if changed_fields and cycle.stage == Stage.WAIT_RISE_TRIGGER:
+            self._reset_stage3_sell_confirmation(cycle.id)
+>>>>>>> Stashed changes
         changed = bool(changed_fields) or updated.to_dict() != cycle.to_dict()
         self.active_cycle = updated
         self.storage.upsert_cycle(updated)
@@ -5063,6 +5118,11 @@ class TradingController:
                 continue
             if not isfinite(timestamp_value) or not isfinite(price_value) or price_value <= 0:
                 continue
+<<<<<<< Updated upstream
+=======
+            if timestamp_value < self._atr_history_floor_monotonic:
+                continue
+>>>>>>> Stashed changes
             self._merge_atr_observation(self._atr_bars, timestamp_value, price_value, bar_seconds)
         self._atr_bar_seconds_cache = int(bar_seconds)
         self._atr_history_signature = self._price_history_signature_for(self._price_history)
@@ -5162,8 +5222,14 @@ class TradingController:
         cutoff = now_monotonic - max(float((period + 4) * bar_seconds), 300.0)
         recent_bars = [bar for bar in self._atr_bars if float(bar.get("end_ts", 0.0)) >= cutoff]
         result = self._atr_result_from_bars(recent_bars, period=period, bar_seconds=bar_seconds)
+<<<<<<< Updated upstream
         calculation_ready = bool(result.get("ready"))
         result["source"] = "app_observed_api_prices_rth_only"
+=======
+        result["source"] = "app_observed_api_prices_rth_only"
+        result = self._atr_session_memory.apply(result)
+        calculation_ready = bool(result.get("ready"))
+>>>>>>> Stashed changes
         result["rth_only"] = True
         result["rth_open"] = rth_open
         result["collecting"] = rth_open
@@ -5174,7 +5240,11 @@ class TradingController:
             result["ready"] = False
             result["reason"] = (
                 "ATR data collection and adaptive updates pause outside RTH; "
+<<<<<<< Updated upstream
                 "only in-memory regular-trading-hours observations are used."
+=======
+                "saved RTH ATR is retained only as a starting estimate for a verified open session."
+>>>>>>> Stashed changes
             )
         elif not adaptive_enabled:
             if calculation_ready:
@@ -5359,6 +5429,42 @@ class TradingController:
             data["rth_message"] = self._latest_rth_status.get("message")
         data["poll_interval_seconds"] = self.PRICE_POLL_INTERVAL_SECONDS
         data["next_refresh_seconds"] = self.PRICE_POLL_INTERVAL_SECONDS
+<<<<<<< Updated upstream
+=======
+        # RTH volatility checkpoints are not market-data events. Restore only
+        # the same confirmed contract/profile/calculation and keep live quotes
+        # subject to every existing field-level safety gate.
+        identity = atr_seed_identity(
+            contract, self.strategy,
+            f"{self.connection.trading_mode}|{self.connection.market_data_type}",
+        )
+        history_contract = tuple(
+            getattr(contract, name, None)
+            for name in ("ticker", "con_id", "currency", "exchange", "primary_exchange", "sec_type")
+        ) + (self.connection.trading_mode, self.connection.market_data_type)
+        contract_changed = self._atr_history_contract is not None and self._atr_history_contract != history_contract
+        self._atr_history_contract = history_contract
+        session_changed = self._atr_session_memory.prepare(
+            identity, self._latest_rth_status, wall_now,
+            max_status_age=float(getattr(self.strategy, "max_rth_status_age_seconds", 60.0)),
+        )
+        if contract_changed:
+            self._price_history.clear()
+        if contract_changed or session_changed:
+            # Keep same-contract history for the independent recent-volatility
+            # guard, including short breaks between RTH windows. Only ATR bars
+            # start a new session; rebuilding after a bar-size edit must not
+            # pull the preceding session's samples back into that calculation.
+            memory = self._atr_session_memory
+            if memory.session is not None and memory.now is not None:
+                opened = datetime.fromisoformat(memory.session[0])
+                self._atr_history_floor_monotonic = monotonic_now - (memory.now - opened).total_seconds()
+            else:
+                self._atr_history_floor_monotonic = monotonic_now
+            self._atr_bars.clear()
+            self._atr_history_signature = (0, None, None)
+            self._last_atr_snapshot = {}
+>>>>>>> Stashed changes
         atr_rth_open = self._atr_rth_open_for_updates()
         data["atr_rth_only"] = True
         data["atr_rth_open"] = atr_rth_open
@@ -5378,6 +5484,10 @@ class TradingController:
                 self._price_history.popleft()
             bar_seconds = max(5, int(getattr(self.strategy, "atr_bar_seconds", 60) or 60))
             self._update_incremental_atr_bars(observation_monotonic, selected_price, bar_seconds)
+<<<<<<< Updated upstream
+=======
+            self._atr_session_memory.note_observation(live=data.get("subscription_market_data_type") == 1)
+>>>>>>> Stashed changes
 
         atr_config = (
             int(getattr(self.strategy, "atr_period", 14) or 14),
@@ -8072,6 +8182,18 @@ class TradingController:
         reference.  The first tick after readiness establishes a fresh anchor;
         only a later tick may satisfy the ATR-derived initial-drop percentage.
         """
+<<<<<<< Updated upstream
+=======
+        pending_settings = pending_risk_settings(self._pending_order_risk_edits, cycle)
+        cycle, guard_changes = apply_waiting_order_guards(cycle, pending_settings) if pending_settings is not None else (cycle, [])
+        if guard_changes:
+            self._reset_stage3_sell_confirmation(cycle.id)
+            self._log(
+                "INFO",
+                "Applied queued risk settings before the next order: " + ", ".join(guard_changes) + ". Existing broker orders are unchanged.",
+                cycle,
+            )
+>>>>>>> Stashed changes
         if self._retired_account_position_block_message(cycle.error_message):
             cycle.error_message = None
         if cycle.stage == Stage.WAIT_INITIAL_DROP:
@@ -10074,8 +10196,14 @@ class TradingController:
         if cycle.stop_after_current_cycle or not self.strategy.auto_repeat:
             self._log("INFO", f"Cycle complete for {cycle.ticker}. Auto-repeat is stopped.", cycle)
             return
+<<<<<<< Updated upstream
         if bool(getattr(cycle, "hard_risk_limits_enabled", False)) and int(getattr(cycle, "max_cycles_per_ticker_day", 0) or 0) > 0:
             max_cycles = int(cycle.max_cycles_per_ticker_day)
+=======
+        repeat_settings = self._settings_for_repeat_cycle(cycle)
+        if bool(repeat_settings.hard_risk_limits_enabled) and int(repeat_settings.max_cycles_per_ticker_day or 0) > 0:
+            max_cycles = int(repeat_settings.max_cycles_per_ticker_day)
+>>>>>>> Stashed changes
             completed = self.storage.get_completed_cycle_count(cycle.ticker, con_id=cycle.con_id)
             if completed >= max_cycles:
                 self._log(
@@ -10117,7 +10245,11 @@ class TradingController:
         continue the completed ticker with the cycle's active parameters, not
         accidentally switch ticker because draft settings were changed.
         """
+<<<<<<< Updated upstream
         return StrategySettings(
+=======
+        settings = StrategySettings(
+>>>>>>> Stashed changes
             ticker=cycle.ticker,
             investment_amount=cycle.investment_amount,
             initial_drop_pct=cycle.initial_drop_pct,
@@ -10176,6 +10308,11 @@ class TradingController:
             sec_type="STK",
             tif=self.strategy.tif,
         )
+<<<<<<< Updated upstream
+=======
+        pending_settings = pending_risk_settings(self._pending_order_risk_edits, cycle)
+        return apply_repeat_order_guards(settings, cycle, pending_settings) if pending_settings is not None else settings
+>>>>>>> Stashed changes
 
     def _log(
         self,

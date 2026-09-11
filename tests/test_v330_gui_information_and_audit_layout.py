@@ -1,4 +1,8 @@
+<<<<<<< Updated upstream
 """v3.9.0 price-monitor and Cycle Audit layout regressions."""
+=======
+"""v4.0.0 price-monitor and Cycle Audit layout regressions."""
+>>>>>>> Stashed changes
 
 from __future__ import annotations
 

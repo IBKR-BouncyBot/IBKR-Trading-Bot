@@ -9,6 +9,7 @@ def test_v3019_release_metadata_is_consistent() -> None:
     changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
     docs_index = Path("docs/README.md").read_text(encoding="utf-8")
 
+<<<<<<< Updated upstream
     assert "BouncyBot - IBKR Portable Trading Bot v3.9.0" in gui
     assert "This is synthetic v3.9.0 paper-trading example data." in gui
     assert "# BouncyBot - an IBKR Portable Trading Bot " in readme
@@ -18,6 +19,17 @@ def test_v3019_release_metadata_is_consistent() -> None:
     assert "BouncyBot - IBKR Portable Trading Bot $version" in build_script
     assert "## v3.0.19" in changelog
     assert "current v3.9.0 behavior" in docs_index
+=======
+    assert "BouncyBot - IBKR Portable Trading Bot v4.0.0" in gui
+    assert "This is synthetic v4.0.0 paper-trading example data." in gui
+    assert "# BouncyBot - an IBKR Portable Trading Bot " in readme
+    assert 'name = "bouncybot-ibkr-portable-trading-bot"' in pyproject
+    assert 'version = "4.0.0"' in pyproject
+    assert '$version = "4.0.0"' in build_script
+    assert "BouncyBot - IBKR Portable Trading Bot $version" in build_script
+    assert "## v3.0.19" in changelog
+    assert "current v4.0.0 behavior" in docs_index
+>>>>>>> Stashed changes
     assert Path("docs/legacy/V3_0_19_TRADE_HISTORY_AUDIT_PERFORMANCE.md").is_file()
     assert not Path("docs/V3_0_19_TRADE_HISTORY_AUDIT_PERFORMANCE.md").exists()
     assert Path("docs/legacy/V3_0_18_EVENT_DRIVEN_CADENCES.md").is_file()

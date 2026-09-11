@@ -328,9 +328,15 @@ def test_v3012_version_and_shutdown_contract_are_documented() -> None:
     readme = Path("README.md").read_text(encoding="utf-8")
     pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
 
+<<<<<<< Updated upstream
     assert "BouncyBot - IBKR Portable Trading Bot v3.9.0" in gui
     assert "# BouncyBot - an IBKR Portable Trading Bot " in readme
     assert 'version = "3.9.0"' in pyproject
+=======
+    assert "BouncyBot - IBKR Portable Trading Bot v4.0.0" in gui
+    assert "# BouncyBot - an IBKR Portable Trading Bot " in readme
+    assert 'version = "4.0.0"' in pyproject
+>>>>>>> Stashed changes
     assert "commitDataRequest" in main
     assert "handle_system_shutdown" in main
     assert "windows_session_shutdown" in gui
