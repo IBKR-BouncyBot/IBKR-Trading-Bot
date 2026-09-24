@@ -1,15 +1,63 @@
 # Changelog
 
+Each version has one consolidated entry describing its delivered changes. Current behavior is documented in [README.md](README.md) and the [current guides](docs/README.md); older entries and archived notes describe their historical releases.
+
+## v5.0.0
+
+- Preserve potentially transmitted orders and their exact broker identity as `SUBMISSION_UNKNOWN`; pause persistently for reconciliation without automatic retry. Require exact owned identity for cancellation.
+- Correct partial-SELL recovery, fresh exact-account/contract position checks, historical replacement-fill attribution and repeat control after substantive partial-BUY rejection.
+- Pin cycle account/contract ownership, prevent new cycles while another cycle remains unresolved, and consistently gate Advanced Connect.
+- Identify historical startup blockers and provide explicit, audited handling of a verified historical cycle while preserving the active cycle. Validate resume-checkpoint identity in worker and fallback paths without bypassing acknowledged failures.
+- Accept verified legacy execution evidence for account binding during recovery while retaining exact order/contract identity and managed-account checks.
+- Enforce field-specific BUY freshness, invalidate cached subscription generations, avoid overlapping market streams, apply spread ceilings independently, and fail closed when authoritative RTH evidence is unavailable.
+- Preserve pending market-data subscriptions during nonblocking polling so slower initial ticks can arrive, while retaining one active request and independent freshness checks.
+- Correct false stale-data status between selected-price events without changing trading checks; preserve generic-tick metadata when reusing a subscription.
+- Validate protective SELL replacements before cancellation; surface absent protection and cancellation/replacement uncertainty. Preserve unrounded strategy thresholds for tiny low-price moves.
+- Strengthen restore schema/foreign-key checks and validate a consistent disposable SQLite copy through existing migrations.
+- Require standard GIL-enabled CPython 3.14.x in source launch/test/build scripts, update compatible dependency floors, and reject stale virtual environments before changing packages.
+- Reduce five-stage indicator height/padding without reducing text size; show confirmed, missing, cancelling and unconfirmed protection accurately. Preserve 4.2.0 independent cursors and table sizing.
+- Prepare audit captures and Decision rows with one cancellable background reader; populate Decision cells in bounded GUI batches. Retain verified same-instrument post-SELL context across Auto-repeat and show only actual Timeline stage changes. Display N/A for an unknown account while disconnected. Remove guessed RTH schedules/timezones from the adapter and GUI.
+- Add targeted safety and migration regressions. See the [release note](docs/V5_0_0_TRADING_SAFETY_AND_PYTHON314.md) and [verification report](IMPLEMENTATION_TEST_REPORT.txt) for completed checks and unavailable Windows/Python 3.14 gates.
+
+## v4.2.0
+
+- Move the right-side Trading and Position values into the top-right header of their status boxes, using the same font as the top-left titles.
+- Remove cursor synchronization between the Cycle audit Timeline graphs. Each graph keeps its own hover crosshair and tooltip; hovering one graph does not draw a guide on the other.
+- Fit all eight Reconciliation comparison rows at their wrapped heights, stretch columns with the window, and refit after resize/font/style/data changes. Use page scrolling for short windows, arrange guided actions in two columns, and remove the advanced action box's fixed maximum height.
+- Refit Cycle audit Summary details on layout/content changes and retain access to overflow beyond its existing height cap. Shared table sizing reserves horizontal-scrollbar height and allows scrolling when capped content cannot fit.
+- Preserve chart data, timeline scaling, zoom/scroll, Timeline table layout, and all trading, order, ATR, storage, recovery, and watchdog behavior. Existing v4.1.0 databases remain compatible.
+- Update application/package/Windows build metadata to v4.2.0. See the archived [release note](docs/legacy/V4_2_0_HEADER_AND_INDEPENDENT_TIMELINE.md) and [implementation/test report](docs/legacy/V4_2_0_IMPLEMENTATION_TEST_REPORT.txt) for scope and measured verification.
+
+## v4.1.0
+
+### GUI metrics and audit layout
+
+- Put the ten equal-width status boxes and compact lock first, followed by the five-stage ribbon, with both rows fixed above the tabs.
+- Add current display price / minimum-profit trigger to the right of Trading and the remaining app-owned position cost to the right of Position.
+- Combine Data mode with freshness and RTH with current UTC/system time in a balanced five-card Price data monitor. Remove the raw-fields explanatory note.
+- Remove the duplicate Stage card; collapse Current stage / Why not moving? behind Show stage details. Simple mode hides only the Recovery / audit log panel.
+- Add Total buy cost between BUY and SELL filled quantities. Show long OrderRefs as wrapped, read-only, copyable plain text with the metric-card theme and font.
+- Add Average net P/L after Best and Worst net P/L as the twelfth summary card (three columns, four rows), plus a numerically sorted Invested history column derived from actual fills and recorded BUY commission rather than budget.
+- Remove row-count-driven minimum height from Trade history; reserve a horizontal scrollbar at the viewport bottom and retain independent vertical scrolling.
+- Give the Timeline tables equal height and expand Decision events across its available tab.
+- Stretch raw API Value columns, audit Orders/Executions OrderRef columns, and Market capture summary/preview columns. Anchor Market capture at the top even without capture data, retaining independent internal scrollbars.
+- Reduce Strategy input map minimum height from 560 to 420 while retaining all sixteen blocks and calculations.
+- Add Timeline-only linked crosshairs with a shared cursor time, local cursor price and nearest actual record in the counterpart's own price scale. Distinguish cursor time from record time; show only a time guide for an empty counterpart and clear both guides outside the plots. This feature was subsequently removed in v4.2.0.
+
+### Compatibility and scope
+
+Only `app/gui.py` changes in the runtime application. Trading, order ownership, risk, RTH, ATR calculations and close-window checkpoint saving, database schemas, recovery and watchdog code remain unchanged. Existing corrected v4.0.0 databases are compatible. The new costs are GUI-only reporting values; existing CSV export schemas are unchanged. See the [v4.1.0 release note](docs/legacy/V4_1_0_GUI_METRICS_AND_AUDIT_LAYOUT.md) and [archived implementation/test report](docs/legacy/V4_1_0_STATUS_ORDER_LINKED_CROSSHAIRS_IMPLEMENTATION_TEST_REPORT.txt) for validation and platform limits.
+
 ## v4.0.0
 
 ### ATR, settings, and GUI
 
-- Same-version correction: retain the latest ready ATR in memory all day, but save checkpoints only during the final five minutes of the broker-reported RTH window (at most once per minute), at recorded session close, or on orderly app close. Do not force intraday saves on identity/configuration edits or transient RTH-status loss. Keep final-write retries bounded and preserve existing checkpoint compatibility.
+- Retain the latest ready ATR in memory all day, but save checkpoints only during the final five minutes of the broker-reported RTH window (at most once per minute), at recorded session close, or on orderly app close. Do not force intraday saves on identity/configuration edits or transient RTH-status loss. Keep final-write retries bounded and preserve existing checkpoint compatibility.
 - Save validated ready RTH ATR estimates per confirmed contract/profile/period/bar duration, using them as starting values while the next session collects its own bars. Keep current quote, session, entry, and SELL validation unchanged. Reject malformed, mismatched, future, or over-seven-day checkpoints and fall back to normal warmup.
 - Permit reviewed Risk and Timing edits before the next eligible new order. Quote guards can update while waiting in Stage 3; BUY-only guards carry to the next BUY. Persist explicit cycle-scoped edit intent; do not modify working orders or their safety/cancellation policy.
 - Use amber for the LIVE Profile card; remove only the redundant green minimum-profit banner and retain the actual guard and graph.
 - Place non-selling exit/resume, stop-after, and Cancel choices before the optional market SELL. Make exit/resume bold and Cancel the focused default; retain separate market-SELL confirmation.
-- Preserve database schema, existing order/fill/recovery behavior, light-mode startup, and release layout. Archive the v3.9.0 note/report. See the [current release note](docs/V4_0_0_ATR_SESSION_MEMORY_AND_ORDER_EDITING.md) and implementation/test report for measured verification.
+- Preserve database schema, existing order/fill/recovery behavior, light-mode startup, and release layout. Archive the v3.9.0 note/report. See the [current release note](docs/legacy/V4_0_0_ATR_SESSION_MEMORY_AND_ORDER_EDITING.md) and implementation/test report for measured verification.
 
 ### Measured verification
 
@@ -80,8 +128,6 @@ The corrected v4.0.0 source tree passed **1,310/1,310** pytest cases across **13
 - Added coverage for same-price price ticks, size/timestamp-only events, field invalidation, independent quote-side ages, two-event confirmation, executable-bid reference selection, and both pre-submission revalidation boundaries.
 - Added [`docs/legacy/V3_7_0_FIELD_LEVEL_MARKET_DATA_AND_STAGE3_SELL_GUARD.md`](docs/legacy/V3_7_0_FIELD_LEVEL_MARKET_DATA_AND_STAGE3_SELL_GUARD.md), archived the v3.6.0 release note/report, and updated application/build/documentation metadata to v3.7.0.
 - v3.7.0 adds no SQLite table, column, index, migration, or persisted setting. Existing v3.6.0 databases and portable state remain compatible.
-
-This file summarizes behavior-changing and maintenance releases represented by the repository. Historical implementation notes remain in `docs/legacy/` for traceability. Current behavior is documented in `README.md` and the current guides linked from `docs/README.md`.
 
 ## v3.6.0
 
@@ -240,14 +286,14 @@ This file summarizes behavior-changing and maintenance releases represented by t
 
 ## v3.2.0
 
-### Same-release bugscan correction
+### Contract, reconnect and commission corrections
 
 - Tightened exact-contract requalification so the broker-returned symbol, SMART order route, and selected primary exchange must still match the chosen API result. The qualified primary exchange is retained even when IBKR leaves the returned contract field blank.
 - Corrected EUR market-data fallback variants so a qualified EUR contract cannot silently fall back to a USD request/cache key when the raw contract object omits its currency field.
 - Made resume-checkpoint persistence enforce the database currency claim inside the same SQLite transaction as the settings and active-cycle checkpoint. A shutdown checkpoint can no longer bypass an existing USD/EUR database lock.
 - Corrected the ten-second reconnect gate for deterministic clocks that begin at monotonic time zero; failed attempts now wait the full interval before retrying.
 - Treated an exactly zero commission as currency-neutral and made non-zero cross-currency commission warnings persistently idempotent across restarts, including v3.2.0 events written before this correction.
-- Corrected the two Ruff `I001` import-boundary spacing findings in `app/ib_adapter.py` and `app/storage.py`. No imports, runtime bindings, or release version were changed by those formatting corrections.
+- Corrected the two Ruff `I001` import-boundary spacing findings in `app/ib_adapter.py` and `app/storage.py` without changing imports or runtime bindings.
 
 ### Added
 
@@ -402,7 +448,7 @@ This file summarizes behavior-changing and maintenance releases represented by t
 
 - Added focused visibility and active-cycle/history-selection regressions.
 - Added test-infrastructure regressions requiring the Windows full-test path to contain one unfiltered pytest invocation and no separate soak-only pass.
-- Completed a same-version public-repository documentation audit: current guides were corrected, superseded notes moved to `docs/legacy/`, a security policy and archive index were added, and generated/sensitive-file exclusions were expanded.
+- Corrected current guides, moved superseded notes to `docs/legacy/`, added a security policy and archive index, and expanded generated/sensitive-file exclusions.
 - Adopted the PolyForm Noncommercial License 1.0.0 and included `LICENSE` and `SECURITY.md` in assembled Windows release folders.
 - Added [`docs/legacy/V3_0_17_FLOWCHART_HISTORY_SELECTOR.md`](docs/legacy/V3_0_17_FLOWCHART_HISTORY_SELECTOR.md).
 

@@ -21,8 +21,12 @@ Optional behavior appears inside the relevant stage rather than adding a sixth b
 ## View modes
 
 - **Full strategy** displays all five cards regardless of simple/advanced GUI mode.
-- **Current cycle only** narrows the display to the active/current context.
-- GUI simplicity controls can hide explanatory inputs, but they do not change strategy stages or collapse the full flow to three cards.
+- **Current cycle only** shows the active stage and its immediately adjacent stages; with no identifiable active stage, it shows all five.
+- **Entry path only** shows Stages 1 and 2.
+- **Exit path only** shows Stages 3, 4, and 5.
+- **Recovery path** shows the active stage and its immediately adjacent stages, or Stages 2–4 when no active stage is identifiable.
+
+Simple mode hides the explanatory paragraph above the flowchart. It keeps the data and view selectors available and does not change strategy stages or collapse the full flow to three cards. The canvas keeps the height needed for the selected cards and scrolls within the tab; it is not zoomable.
 
 ## Flowchart data selector
 
@@ -57,4 +61,6 @@ Color and active-card emphasis are operator aids. The authoritative eligibility 
 
 ## Audit limitation
 
-The flowchart describes current strategy logic. For a completed cycle, use Trade history and the cycle audit dialog to inspect actual stored inputs, orders, executions, events, and timeline. Later draft edits do not rewrite the completed cycle snapshot.
+The flowchart describes current strategy logic. For a completed cycle, use Trade history and the cycle audit dialog to inspect actual stored inputs, orders, executions, events, and timeline. Later draft edits do not rewrite the completed cycle snapshot. Historical flowchart values use the saved fields where present; a missing older field can fall back to the current strategy setting, so the flowchart is not a substitute for the stored audit evidence.
+
+The audit dialog prepares decision rows and capture data in one background worker. Its Timeline shows only actual changes between recorded stages; unchanged-stage decisions remain available in Decision events. Verified fill-capture windows can show same-instrument context after a SELL even when Auto-repeat has moved to the next cycle.

@@ -13,22 +13,26 @@ workflow buttons while monitoring and read-only views continue.
 from __future__ import annotations
 
 import csv
+import io
 import json
 import math
 import os
+import queue
 import re
+import threading
 import time
 import zipfile
 from collections import deque
+from copy import deepcopy
 from dataclasses import asdict
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from PySide6.QtCore import QEvent, QObject, QPointF, QRectF, QSize, Qt, QTimer
-from PySide6.QtGui import QAction, QBrush, QColor, QFont, QIcon, QPainter, QPalette, QPen, QPixmap
+from PySide6.QtGui import QAction, QBrush, QColor, QFont, QIcon, QPainter, QPalette, QPen, QPixmap, QTextOption
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QApplication,
@@ -149,7 +153,7 @@ CURRENCY_SYMBOLS = {"USD": "$", "EUR": "€"}
 ACTIVE_CONTRACT_CURRENCY = "USD"
 CURRENCY_SYMBOL = CURRENCY_SYMBOLS[ACTIVE_CONTRACT_CURRENCY]
 
-APP_VERSION = "4.0.0"
+APP_VERSION = "5.0.0"
 DARK_MODE_APP_PROPERTY = "bouncybotDarkMode"
 
 LIGHT_FUSION_PALETTE_COLORS = {
@@ -418,7 +422,7 @@ STAGE_ORDER = [_stage_value(stage) for stage, _label in STAGE_LABELS]
 STAGE_TITLES = {_stage_value(stage): label for stage, label in STAGE_LABELS}
 DEFAULT_VIEW_MODE = "Advanced"
 VIEW_MODE_HELP = {
-    "Simple": "Simple: core status, current stage, chart, next action, orders, positions, risk status, and the Recovery / audit log.",
+    "Simple": "Simple: core status, chart, next action, orders, positions, and risk status. Stage details are expandable; the Recovery / audit log is hidden.",
     "Advanced": "Advanced: default live-supervision view with summaries, guards, previews, history tools, and a full-width Recovery / audit log.",
     "Debug": "Debug: Advanced plus raw API fields, internal diagnostics, detailed audit output, and full troubleshooting panels.",
 }
@@ -744,6 +748,34 @@ def _app_owned_unsold_quantity(cycle: Optional[dict[str, Any]]) -> float:
     return max(0.0, bought - max(final_sold, protective_sold))
 
 
+def _cycle_purchase_cost(cycle: Optional[dict[str, Any]], *, remaining_only: bool = False) -> Optional[float]:
+    """Display actual BUY cost, including recorded BUY fees, in contract currency.
+
+    This is a presentation calculation, not order sizing or a tax-lot valuation.
+    Remaining inventory uses the same app-owned quantity as the recovery display:
+    protective fills can also be mirrored in final SELL totals and must not be
+    subtracted twice. Fees are allocated pro rata for the remaining-cost display.
+    """
+    if not isinstance(cycle, dict):
+        return None
+    quantity = _float_or_none(cycle.get("buy_filled_qty"))
+    if quantity is None or quantity < 0:
+        return None
+    if quantity == 0:
+        return 0.0
+    remaining = _app_owned_unsold_quantity(cycle) if remaining_only else quantity
+    if remaining_only and remaining == 0:
+        return 0.0
+    price = _float_or_none(cycle.get("avg_buy_price"))
+    commission = _float_or_none(cycle.get("buy_commission", 0.0))
+    if price is None or price <= 0 or commission is None:
+        return None
+    total = quantity * price + commission
+    if not math.isfinite(total) or total < 0:
+        return None
+    return total * min(1.0, remaining / quantity) if remaining_only else total
+
+
 def _order_matches_local_identity(order: dict[str, Any], cycle: dict[str, Any], prefix: str) -> bool:
     """Match a broker-probe order to a locally recorded app order."""
     identities = (
@@ -927,8 +959,8 @@ def _format_utc_timestamp(value: Any, *, compact: bool = False) -> str:
 
 
 def _rth_zone(zone_name: Any) -> tuple[Optional[ZoneInfo], str]:
-    """Return a displayable RTH timezone without falling back to local time."""
-    raw = str(zone_name or "").strip() or "America/New_York"
+    """Return the supplied contract timezone without guessing a replacement."""
+    raw = str(zone_name or "").strip()
     aliases = {
         "US/Eastern": "America/New_York",
         "EST5EDT": "America/New_York",
@@ -938,10 +970,7 @@ def _rth_zone(zone_name: Any) -> tuple[Optional[ZoneInfo], str]:
     try:
         return ZoneInfo(canonical), raw
     except Exception:
-        try:
-            return ZoneInfo("America/New_York"), raw
-        except Exception:
-            return None, raw
+        return None, raw
 
 
 def _parse_rth_endpoint(text_value: str, default_date: str, tz: ZoneInfo) -> Optional[datetime]:
@@ -962,42 +991,6 @@ def _parse_rth_endpoint(text_value: str, default_date: str, tz: ZoneInfo) -> Opt
         return None
 
 
-def _fallback_us_equity_rth_window(checked_at: Any, tz: ZoneInfo, tz_label: str) -> dict[str, Any]:
-    """Return a human-readable regular-hours window when IBKR liquidHours is missing.
-
-    IBKR normally supplies contract-specific liquidHours. During startup,
-    imported snapshots, or adapter fallback mode, that field can be absent. The
-    GUI then uses the standard US-equity session solely for display text; the
-    controller still uses the adapter's RTH result for trading decisions.
-    """
-    checked_ts = _parse_timestamp(checked_at)
-    now_utc = datetime.fromtimestamp(float(checked_ts), timezone.utc) if checked_ts is not None else datetime.now(timezone.utc)
-    now_local = now_utc.astimezone(tz)
-
-    def next_weekday(day):
-        while day.weekday() >= 5:
-            day = day + timedelta(days=1)
-        return day
-
-    day = next_weekday(now_local.date())
-    start_dt = datetime(day.year, day.month, day.day, 9, 30, tzinfo=tz)
-    end_dt = datetime(day.year, day.month, day.day, 16, 0, tzinfo=tz)
-    if now_local > end_dt:
-        day = next_weekday(day + timedelta(days=1))
-        start_dt = datetime(day.year, day.month, day.day, 9, 30, tzinfo=tz)
-        end_dt = datetime(day.year, day.month, day.day, 16, 0, tzinfo=tz)
-    return {
-        "start_local": start_dt,
-        "end_local": end_dt,
-        "start_utc": start_dt.astimezone(timezone.utc),
-        "end_utc": end_dt.astimezone(timezone.utc),
-        "timezone_label": tz_label,
-        "now_utc": now_utc,
-        "now_local": now_local,
-        "fallback": True,
-    }
-
-
 def _rth_window_from_status(status: dict[str, Any], checked_at: Any) -> Optional[dict[str, Any]]:
     """Extract the most relevant liquid-hours window for operator display.
 
@@ -1005,6 +998,9 @@ def _rth_window_from_status(status: dict[str, Any], checked_at: Any) -> Optional
     that local session and the UTC equivalent so RTH status can be aligned with
     market-capture/audit timestamps, which are stored in UTC.
     """
+    # Historical snapshots can still carry bounds from the removed US fallback.
+    if str(status.get("source") or "").startswith("fallback"):
+        return None
     liquid = str(status.get("liquid_hours") or status.get("liquidHours") or "").strip()
     tz, tz_label = _rth_zone(status.get("time_zone") or status.get("timeZoneId") or status.get("timezone"))
     if tz is None:
@@ -1025,10 +1021,9 @@ def _rth_window_from_status(status: dict[str, Any], checked_at: Any) -> Optional
             "timezone_label": tz_label,
             "now_utc": now_utc,
             "now_local": now_local,
-            "fallback": str(status.get("source") or "").startswith("fallback"),
         }
     if not liquid:
-        return _fallback_us_equity_rth_window(checked_at or status.get("checked_at"), tz, tz_label)
+        return None
     windows: list[tuple[datetime, datetime]] = []
     for part in liquid.split(";"):
         part = part.strip()
@@ -1104,8 +1099,6 @@ def _format_rth_status(price_snapshot: Optional[dict[str, Any]], *, short: bool 
         tz_label = window["timezone_label"]
         now_utc = window["now_utc"]
         hours_text = f"{start_local:%H:%M}-{end_local:%H:%M} {tz_label} ({start_utc:%H:%M}-{end_utc:%H:%M} UTC)"
-        if window.get("fallback"):
-            hours_text += " standard US equity hours"
         if open_value is True:
             remaining = _human_duration((end_utc - now_utc).total_seconds())
             if short:
@@ -1316,6 +1309,18 @@ def _polish_table_widget(
     return table
 
 
+def _table_horizontal_scrollbar_height(table: QTableWidget) -> int:
+    """Reserve the style's scrollbar height before a table is shown or resized.
+
+    An AsNeeded scrollbar may still be hidden while its tab has no final
+    viewport width. Reserving its size hint avoids losing the bottom row when
+    that tab is shown or a narrower window makes horizontal scrolling necessary.
+    """
+    if table.horizontalScrollBarPolicy() == Qt.ScrollBarAlwaysOff:
+        return 0
+    return max(0, int(table.horizontalScrollBar().sizeHint().height()))
+
+
 def _fit_table_height_to_rows(
     table: QTableWidget,
     *,
@@ -1344,7 +1349,7 @@ def _fit_table_height_to_rows(
             row_heights = [24] * visible_rows
         while len(row_heights) < visible_rows:
             row_heights.append(max(row_heights[-1], 24))
-        target = int(header_h + frame_w + sum(row_heights) + 8)
+        target = int(header_h + frame_w + sum(row_heights) + _table_horizontal_scrollbar_height(table) + 8)
         target = max(min_height, min(target, max_fit_height))
         table.setMinimumHeight(target)
         if row_count <= max_visible_rows:
@@ -1372,13 +1377,13 @@ def _fit_table_height_to_all_rows(
     table: QTableWidget,
     *,
     min_height: int = 120,
-    max_height: int = 560,
+    max_height: Optional[int] = 560,
 ) -> None:
-    """Make a bounded table show every row without a vertical scrollbar.
+    """Fit every row, allowing scrolling if an optional height limit is exceeded.
 
-    This is used for audit summary blocks such as Market capture metadata, where
-    the top table is short enough to fit the dialog and a scrollbar makes the
-    operator wonder whether important fields are hidden.
+    Pass max_height=None for a short table inside an outer scroll area. A bounded
+    table must keep overflowing rows reachable when fonts or wrapping make its
+    actual content taller than the configured limit.
     """
     try:
         table.resizeRowsToContents()
@@ -1388,11 +1393,11 @@ def _fit_table_height_to_all_rows(
         row_total = 0
         for row_idx in range(row_count):
             row_total += max(22, int(table.rowHeight(row_idx)))
-        target = int(header_h + frame_w + row_total + 12)
-        target = max(min_height, min(target, max_height))
+        content_height = int(header_h + frame_w + row_total + _table_horizontal_scrollbar_height(table) + 12)
+        target = max(min_height, content_height if max_height is None else min(content_height, max_height))
         table.setMinimumHeight(target)
         table.setMaximumHeight(target + 4)
-        table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded if content_height > target else Qt.ScrollBarAlwaysOff)
         table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
     except Exception:
         table.setMinimumHeight(min_height)
@@ -1447,16 +1452,74 @@ def _cap_table_columns_for_horizontal_scroll(table: QTableWidget, *, minimum: in
     _auto_size_table_columns(table, minimum=minimum, maximum=maximum, last_maximum=maximum)
 
 
+class ContentFitTable(QTableWidget):
+    """Refit a short wrapped table after width, content, font or style changes."""
+
+    def __init__(self, rows: int, columns: int, *, min_height: int = 120, max_height: Optional[int] = None):
+        super().__init__(rows, columns)
+        self._fit_min_height = min_height
+        self._fit_max_height = max_height
+        self._fit_pending = False
+        self._fit_timer = QTimer(self)
+        self._fit_timer.setSingleShot(True)
+        self._fit_timer.timeout.connect(self.fit_rows)
+        self.horizontalHeader().sectionResized.connect(self._schedule_fit)
+        self.verticalHeader().sectionResized.connect(self._schedule_fit)
+        self.model().dataChanged.connect(self._schedule_fit)
+        self.model().rowsInserted.connect(self._schedule_fit)
+        self.model().rowsRemoved.connect(self._schedule_fit)
+
+    def _schedule_fit(self, *_args) -> None:
+        if self.__dict__.get("_fit_pending", True):
+            return
+        self._fit_pending = True
+        self._fit_timer.start(0)
+
+    def fit_rows(self) -> None:
+        # An owned timer is cancelled with the widget. A synchronous refresh
+        # also cancels any pending fit queued while its cells were populated.
+        self._fit_timer.stop()
+        # Keep the guard set while resizing sections: those signals must not
+        # queue another fit for every row. Qt supplies logical-pixel metrics.
+        self._fit_pending = True
+        try:
+            _fit_table_height_to_all_rows(self, min_height=self._fit_min_height, max_height=self._fit_max_height)
+        finally:
+            self._fit_pending = False
+
+    def resizeEvent(self, event) -> None:  # type: ignore[override]
+        super().resizeEvent(event)
+        self._schedule_fit()
+
+    def changeEvent(self, event) -> None:  # type: ignore[override]
+        super().changeEvent(event)
+        if event.type() in (QEvent.FontChange, QEvent.ApplicationFontChange, QEvent.StyleChange):
+            self._schedule_fit()
+
+
 class MetricCard(QFrame):
-    def __init__(self, title: str, value: str = "-"):
+    def __init__(self, title: str, value: str = "-", *, multiline: bool = False):
         super().__init__()
         self.setObjectName("MetricCard")
         self.title_text = title
         self.title = QLabel(title)
         self.title.setObjectName("MetricTitle")
-        self.value = QLabel(value)
+        self._multiline = bool(multiline)
+        if multiline:
+            self.value = QTextEdit()
+            self.value.setReadOnly(True)
+            self.value.setPlainText(value)
+            self.value.setLineWrapMode(QTextEdit.WidgetWidth)
+            self.value.setWordWrapMode(QTextOption.WrapAnywhere)
+            self.value.setFrameShape(QFrame.NoFrame)
+            self.value.setMinimumWidth(0)
+            self.value.setFixedHeight(76)
+            self.value.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            self.value.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        else:
+            self.value = QLabel(value)
+            self.value.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.value.setObjectName("MetricValue")
-        self.value.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 8, 10, 8)
         layout.addWidget(self.title)
@@ -1464,7 +1527,11 @@ class MetricCard(QFrame):
 
     def set_value(self, value: Any) -> None:
         text = _format_field_value(self.title_text, value)
-        if self.value.text() != text:
+        if self._multiline:
+            if self.value.toPlainText() != text:
+                self.value.setPlainText(text)
+                self.value.setToolTip(text)
+        elif self.value.text() != text:
             self.value.setText(text)
 
 
@@ -1482,7 +1549,7 @@ class StageRibbon(QWidget):
             card.setObjectName("StageInactive")
             card.setAlignment(Qt.AlignCenter)
             card.setWordWrap(True)
-            card.setMinimumHeight(76)
+            card.setMinimumHeight(60)
             card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             self.cards[stage_value] = card
             self.labels[stage_value] = label
@@ -1525,7 +1592,7 @@ class StageRibbon(QWidget):
             card.setText(f"{label}\n{state}")
             card.setStyleSheet(
                 f"background-color: {fill}; color: {text_color}; border: {border_width}px solid {accent}; "
-                "border-radius: 10px; padding: 10px; font-size: 14px; font-weight: 800;"
+                "border-radius: 10px; padding: 4px 10px; font-size: 14px; font-weight: 800;"
             )
             card.style().unpolish(card)
             card.style().polish(card)
@@ -1537,20 +1604,39 @@ class StageRibbon(QWidget):
 
 
 class StatusPill(QFrame):
-    def __init__(self, title: str):
+    def __init__(self, title: str, *, with_detail: bool = False):
         super().__init__()
         self.title_text = title
         self.setObjectName("StatusPill")
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 5, 8, 5)
         layout.setSpacing(1)
         self.title = QLabel(title)
         self.title.setObjectName("StatusPillTitle")
+        self.title.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         self.value = QLabel("Not available")
         self.value.setObjectName("StatusPillValue")
         self.value.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.value.setWordWrap(True)
+        self.value.setMinimumWidth(0)
+        self.value.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self._state: Optional[str] = None
-        layout.addWidget(self.title)
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.setSpacing(8)
+        title_row.addWidget(self.title)
+        self.detail = QLabel("") if with_detail else None
+        if self.detail is not None:
+            self.detail.setObjectName("StatusPillDetail")
+            self.detail.setAlignment(Qt.AlignRight | Qt.AlignTop)
+            self.detail.setWordWrap(True)
+            self.detail.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            self.detail.setMinimumWidth(0)
+            self.detail.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+            title_row.addWidget(self.detail, 1)
+        layout.addLayout(title_row)
         layout.addWidget(self.value)
         self.set_state("inactive")
 
@@ -1559,6 +1645,13 @@ class StatusPill(QFrame):
         if self.value.text() != text:
             self.value.setText(text)
         self.set_state(state or _semantic_state_for_text(text))
+
+    def set_detail(self, text: str, tooltip: str = "") -> None:
+        if self.detail is not None:
+            if self.detail.text() != text:
+                self.detail.setText(text)
+            if self.detail.toolTip() != tooltip:
+                self.detail.setToolTip(tooltip)
 
     def set_state(self, state: str) -> None:
         colors = {
@@ -1576,7 +1669,7 @@ class StatusPill(QFrame):
         title_text = _theme_hex("#4b5563", "#cbd5e1")
         self.setStyleSheet(
             f"QFrame#StatusPill {{ background: {fill}; border: 1px solid {border}; border-radius: 8px; }}"
-            f"QLabel#StatusPillTitle {{ color: {title_text}; font-size: 10px; font-weight: 700; }}"
+            f"QLabel#StatusPillTitle, QLabel#StatusPillDetail {{ color: {title_text}; font-size: 10px; font-weight: 700; }}"
             f"QLabel#StatusPillValue {{ color: {text}; font-size: 12px; font-weight: 800; }}"
         )
 
@@ -1597,7 +1690,7 @@ class LiveStatusBar(QFrame):
         layout.setSpacing(6)
         self.pills: dict[str, StatusPill] = {}
         for title in ["Connection", "Profile", "Account", "Ticker", "RTH", "Data", "Trading", "Stage", "Position", "Protection"]:
-            pill = StatusPill(title)
+            pill = StatusPill(title, with_detail=title in {"Trading", "Position"})
             self.pills[title] = pill
             layout.addWidget(pill, 1)
         self.input_lock_btn = QPushButton("\U0001f513")
@@ -1696,7 +1789,7 @@ class LiveStatusBar(QFrame):
                 account = broker_accounts[0]
             elif len(broker_accounts) > 1:
                 account = f"{broker_accounts[0]} +{len(broker_accounts) - 1} accounts"
-        account_text = account or "IBKR default"
+        account_text = account or ("Auto (single managed account)" if connected and local_connected else "N/A")
         self.pills["Account"].set_value(account_text, "success" if upstream_connected is True else "waiting")
         contract = price_snapshot.get("contract") or {}
         ticker = cycle.get("ticker") or contract.get("ticker") or strategy.get("ticker") or "Waiting for ticker confirmation"
@@ -1785,6 +1878,19 @@ class LiveStatusBar(QFrame):
         else:
             trading_text, trading_state = "Stopped", "waiting"
         self.pills["Trading"].set_value(trading_text, trading_state)
+        display_price = _float_or_none(price_snapshot.get("price"))
+        trigger = _float_or_none(cycle.get("rise_trigger_price"))
+        if display_price is not None and display_price <= 0:
+            display_price = None
+        if trigger is not None and trigger <= 0:
+            trigger = None
+        self.pills["Trading"].set_detail(
+            f"{_format_currency(display_price, 2)} / {_format_currency(trigger, 2)}",
+            f"Displayed current price: {_format_currency(display_price)}\n"
+            f"Minimum-profit trigger: {_format_currency(trigger)}\n"
+            "Read with the Data/RTH indicators: a displayed price is not proof of fresh executable quotes "
+            "and reaching this trigger does not bypass SELL safety checks.",
+        )
         if self.pills["Trading"].toolTip() != trading_tooltip:
             self.pills["Trading"].setToolTip(trading_tooltip)
         for widget in (self.pills["Trading"].title, self.pills["Trading"].value):
@@ -1793,17 +1899,37 @@ class LiveStatusBar(QFrame):
         idx = _stage_index(stage)
         stage_text = f"{idx} of 5" if idx else _stage_display_name(stage)
         self.pills["Stage"].set_value(stage_text, "active" if idx else "inactive")
-        try:
-            position = int(cycle.get("buy_filled_qty") or 0) - int(cycle.get("sell_filled_qty") or 0) - int(cycle.get("protective_sell_filled_qty") or 0)
-        except Exception:
-            position = 0
+        position = int(_app_owned_unsold_quantity(cycle))
         self.pills["Position"].set_value(f"{position} shares" if position else "No app position", "active" if position else "inactive")
+        self.pills["Position"].set_detail(
+            _format_currency(_cycle_purchase_cost(cycle, remaining_only=True), 2) if cycle else _format_currency(0, 2),
+            "Cost of the app-owned shares still held in this cycle, including their pro-rata recorded BUY "
+            "commission. Not market value, configured budget, or the account's other holdings. "
+            "Pending commission updates can change this amount.",
+        )
         if not cycle:
             protection_text, protection_state = "N/A", "inactive"
-        elif cycle.get("protective_sell_enabled") and cycle.get("protective_sell_order_ref"):
+        elif (
+            cycle.get("protective_sell_enabled")
+            and cycle.get("protective_sell_order_ref")
+            and cycle.get("protective_sell_status") in {"PreSubmitted", "Submitted"}
+            and not cycle.get("protective_sell_cancel_requested")
+            and connected
+            and local_connected
+            and upstream_connected is True
+            and not upstream_recovery_pending
+        ):
             protection_text, protection_state = "On", "success"
+        elif cycle.get("protective_sell_enabled") and cycle.get("protective_sell_order_ref"):
+            protection_status = str(cycle.get("protective_sell_status") or "")
+            if protection_status in {"Cancelled", "ApiCancelled", "Inactive", "Rejected", "Filled"}:
+                protection_text, protection_state = ("Missing", "risk") if position else ("Ended", "inactive")
+            elif cycle.get("protective_sell_cancel_requested") or protection_status in {"PendingCancel", "CancelRequested"}:
+                protection_text, protection_state = "Cancelling", "waiting"
+            else:
+                protection_text, protection_state = "Unconfirmed", "waiting"
         elif cycle.get("protective_sell_enabled"):
-            protection_text, protection_state = "Armed", "active"
+            protection_text, protection_state = ("Missing", "risk") if position else ("Armed", "active")
         else:
             protection_text, protection_state = "Off", "waiting" if position else "inactive"
         self.pills["Protection"].set_value(protection_text, protection_state)
@@ -2106,7 +2232,11 @@ class CycleTimelineWidget(QWidget):
         self.setMouseTracking(True)
         self.setMinimumWidth(self._base_canvas_width)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed if self.compact else QSizePolicy.Preferred)
-        self.setToolTip("Hover for crosshairs. Ctrl+mouse wheel zooms the audit timeline as far as needed. Drag while zoomed to pan; use the scroll bars for larger zoom levels.")
+        hover_help = (
+            "Hover either Timeline graph for independent crosshairs and record details in that graph. "
+            if self.show_market_graph else "Hover for crosshairs. "
+        )
+        self.setToolTip(hover_help + "Ctrl+mouse wheel zooms the audit timeline as far as needed. Drag while zoomed to pan; use the scroll bars for larger zoom levels.")
         self._path_points_raw = self._build_price_path()
         self._markers = self._build_markers()
         self._transitions = self._build_stage_transitions()
@@ -2493,9 +2623,9 @@ class CycleTimelineWidget(QWidget):
         for idx, event in enumerate(self.details.get("decision_events") or []):
             before = str(event.get("stage_before") or "").strip()
             after = str(event.get("stage_after") or "").strip()
-            if not before and not after:
+            if not before or not after or before == after:
                 continue
-            label = f"{_stage_display_name(before)} -> {_stage_display_name(after)}" if before and after else _stage_display_name(after or before)
+            label = f"{_stage_display_name(before)} -> {_stage_display_name(after)}"
             transitions.append({
                 "time": self._event_time(event),
                 "price": self._event_price(event),
@@ -3171,7 +3301,7 @@ class ProfitGuardWidget(QWidget):
         self.no_new_buy_first_minutes = 5
         self.no_new_buy_last_minutes = 15
         self.cancel_buy_before_close_minutes = 5
-        self.setMinimumHeight(560)
+        self.setMinimumHeight(420)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
     def set_values(
@@ -3303,21 +3433,21 @@ class ProfitGuardWidget(QWidget):
         title_font.setPointSize(8)
         painter.setFont(title_font)
         painter.setPen(_theme_color("#111827", "#f3f4f6"))
-        painter.drawText(rect.adjusted(7, 6, -7, -50), Qt.AlignCenter | Qt.TextWordWrap, title)
+        painter.drawText(QRectF(rect.left() + 7, rect.top() + 4, rect.width() - 14, 20), Qt.AlignCenter | Qt.TextWordWrap, title)
 
         value_font = QFont(painter.font())
         value_font.setBold(True)
         value_font.setPointSize(10)
         painter.setFont(value_font)
         painter.setPen(color)
-        painter.drawText(rect.adjusted(7, 30, -7, -28), Qt.AlignCenter | Qt.TextWordWrap, value)
+        painter.drawText(QRectF(rect.left() + 7, rect.top() + 24, rect.width() - 14, 20), Qt.AlignCenter | Qt.TextWordWrap, value)
 
         small_font = QFont(painter.font())
         small_font.setBold(False)
         small_font.setPointSize(7)
         painter.setFont(small_font)
         painter.setPen(_theme_color("#4b5563", "#cbd5e1"))
-        painter.drawText(rect.adjusted(7, 58, -7, -5), Qt.AlignCenter | Qt.TextWordWrap, small)
+        painter.drawText(QRectF(rect.left() + 7, rect.top() + 44, rect.width() - 14, 24), Qt.AlignCenter | Qt.TextWordWrap, small)
         painter.restore()
 
     def _draw_lane_label(self, painter: QPainter, x: float, y: float, text: str) -> None:
@@ -3418,12 +3548,12 @@ class ProfitGuardWidget(QWidget):
         block_count = 4
         available_w = max(620.0, rect.width() - 28 - lane_label_w)
         block_w = max(135.0, (available_w - (block_count - 1) * gap) / block_count)
-        block_h = 90.0
+        block_h = 72.0
         start_x = rect.left() + 14 + lane_label_w
-        entry_y = rect.top() + 72
-        exit_y = entry_y + 116
-        guard_y = exit_y + 116
-        safety_y = guard_y + 116
+        entry_y = rect.top() + 60
+        exit_y = entry_y + 82
+        guard_y = exit_y + 82
+        safety_y = guard_y + 82
 
         self._draw_lane_label(painter, rect.left() + 16, entry_y + 24, "Entry")
         self._draw_lane_label(painter, rect.left() + 16, exit_y + 24, "Exit")
@@ -4388,19 +4518,28 @@ class PricePanel(QGroupBox):
         root.addWidget(self.stage3_guard_status)
 
         summary_grid = QGridLayout()
+        summary_grid.setHorizontalSpacing(8)
+        summary_grid.setVerticalSpacing(8)
         self.price_summary_cards: dict[str, MetricCard] = {}
-        for idx, title in enumerate([
-            "Selected price",
-            "Source",
-            "Freshness",
-            "Data mode",
-            "Bid / Ask / Spread",
-            "RTH status",
-            "Current time",
-        ]):
+        for title, row, column, span in [
+            ("Selected price", 0, 0, 1),
+            ("Source", 0, 1, 1),
+            ("Data mode", 0, 2, 1),
+            ("Bid / Ask / Spread", 1, 0, 1),
+            ("RTH status", 1, 1, 2),
+        ]:
             card = MetricCard(title)
+            card.setMinimumWidth(0)
+            card.value.setWordWrap(True)
+            card.value.setMinimumWidth(0)
             self.price_summary_cards[title] = card
-            summary_grid.addWidget(card, idx // 3, idx % 3)
+            summary_grid.addWidget(card, row, column, 1, span)
+        for column in range(3):
+            summary_grid.setColumnStretch(column, 1)
+        self.price_summary_cards["Data mode"].setToolTip(
+            "Actual data mode and age of the last streaming update. Quote-field freshness is validated separately."
+        )
+        self.price_summary_cards["RTH status"].setToolTip("Broker-reported RTH status together with current UTC and system time.")
         root.addLayout(summary_grid)
 
         raw_row = QHBoxLayout()
@@ -4408,11 +4547,8 @@ class PricePanel(QGroupBox):
         self.raw_api_toggle.setCheckable(True)
         self.raw_api_toggle.setChecked(False)
         self.raw_api_toggle.toggled.connect(self._set_raw_table_visible)
-        raw_note = QLabel("Raw IBKR fields remain available for debugging but are collapsed during normal supervision.")
-        raw_note.setObjectName("Muted")
-        raw_note.setWordWrap(True)
         raw_row.addWidget(self.raw_api_toggle)
-        raw_row.addWidget(raw_note, 1)
+        raw_row.addStretch(1)
         root.addLayout(raw_row)
 
         self.fields_table = QTableWidget(0, 10)
@@ -4581,11 +4717,9 @@ class PricePanel(QGroupBox):
         mapping = {
             "Selected price": price_snapshot.get("price"),
             "Source": price_snapshot.get("source"),
-            "Freshness": freshness,
-            "Data mode": mode,
+            "Data mode": f"{mode} | {freshness}",
             "Bid / Ask / Spread": spread_text,
-            "RTH status": rth,
-            "Current time": _current_time_status_text(),
+            "RTH status": f"{rth}\n{_current_time_status_text()}",
         }
         for title, value in mapping.items():
             card = self.price_summary_cards.get(title)
@@ -4848,6 +4982,10 @@ class PricePanel(QGroupBox):
                     self.fields_table.setItem(r, field_col, QTableWidgetItem(""))
                     self.fields_table.setItem(r, value_col, QTableWidgetItem(""))
         _auto_size_table_columns(self.fields_table, minimum=70, maximum=260, last_maximum=320)
+        # Reapply after autosizing, which intentionally resets header modes.
+        # Resize/show/refresh must retain full-width value columns.
+        for column in range(1, pairs_per_row * 2, 2):
+            self.fields_table.horizontalHeader().setSectionResizeMode(column, QHeaderView.Stretch)
         _fit_table_height_to_rows(self.fields_table, min_rows=4, max_visible_rows=10, min_height=220, max_fit_height=360)
 
 
@@ -5137,6 +5275,13 @@ class StopDialog(QDialog):
 class CycleAuditDialog(QDialog):
     """Read-only click-through view for one completed cycle."""
 
+    _DECISION_COLUMNS = (
+        ("created_at", "Created"), ("event_type", "Event"),
+        ("stage_before", "Before"), ("stage_after", "After"),
+        ("decision_result", "Result"), ("broker_order_id", "Order ID"),
+        ("perm_id", "permId"), ("message", "Message"),
+    )
+
     def __init__(self, row: dict[str, Any], details: dict[str, Any], parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setWindowFlags(self.windowFlags() | Qt.WindowMaximizeButtonHint | Qt.WindowMinimizeButtonHint)
@@ -5150,6 +5295,26 @@ class CycleAuditDialog(QDialog):
             self.details.setdefault("market_capture_files", [])
         self._market_capture_loaded = "market_capture_rows" in self.details and "market_capture_files" in self.details
         self._lazy_tabs: dict[int, tuple[QVBoxLayout, Callable[[], QWidget], QLabel]] = {}
+        self._audit_closed = False
+        self._audit_started = False
+        self._audit_finished = False
+        self._audit_cancel = threading.Event()
+        self._audit_results: queue.Queue = queue.Queue()
+        self._audit_worker: Optional[threading.Thread] = None
+        self._capture_load_error = ""
+        self._waiting_audit_tabs: set[int] = set()
+        self._decision_rows: Optional[list[tuple[list[str], str]]] = None
+        self._decision_table: Optional[QTableWidget] = None
+        self._decision_next_row = 0
+        self._decision_columns_sized = False
+        self._decision_resize_row: Optional[int] = None
+        self._audit_timer = QTimer(self)
+        self._audit_timer.setInterval(16)
+        self._audit_timer.timeout.connect(self._poll_audit_loading)
+        # The worker owns plain data only; destroying Qt's parent must also
+        # cancel it even when no modal close event reaches this Python object.
+        cancel = self._audit_cancel
+        self.destroyed.connect(lambda *_args: cancel.set())
 
         ticker = self.row.get("ticker") or "-"
         cycle_number = self.row.get("cycle_number") or "-"
@@ -5174,7 +5339,7 @@ class CycleAuditDialog(QDialog):
         self._timeline_tab_index = self._add_lazy_tab(
             "Timeline",
             self._build_timeline_tab,
-            "Select this tab to load the completed market-capture ZIPs and build the detailed timeline.",
+            "Preparing the timeline in the background...",
         )
         self._orders_tab_index = self._add_lazy_tab(
             "Orders",
@@ -5189,12 +5354,12 @@ class CycleAuditDialog(QDialog):
         self._market_capture_tab_index = self._add_lazy_tab(
             "Market capture",
             self._build_market_capture_tab,
-            "Select this tab to load and inspect completed market-capture ZIPs.",
+            "Preparing the completed market captures in the background...",
         )
         self._decision_events_tab_index = self._add_lazy_tab(
             "Decision events",
             self._build_decision_events_tab,
-            "Select this tab to build the structured decision-event table.",
+            "Preparing the decision-event table...",
         )
         self._raw_log_tab_index = self._add_lazy_tab(
             "Raw log",
@@ -5206,6 +5371,165 @@ class CycleAuditDialog(QDialog):
         buttons = QDialogButtonBox(QDialogButtonBox.Close)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+    def showEvent(self, event) -> None:  # type: ignore[override]
+        super().showEvent(event)
+        # Allow the Summary to paint before copying the small SQLite snapshot.
+        QTimer.singleShot(0, self._start_audit_preload)
+
+    @staticmethod
+    def _prepare_audit_data(row, details, cancel, results, capture_loader) -> None:
+        """One read-only worker; no QWidget, controller or shared-dialog access."""
+        try:
+            prepared = []
+            for event in details.get("decision_events") or []:
+                if cancel.is_set():
+                    return
+                values = [_format_field_value(key, event.get(key)) for key, _label in CycleAuditDialog._DECISION_COLUMNS]
+                prepared.append((values, str(event.get("raw_json") or "")))
+            if not cancel.is_set():
+                results.put(("decisions", prepared))
+            if capture_loader is not None and not cancel.is_set():
+                rows, files = capture_loader(row, details, should_cancel=cancel.is_set)
+                if not cancel.is_set():
+                    results.put(("captures", (rows, files)))
+        except Exception as exc:
+            if not cancel.is_set():
+                results.put(("error", str(exc)))
+        finally:
+            if not cancel.is_set():
+                results.put(("finished", None))
+
+    def _start_audit_preload(self) -> None:
+        if self._audit_closed or self._audit_cancel.is_set() or self._audit_started:
+            return
+        self._audit_started = True
+        try:
+            details = deepcopy({key: value for key, value in self.details.items()
+                                if key not in {"market_capture_rows", "market_capture_files"}})
+            self._audit_worker = threading.Thread(
+                target=type(self)._prepare_audit_data,
+                args=(deepcopy(self.row), details, self._audit_cancel, self._audit_results,
+                      None if self._market_capture_loaded else type(self)._load_market_capture_rows),
+                name="CycleAuditReader", daemon=True,
+            )
+            self._audit_worker.start()
+        except Exception as exc:
+            self._audit_results.put(("error", str(exc)))
+            self._audit_results.put(("finished", None))
+        self._audit_timer.start()
+
+    def _poll_audit_loading(self) -> None:
+        if self._audit_closed or self._audit_cancel.is_set():
+            return
+        for _ in range(4):
+            try:
+                kind, payload = self._audit_results.get_nowait()
+            except queue.Empty:
+                break
+            if kind == "decisions":
+                self._decision_rows = payload
+                self._materialize_tab(self._decision_events_tab_index)
+            elif kind == "captures":
+                self.details["market_capture_rows"], self.details["market_capture_files"] = payload
+                self._market_capture_loaded = True
+            elif kind == "error":
+                self._capture_load_error = str(payload)
+                for index in (self._timeline_tab_index, self._market_capture_tab_index, self._decision_events_tab_index):
+                    if index in self._lazy_tabs:
+                        self._lazy_tabs[index][2].setText(f"Could not prepare audit data: {payload}")
+            elif kind == "finished":
+                self._audit_finished = True
+        if self._market_capture_loaded:
+            for index in tuple(self._waiting_audit_tabs):
+                self._materialize_tab(index)
+        self._populate_decision_batch()
+        if self._audit_finished and not self._decision_batch_pending():
+            self._audit_timer.stop()
+
+    def _decision_batch_pending(self) -> bool:
+        return bool(self._decision_table is not None and self._decision_rows is not None
+                    and (self._decision_next_row < len(self._decision_rows) or self._decision_resize_row is not None))
+
+    def _queue_decision_resize(self, *_args) -> None:
+        if self._audit_closed or self._audit_cancel.is_set() or self._decision_table is None:
+            return
+        self._decision_resize_row = 0
+        self._audit_timer.start()
+
+    def eventFilter(self, watched, event) -> bool:  # type: ignore[override]
+        if not self._audit_closed and not self._audit_cancel.is_set() and self._decision_table is not None:
+            if watched in (self._decision_table, self._decision_table.viewport()) and event.type() in (
+                QEvent.Resize, QEvent.FontChange, QEvent.StyleChange,
+            ):
+                self._queue_decision_resize()
+        return super().eventFilter(watched, event)
+
+    def _populate_decision_batch(self) -> None:
+        table, rows = self._decision_table, self._decision_rows
+        if self._audit_closed or self._audit_cancel.is_set() or table is None or rows is None:
+            return
+        deadline = time.perf_counter() + 0.006
+        table.setUpdatesEnabled(False)
+        try:
+            stop = min(len(rows), self._decision_next_row + 40)
+            while self._decision_next_row < stop:
+                row_index = self._decision_next_row
+                values, raw = rows[row_index]
+                for column, value in enumerate(values):
+                    item = QTableWidgetItem(value)
+                    item.setToolTip(raw or value)
+                    table.setItem(row_index, column, item)
+                self._decision_next_row += 1
+                if time.perf_counter() >= deadline:
+                    break
+            if self._decision_next_row == len(rows) and not self._decision_columns_sized:
+                self._decision_columns_sized = True
+                table.horizontalHeader().setResizeContentsPrecision(100)
+                _auto_size_table_columns(table, maximum=320, last_maximum=420)
+                table.horizontalHeader().setSectionResizeMode(7, QHeaderView.Stretch)
+                self._decision_resize_row = 0
+            if self._decision_next_row == len(rows) and self._decision_resize_row is not None:
+                stop = min(table.rowCount(), self._decision_resize_row + 40)
+                while self._decision_resize_row < stop:
+                    table.resizeRowToContents(self._decision_resize_row)
+                    self._decision_resize_row += 1
+                    if time.perf_counter() >= deadline:
+                        break
+                if self._decision_resize_row >= table.rowCount():
+                    self._decision_resize_row = None
+        finally:
+            table.setUpdatesEnabled(True)
+
+    def _close_audit_loading(self) -> None:
+        if self._audit_closed:
+            return
+        self._audit_closed = True
+        self._audit_cancel.set()
+        try:
+            self._audit_timer.stop()
+        except RuntimeError:
+            # Parent destruction may have already deleted the Qt timer.
+            pass
+        self._decision_rows = None
+        self._waiting_audit_tabs.clear()
+        while True:
+            try:
+                self._audit_results.get_nowait()
+            except queue.Empty:
+                break
+
+    def done(self, result: int) -> None:  # type: ignore[override]
+        self._close_audit_loading()
+        super().done(result)
+
+    def reject(self) -> None:  # type: ignore[override]
+        self._close_audit_loading()
+        super().reject()
+
+    def closeEvent(self, event) -> None:  # type: ignore[override]
+        self._close_audit_loading()
+        super().closeEvent(event)
 
     def _add_lazy_tab(self, label: str, builder: Callable[[], QWidget], message: str) -> int:
         container = QWidget()
@@ -5219,13 +5543,26 @@ class CycleAuditDialog(QDialog):
         return index
 
     def _queue_materialize_tab(self, index: int) -> None:
-        if index not in self._lazy_tabs:
+        if self._audit_closed or self._audit_cancel.is_set() or index not in self._lazy_tabs:
             return
-        # Let Qt paint the lightweight placeholder before any requested file
-        # parsing or large table construction starts on the GUI thread.
+        # Let Qt paint the lightweight placeholder before building the tab
+        # from prepared data on the GUI thread.
         QTimer.singleShot(0, lambda selected=index: self._materialize_tab(selected))
 
     def _materialize_tab(self, index: int) -> None:
+        if self._audit_closed or self._audit_cancel.is_set() or index not in self._lazy_tabs:
+            return
+        if index in (self._timeline_tab_index, self._market_capture_tab_index) and not self._market_capture_loaded:
+            if self._capture_load_error:
+                return
+            self._waiting_audit_tabs.add(index)
+            self._start_audit_preload()
+            return
+        if index == self._decision_events_tab_index and self._decision_rows is None:
+            self._waiting_audit_tabs.add(index)
+            self._start_audit_preload()
+            return
+        self._waiting_audit_tabs.discard(index)
         pending = self._lazy_tabs.pop(index, None)
         if pending is None:
             return
@@ -5240,12 +5577,8 @@ class CycleAuditDialog(QDialog):
         tab_layout.addWidget(widget, 1)
 
     def _ensure_market_capture_loaded(self) -> None:
-        if self._market_capture_loaded:
-            return
-        rows, files = self._load_market_capture_rows(self.row, self.details)
-        self.details["market_capture_rows"] = rows
-        self.details["market_capture_files"] = files
-        self._market_capture_loaded = True
+        if not self._market_capture_loaded:
+            raise RuntimeError("Market captures are still being prepared in the background.")
 
     def _build_timeline_tab(self) -> QWidget:
         self._ensure_market_capture_loaded()
@@ -5264,6 +5597,7 @@ class CycleAuditDialog(QDialog):
             ("perm_id", "permId"),
             ("order_ref", "OrderRef"),
         ], "No order rows found for this cycle.", expand_when_overflow=False)
+        table.horizontalHeader().setSectionResizeMode(table.columnCount() - 1, QHeaderView.Stretch)
         return self._top_aligned_table_tab(table)
 
     def _build_executions_tab(self) -> QWidget:
@@ -5277,6 +5611,7 @@ class CycleAuditDialog(QDialog):
             ("execution_id", "Execution ID"),
             ("order_ref", "OrderRef"),
         ], "No execution rows found for this cycle.", expand_when_overflow=False)
+        table.horizontalHeader().setSectionResizeMode(table.columnCount() - 1, QHeaderView.Stretch)
         return self._top_aligned_table_tab(table)
 
     def _build_market_capture_tab(self) -> QWidget:
@@ -5284,17 +5619,32 @@ class CycleAuditDialog(QDialog):
         return self._market_capture_tab(self.row, self.details)
 
     def _build_decision_events_tab(self) -> QWidget:
-        table = self._records_table(self.details.get("decision_events") or [], [
-            ("created_at", "Created"),
-            ("event_type", "Event"),
-            ("stage_before", "Before"),
-            ("stage_after", "After"),
-            ("decision_result", "Result"),
-            ("broker_order_id", "Order ID"),
-            ("perm_id", "permId"),
-            ("message", "Message"),
-        ], "No structured decision events found for this cycle.", expand_when_overflow=False)
-        return self._top_aligned_table_tab(table)
+        rows = self._decision_rows or []
+        table = QTableWidget(max(1, len(rows)), len(self._DECISION_COLUMNS))
+        table.setHorizontalHeaderLabels([label for _key, label in self._DECISION_COLUMNS])
+        _polish_table_widget(table, stretch_last=True)
+        # Avoid repeated full-table layout while thousands of items are added.
+        table.verticalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        for column, width in enumerate((170, 200, 150, 150, 130, 85, 85, 320)):
+            table.setColumnWidth(column, width)
+        table.setMinimumHeight(120)
+        table.setMaximumHeight(16777215)
+        table.setMaximumWidth(16777215)
+        table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        table.setSizeAdjustPolicy(QTableWidget.AdjustIgnored)
+        table.horizontalHeader().setSectionResizeMode(7, QHeaderView.Stretch)
+        self._decision_table = table
+        self._decision_next_row = 0
+        self._decision_columns_sized = False
+        self._decision_resize_row = 0
+        if not rows:
+            table.setItem(0, 0, QTableWidgetItem("No structured decision events found for this cycle."))
+        table.installEventFilter(self)
+        table.viewport().installEventFilter(self)
+        table.horizontalHeader().sectionResized.connect(self._queue_decision_resize)
+        self._audit_timer.start()
+        return table
 
     def _build_raw_log_tab(self) -> QWidget:
         self.text = QTextEdit()
@@ -5598,8 +5948,87 @@ class CycleAuditDialog(QDialog):
             return True
         return cls._capture_exact_cycle_folder(path, expected_ticker, expected_cycle_number)
 
+    @staticmethod
+    def _capture_context_time_window(manifest: dict[str, Any], event: dict[str, Any], row: dict[str, Any], details: dict[str, Any]) -> tuple[float, float] | None:
+        """Allow cross-cycle prices only for an identified, bounded fill capture.
+
+        The recorder continues its post-fill window after auto-repeat changes
+        the active cycle. A legacy filename or ticker alone is insufficient to
+        relax the per-row cycle filter.
+        """
+        cycle = details.get("cycle") or row or {}
+        event_cycle = event.get("cycle")
+        if not isinstance(event_cycle, dict):
+            return None
+        expected_id = str(row.get("id") or cycle.get("id") or "").strip()
+        expected_number = row.get("cycle_number") or cycle.get("cycle_number")
+        expected_ticker = str(row.get("ticker") or cycle.get("ticker") or "").strip().upper()
+        expected_con_id = _float_or_none(row.get("con_id") or cycle.get("con_id"))
+        expected_number_value = _float_or_none(expected_number)
+        if not expected_id or expected_number_value is None or not expected_ticker or not expected_con_id or expected_con_id <= 0:
+            return None
+        if str(manifest.get("cycle_id") or "").strip() != expected_id or str(event_cycle.get("id") or "").strip() != expected_id:
+            return None
+        for identity in (manifest, event_cycle):
+            if str(identity.get("ticker") or "").strip().upper() != expected_ticker:
+                return None
+            if _float_or_none(identity.get("cycle_number")) != expected_number_value:
+                return None
+        if _float_or_none(event_cycle.get("con_id")) != expected_con_id:
+            return None
+        event_type = str(manifest.get("event_type") or "")
+        if event_type not in {"BUY_FILL", "SELL_FILL", "PROTECTIVE_SELL_FILL"} or event.get("event_type") != event_type:
+            return None
+        if not manifest.get("order_ref") or manifest.get("order_ref") != event.get("order_ref"):
+            return None
+        started = _parse_timestamp(manifest.get("started_at_utc"))
+        event_time = _parse_timestamp(event.get("event_time_utc"))
+        pre = _float_or_none(manifest.get("pre_window_seconds"))
+        post = _float_or_none(manifest.get("post_window_seconds"))
+        first = _parse_timestamp(manifest.get("first_row_utc"))
+        last = _parse_timestamp(manifest.get("last_row_utc"))
+        if any(value is None or not math.isfinite(value) for value in (started, event_time, pre, post, first, last)):
+            return None
+        assert started is not None and event_time is not None and pre is not None and post is not None and first is not None and last is not None
+        if pre < 0 or post < 0 or abs(started - event_time) > 1.0 or first > last:
+            return None
+        # Bound context by both the declared window and the actual recorded
+        # endpoints. Never extend it using the next cycle's timestamps.
+        start, end = max(started - pre, first), min(started + post, last)
+        return (start, end) if start <= end else None
+
+    @staticmethod
+    def _capture_row_matches_instrument(capture_row: dict[str, Any], row: dict[str, Any], details: dict[str, Any], *, require_identity: bool = False) -> bool:
+        cycle = details.get("cycle") or row or {}
+        expected_ticker = str(row.get("ticker") or cycle.get("ticker") or "").strip().upper()
+        expected_con_id = _float_or_none(row.get("con_id") or cycle.get("con_id"))
+        expected_currency = str(row.get("currency") or cycle.get("currency") or "").strip().upper()
+        contract = capture_row.get("contract")
+        contract = contract if isinstance(contract, dict) else {}
+        fields = capture_row.get("fields")
+        fields = fields if isinstance(fields, dict) else {}
+        tickers = [str(value).strip().upper() for value in (
+            capture_row.get("ticker"), capture_row.get("symbol"), fields.get("ticker"),
+            contract.get("ticker"), contract.get("symbol"), capture_row.get("contract.ticker"),
+        ) if value not in (None, "")]
+        con_ids = [value for value in (
+            capture_row.get("con_id"), contract.get("con_id"), contract.get("conId"), capture_row.get("contract.con_id"),
+        ) if value not in (None, "")]
+        currencies = [str(value).strip().upper() for value in (
+            capture_row.get("currency"), contract.get("currency"), capture_row.get("contract.currency"),
+        ) if value not in (None, "")]
+        if expected_ticker and any(value != expected_ticker for value in tickers):
+            return False
+        if expected_con_id and any(_float_or_none(value) != expected_con_id for value in con_ids):
+            return False
+        if expected_currency and any(value != expected_currency for value in currencies):
+            return False
+        return not require_identity or bool(expected_ticker and tickers and expected_con_id and con_ids)
+
     @classmethod
-    def _load_market_capture_rows(cls, row: dict[str, Any], details: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
+    def _load_market_capture_rows(cls, row: dict[str, Any], details: dict[str, Any], *, should_cancel: Callable[[], bool] | None = None) -> tuple[list[dict[str, Any]], list[str]]:
+        if should_cancel is not None and should_cancel():
+            return [], []
         cycle = details.get("cycle") or row or {}
         expected_cycle_id = str(row.get("id") or cycle.get("id") or "").strip()
         expected_cycle_number = str(row.get("cycle_number") or cycle.get("cycle_number") or "").strip()
@@ -5607,49 +6036,50 @@ class CycleAuditDialog(QDialog):
         rows: list[dict[str, Any]] = []
         files: list[str] = []
         for path in cls._candidate_capture_files(row, details):
+            if should_cancel is not None and should_cancel():
+                return [], []
             try:
                 with zipfile.ZipFile(path, "r") as zf:
                     manifest: dict[str, Any] = {}
                     try:
-                        manifest = json.loads(zf.read("manifest.json").decode("utf-8"))
+                        loaded_manifest = json.loads(zf.read("manifest.json").decode("utf-8"))
+                        manifest = loaded_manifest if isinstance(loaded_manifest, dict) else {}
                     except Exception:
                         manifest = {}
                     if not cls._capture_manifest_or_path_matches_cycle(path, manifest, row, details):
                         continue
-                    file_rows: list[dict[str, Any]] = []
-                    if "market_data.jsonl" in zf.namelist():
-                        for line in zf.read("market_data.jsonl").decode("utf-8", errors="replace").splitlines():
-                            line = line.strip()
-                            if not line:
-                                continue
-                            try:
-                                loaded = json.loads(line)
-                            except Exception:
-                                continue
-                            if isinstance(loaded, dict):
-                                file_rows.append(loaded)
-                    elif "market_data.csv" in zf.namelist():
-                        text = zf.read("market_data.csv").decode("utf-8", errors="replace")
-                        file_rows.extend(dict(item) for item in csv.DictReader(text.splitlines()))
-                    if not file_rows:
-                        continue
+                    try:
+                        event = json.loads(zf.read("event.json").decode("utf-8"))
+                    except Exception:
+                        event = {}
+                    context_window = cls._capture_context_time_window(manifest, event if isinstance(event, dict) else {}, row, details)
                     exact_file_match = cls._capture_file_is_exact_cycle_match(path, manifest, row, details)
-                    if exact_file_match:
-                        matched_rows = [
-                            item for item in file_rows
-                            if isinstance(item, dict)
-                            and cls._capture_row_matches_expected(
-                                item,
-                                ticker=expected_ticker,
-                                cycle_number=expected_cycle_number,
-                                cycle_id=expected_cycle_id,
-                            )
-                        ]
-                    else:
-                        matched_rows = [
-                            item for item in file_rows
-                            if isinstance(item, dict) and cls._market_capture_row_matches_cycle(item, row, details)
-                        ]
+                    matched_rows: list[dict[str, Any]] = []
+                    is_jsonl = "market_data.jsonl" in zf.namelist()
+                    member = "market_data.jsonl" if is_jsonl else "market_data.csv"
+                    with zf.open(member) as stream, io.TextIOWrapper(stream, encoding="utf-8", errors="replace") as text:
+                        for record in text if is_jsonl else csv.DictReader(text):
+                            if should_cancel is not None and should_cancel():
+                                return [], []
+                            try:
+                                item = json.loads(record) if isinstance(record, str) else dict(record)
+                            except (ValueError, TypeError):
+                                continue
+                            if not isinstance(item, dict) or not cls._capture_row_matches_instrument(item, row, details):
+                                continue
+                            if context_window is not None:
+                                row_time = _timeline_time(item, "captured_at_utc", "event_time_utc", "timestamp", "time")
+                                if row_time is None or not context_window[0] <= row_time <= context_window[1]:
+                                    continue
+                                if cls._capture_row_matches_instrument(item, row, details, require_identity=True):
+                                    matched_rows.append(item)
+                                    continue
+                            if exact_file_match:
+                                matches = cls._capture_row_matches_expected(item, ticker=expected_ticker, cycle_number=expected_cycle_number, cycle_id=expected_cycle_id)
+                            else:
+                                matches = cls._market_capture_row_matches_cycle(item, row, details)
+                            if matches:
+                                matched_rows.append(item)
                     if not matched_rows:
                         continue
                     for item in matched_rows:
@@ -5658,10 +6088,14 @@ class CycleAuditDialog(QDialog):
                     files.append(str(path))
             except Exception:
                 continue
+        if should_cancel is not None and should_cancel():
+            return [], []
         rows.sort(key=lambda item: (_timeline_time(item, "captured_at_utc", "event_time_utc") is None, _timeline_time(item, "captured_at_utc", "event_time_utc") or 0.0, str(item.get("monotonic_ts") or "")))
         deduped: list[dict[str, Any]] = []
         seen_rows: set[tuple[Any, Any, Any]] = set()
         for item in rows:
+            if should_cancel is not None and should_cancel():
+                return [], []
             key = (item.get("captured_at_utc"), item.get("monotonic_ts"), item.get("price"))
             if key in seen_rows:
                 continue
@@ -5735,9 +6169,9 @@ class CycleAuditDialog(QDialog):
         layout.addWidget(timeline_scroll, 1)
         transition_rows = []
         for event in details.get("decision_events") or []:
-            before = event.get("stage_before") or ""
-            after = event.get("stage_after") or ""
-            if not before and not after:
+            before = str(event.get("stage_before") or "").strip()
+            after = str(event.get("stage_after") or "").strip()
+            if not before or not after or before == after:
                 continue
             transition_rows.append({
                 "created_at": event.get("created_at"),
@@ -5804,6 +6238,10 @@ class CycleAuditDialog(QDialog):
         # windows or unusually long non-wrapping content.
         transition_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Stretch)
         risk_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        for table in (transition_table, risk_table):
+            table.setFixedHeight(210)
+            table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         split.addWidget(transition_table, 3)
         split.addWidget(risk_table, 2)
         layout.addLayout(split, 0)
@@ -5833,8 +6271,7 @@ class CycleAuditDialog(QDialog):
         layout = QVBoxLayout(tab)
         if capture_deferred:
             note = QLabel(
-                "This summary opens immediately from SQLite. Select Timeline or Market capture "
-                "to load the completed capture ZIPs for the detailed price path."
+                "Market captures and decision rows are prepared in the background while this summary is open."
             )
             note.setObjectName("Muted")
             note.setWordWrap(True)
@@ -5874,10 +6311,10 @@ class CycleAuditDialog(QDialog):
         *,
         pairs_per_row: int = 3,
     ) -> QTableWidget:
-        """Lay out summary fields across the full width without scrollbars."""
+        """Lay out full-width summary fields with reachable wrapped overflow."""
         pair_count = max(1, int(pairs_per_row))
         row_count = max(1, (len(items) + pair_count - 1) // pair_count)
-        table = QTableWidget(row_count, pair_count * 2)
+        table = ContentFitTable(row_count, pair_count * 2, min_height=130, max_height=230)
         table.setHorizontalHeaderLabels([label for _ in range(pair_count) for label in ("Field", "Value")])
         _polish_table_widget(
             table,
@@ -5899,9 +6336,8 @@ class CycleAuditDialog(QDialog):
         for pair_idx in range(pair_count):
             header.setSectionResizeMode(pair_idx * 2, QHeaderView.ResizeToContents)
             header.setSectionResizeMode(pair_idx * 2 + 1, QHeaderView.Stretch)
-        _fit_table_height_to_all_rows(table, min_height=130, max_height=230)
+        table.fit_rows()
         table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         return table
 
     @staticmethod
@@ -5923,6 +6359,8 @@ class CycleAuditDialog(QDialog):
         cycle = details.get("cycle") or row
         tab = QWidget()
         layout = QVBoxLayout(tab)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
         capture_rows = details.get("market_capture_rows") or []
         capture_files = details.get("market_capture_files") or []
         first_capture = capture_rows[0].get("captured_at_utc") if capture_rows else None
@@ -5956,7 +6394,8 @@ class CycleAuditDialog(QDialog):
             expand_when_overflow=False,
         )
         summary_table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
-        layout.addWidget(summary_table, 0)
+        summary_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        layout.addWidget(summary_table, 0, Qt.AlignTop)
         if capture_rows:
             preview_rows: list[dict[str, Any]] = []
             head = list(capture_rows[:8])
@@ -5979,7 +6418,9 @@ class CycleAuditDialog(QDialog):
                 ("source", "Source"),
                 ("capture_file", "Capture ZIP"),
             ], "No captured rows found for this cycle.", max_visible_rows=8)
-            preview_table.setMinimumHeight(180)
+            preview_table.setMinimumHeight(120)
+            preview_table.setMaximumHeight(16777215)
+            preview_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
             preview_table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
             preview_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
             layout.addWidget(preview_table, 2)
@@ -5993,6 +6434,9 @@ class CycleAuditDialog(QDialog):
             file_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             file_box.setPlainText("\n".join(str(path) for path in capture_files))
             layout.addWidget(file_box, 0)
+        if not capture_rows:
+            # A lone fixed-height table otherwise floats in the vertical center.
+            layout.addStretch(1)
         return tab
 
     @staticmethod
@@ -6057,7 +6501,7 @@ class CycleAuditDialog(QDialog):
             lines.extend([
                 "BUILT-IN EXAMPLE CYCLE",
                 "=" * 80,
-                "This is synthetic v4.0.0 paper-trading example data. It is not an actual market record, is not stored in SQLite, and cannot affect trading or risk totals.",
+                "This is synthetic v5.0.0 paper-trading example data. It is not an actual market record, is not stored in SQLite, and cannot affect trading or risk totals.",
                 "The scenario models a liquid U.S. stock pullback, a multi-execution trailing BUY fill, a temporary protective SELL, and a modest trailing-stop profit exit.",
                 "",
             ])
@@ -6182,7 +6626,7 @@ class MainWindow(QMainWindow):
         self._watchdog_shutdown_expected = False
         auto_restart_value = str(os.environ.get("IBKR_BOT_AUTO_RESTART", "1") or "1").strip().lower()
         self._watchdog_auto_restart_enabled = auto_restart_value not in {"0", "false", "no", "off"}
-        self.setWindowTitle("BouncyBot - IBKR Portable Trading Bot v4.0.0")
+        self.setWindowTitle("BouncyBot - IBKR Portable Trading Bot v5.0.0")
         icon_path = resource_path("Images", "BouncyBot_app_icon.png")
         if icon_path.is_file():
             self.setWindowIcon(QIcon(str(icon_path)))
@@ -6215,9 +6659,12 @@ class MainWindow(QMainWindow):
         self.shell_layout = QVBoxLayout(shell)
         self.shell_layout.setContentsMargins(6, 6, 6, 6)
         self.shell_layout.setSpacing(6)
+        # Both rows stay outside the scrolling tabs: status first, then stages.
         self.live_status_bar = LiveStatusBar()
         self.live_status_bar.input_lock_btn.toggled.connect(self._manual_input_lock_toggled)
         self.shell_layout.addWidget(self.live_status_bar)
+        self.stage_ribbon = StageRibbon()
+        self.shell_layout.addWidget(self.stage_ribbon)
         self.tabs = QTabWidget()
         self.shell_layout.addWidget(self.tabs, 1)
         self.command_bar = self._build_command_bar()
@@ -6395,6 +6842,7 @@ class MainWindow(QMainWindow):
             "recovery_stop_cycle_btn",
             "recovery_cancel_app_order_btn",
             "recovery_mark_manual_btn",
+            "recovery_historical_btn",
             "recovery_sell_market_btn",
             "recovery_leave_orders_btn",
         ):
@@ -6688,7 +7136,7 @@ class MainWindow(QMainWindow):
             widgets.extend(container.findChildren(QDoubleSpinBox))
             widgets.extend(container.findChildren(QComboBox))
             widgets.extend(container.findChildren(QCheckBox))
-        for attr in ("ticker_search_btn", "ticker_use_match_btn", "ticker_confirm_btn", "browse_platform_btn"):
+        for attr in ("connect_btn", "ticker_search_btn", "ticker_use_match_btn", "ticker_confirm_btn", "browse_platform_btn"):
             widget = getattr(self, attr, None)
             if isinstance(widget, QWidget):
                 widgets.append(widget)
@@ -6702,6 +7150,7 @@ class MainWindow(QMainWindow):
         stage = ((self.current_snapshot or {}).get("active_cycle") or {}).get("stage")
         self._update_input_locks(stage)
         self._update_command_bar_states(self.current_snapshot)
+        self._update_historical_recovery_controls(self.current_snapshot)
 
     def _install_no_wheel_field_filter(self) -> None:
         self._no_wheel_edit_filter = NoWheelEditFilter(self)
@@ -6957,7 +7406,7 @@ class MainWindow(QMainWindow):
             self.command_steps["start"].set_state("Blocked", False, detail)
         elif startup_resume_required:
             self.command_steps["start"].set_state("Ready", True, "Click to resume stored cycle")
-        elif active_stage and guard_blocker:
+        elif stage_value == Stage.WAIT_INITIAL_DROP.value and guard_blocker:
             self.command_steps["start"].set_state("Blocked", False, "Trade guard is blocking BUY")
         elif active_stage:
             self.command_steps["start"].set_state("Done", False, "Strategy running")
@@ -6988,6 +7437,9 @@ class MainWindow(QMainWindow):
                     False,
                     "Unlock the top-bar input lock to use this workflow action.",
                 )
+        if hasattr(self, "connect_btn"):
+            # Advanced view uses the same action and eligibility as step 1.
+            self.connect_btn.setEnabled(self.command_step_buttons["connect"].isEnabled())
 
     def _apply_view_mode(self, *args: Any) -> None:
         mode = self.view_mode_combo.currentText() if hasattr(self, "view_mode_combo") else DEFAULT_VIEW_MODE
@@ -6998,7 +7450,7 @@ class MainWindow(QMainWindow):
         for attr, visible in [
             ("connection_box", not simple),
             ("strategy_box", not simple),
-            ("event_log_box", True),
+            ("event_log_box", not simple),
             ("pnl_state_box", not simple),
         ]:
             widget = getattr(self, attr, None)
@@ -7026,9 +7478,6 @@ class MainWindow(QMainWindow):
         root = QVBoxLayout(content)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(10)
-
-        self.stage_ribbon = StageRibbon()
-        root.addWidget(self.stage_ribbon)
 
         # Keep the price feed at the top of the operational content in every
         # view mode. In Advanced/Debug this places it before the connection and
@@ -7066,8 +7515,8 @@ class MainWindow(QMainWindow):
         root.addLayout(mid)
 
         # Workflow actions live only in the fixed bottom command bar. The
-        # Recovery / audit log therefore receives the full dashboard width in
-        # Simple, Advanced, and Debug modes.
+        # Recovery / audit log receives the full width in Advanced/Debug and
+        # stays hidden in Simple; the audit itself continues in every mode.
         self.event_log_box = self._event_log_group()
         root.addWidget(self.event_log_box, 1)
 
@@ -7098,7 +7547,7 @@ class MainWindow(QMainWindow):
         self.client_spin.setRange(0, 999999)
         self.client_spin.setValue(11)
         self.account_edit = QLineEdit()
-        self.account_edit.setPlaceholderText("Optional override; blank uses IBKR default")
+        self.account_edit.setPlaceholderText("Optional; auto-select a single managed account")
         self.platform_combo.currentIndexChanged.connect(self._on_platform_changed)
         self.profile_combo.currentIndexChanged.connect(self._on_profile_changed)
 
@@ -7127,7 +7576,7 @@ class MainWindow(QMainWindow):
 
         self.connection_hint_label = QLabel(
             "Use a profile, log in to TWS/IB Gateway manually, complete 2FA, then connect. "
-            "The Account field is optional; leave it blank to let IBKR select the account."
+            "The Account field is optional; blank requires one unambiguous managed account."
         )
         self.connection_hint_label.setObjectName("Muted")
         self.connection_hint_label.setWordWrap(True)
@@ -7655,17 +8104,34 @@ class MainWindow(QMainWindow):
             "Minimum-profit trigger price",
             "Protective SELL stop",
             "SELL initial trailing-stop",
-            "Stage",
         ]):
             card = MetricCard(title)
             self.metrics[title] = card
             grid.addWidget(card, idx // 2, idx % 2)
         layout.addLayout(grid)
+        self.stage_details_toggle = QPushButton("Show stage details")
+        self.stage_details_toggle.setCheckable(True)
+        self.stage_details_toggle.setChecked(False)
+        self.stage_details_toggle.setToolTip("Show Current stage and Why not moving? diagnostics. Trading checks remain active while hidden.")
+        self.stage_details_toggle.toggled.connect(self._set_stage_details_visible)
+        toggle_row = QHBoxLayout()
+        toggle_row.addWidget(self.stage_details_toggle)
+        toggle_row.addStretch(1)
+        layout.addLayout(toggle_row)
+        self.stage_details_container = QWidget()
+        details_layout = QVBoxLayout(self.stage_details_container)
+        details_layout.setContentsMargins(0, 0, 0, 0)
         self.current_stage_panel = CurrentStagePanel()
-        layout.addWidget(self.current_stage_panel)
+        details_layout.addWidget(self.current_stage_panel)
         self.why_not_moving_panel = WhyNotMovingPanel()
-        layout.addWidget(self.why_not_moving_panel)
+        details_layout.addWidget(self.why_not_moving_panel)
+        layout.addWidget(self.stage_details_container)
+        self.stage_details_container.setVisible(False)
         return box
+
+    def _set_stage_details_visible(self, visible: bool) -> None:
+        self.stage_details_container.setVisible(bool(visible))
+        self.stage_details_toggle.setText("Hide stage details" if visible else "Show stage details")
 
     def _order_state_group(self) -> QGroupBox:
         box = QGroupBox("Order and position state")
@@ -7675,6 +8141,7 @@ class MainWindow(QMainWindow):
         for title in [
             "Quantity",
             "Buy filled qty",
+            "Total buy cost",
             "Sell filled qty",
             "Buy order ID",
             "Buy permId",
@@ -7684,8 +8151,10 @@ class MainWindow(QMainWindow):
             "Sell permId",
             "OrderRef",
         ]:
-            card = MetricCard(title)
+            card = MetricCard(title, multiline=title == "OrderRef")
             card.setMinimumHeight(58)
+            if title == "Total buy cost":
+                card.setToolTip("Actual cumulative BUY quantity times average BUY fill, plus recorded BUY commission. Updates with partial fills and fees; not the order budget.")
             self.metrics[title] = card
             layout.addWidget(card)
         layout.addStretch(1)
@@ -7762,6 +8231,7 @@ class MainWindow(QMainWindow):
             "Median net %",
             "Best net P/L",
             "Worst net P/L",
+            "Average net P/L",
             "Total net P/L",
             "Total commissions",
             "Max losing streak",
@@ -7771,9 +8241,12 @@ class MainWindow(QMainWindow):
             card = MetricCard(title)
             self.history_summary_cards[title] = card
             summary_grid.addWidget(card, idx // 3, idx % 3)
+        self.history_summary_cards["Average net P/L"].setToolTip(
+            "Total realized net P/L divided by completed cycles in this summary, including losing cycles and recorded commissions."
+        )
         root.addWidget(summary_box)
 
-        self.history_table = QTableWidget(0, 28)
+        self.history_table = QTableWidget(0, 29)
         self.history_table.setHorizontalHeaderLabels([
             "Outcome",
             "Ticker",
@@ -7789,6 +8262,7 @@ class MainWindow(QMainWindow):
             "Net P/L",
             "Net %",
             "Budget",
+            "Invested",
             "Reinvested",
             "Buy vs anchor %",
             "Initial stop vs buy %",
@@ -7805,9 +8279,14 @@ class MainWindow(QMainWindow):
             "Updated",
         ])
         self.history_table.setSortingEnabled(True)
-        _polish_table_widget(self.history_table, stretch_last=False, horizontal_scroll=Qt.ScrollBarAsNeeded, vertical_scroll=Qt.ScrollBarAsNeeded, expanding=True)
+        _polish_table_widget(self.history_table, stretch_last=False, horizontal_scroll=Qt.ScrollBarAlwaysOn, vertical_scroll=Qt.ScrollBarAsNeeded, expanding=True)
         self.history_table.setWordWrap(False)
-        self.history_table.setMinimumHeight(320)
+        # The viewport, not the row count, owns the table's height. Otherwise
+        # many rows force its bottom (and horizontal scrollbar) below the tab.
+        self.history_table.setMinimumHeight(120)
+        self.history_table.setSizeAdjustPolicy(QTableWidget.AdjustIgnored)
+        self.history_table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
+        self.history_table.verticalHeader().setDefaultSectionSize(28)
         root.addWidget(self.history_table, 1)
         self.history_refresh_btn.clicked.connect(lambda: self.controller.refresh_history(self.history_ticker_filter.text()))
         self.history_export_btn.clicked.connect(self._export_history)
@@ -7826,9 +8305,20 @@ class MainWindow(QMainWindow):
         root.addWidget(self.flowchart_panel, 1)
 
     def _build_recovery(self) -> None:
-        root = QVBoxLayout(self.recovery_tab)
+        outer = QVBoxLayout(self.recovery_tab)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self.recovery_scroll = QScrollArea()
+        self.recovery_scroll.setWidgetResizable(True)
+        self.recovery_scroll.setFrameShape(QFrame.NoFrame)
+        self.recovery_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.recovery_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        outer.addWidget(self.recovery_scroll, 1)
+        recovery_content = QWidget()
+        root = QVBoxLayout(recovery_content)
         root.setContentsMargins(10, 10, 10, 10)
         root.setSpacing(8)
+        root.setSizeConstraint(QVBoxLayout.SetMinimumSize)
+        self.recovery_scroll.setWidget(recovery_content)
         self.recovery_status_label = QLabel("No recovery issue detected.")
         self.recovery_status_label.setObjectName("PriceStatusGood")
         self.recovery_status_label.setWordWrap(True)
@@ -7857,7 +8347,7 @@ class MainWindow(QMainWindow):
         self.recovery_compare_step_label = QLabel("2. Compare SQLite with IBKR/TWS")
         self.recovery_compare_step_label.setObjectName("RecoveryStepTitle")
         guidance_layout.addWidget(self.recovery_compare_step_label)
-        self.recovery_compare_table = QTableWidget(0, 4)
+        self.recovery_compare_table = ContentFitTable(0, 4)
         self.recovery_compare_table.setHorizontalHeaderLabels([
             "Area",
             "SQLite / local state",
@@ -7865,11 +8355,13 @@ class MainWindow(QMainWindow):
             "Safest interpretation / action",
         ])
         self.recovery_compare_table.verticalHeader().setVisible(False)
-        _polish_table_widget(self.recovery_compare_table, stretch_last=False, horizontal_scroll=Qt.ScrollBarAsNeeded, vertical_scroll=Qt.ScrollBarAsNeeded, expanding=True)
-        # Keep the guided comparison readable without forcing the lower audit log
-        # and advanced actions off-screen on laptop-height windows.
-        self.recovery_compare_table.setMinimumHeight(150)
-        self.recovery_compare_table.setMaximumHeight(260)
+        _polish_table_widget(self.recovery_compare_table, stretch_last=False, horizontal_scroll=Qt.ScrollBarAlwaysOff, vertical_scroll=Qt.ScrollBarAlwaysOff, expanding=False)
+        header = self.recovery_compare_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        for column in (1, 2, 3):
+            header.setSectionResizeMode(column, QHeaderView.Stretch)
+        # All eight rows fit at their current wrapped heights. On short windows
+        # the page scrolls, keeping the table and action controls accessible.
         guidance_layout.addWidget(self.recovery_compare_table, 0)
 
         self.recovery_recommendation_label = QLabel("Recommended action: Refresh from IBKR/TWS before resolving a recovery problem.")
@@ -7885,7 +8377,7 @@ class MainWindow(QMainWindow):
         self.recovery_action_step_label = QLabel("3. Resolve the situation")
         self.recovery_action_step_label.setObjectName("RecoveryStepTitle")
         guidance_layout.addWidget(self.recovery_action_step_label)
-        guided_buttons = QHBoxLayout()
+        guided_buttons = QGridLayout()
         self.recovery_resume_btn = QPushButton("Reconcile and resume")
         self.recovery_stop_cycle_btn = QPushButton("Stop after current cycle")
         self.recovery_cancel_app_order_btn = QPushButton("Cancel visible app-owned orders")
@@ -7894,14 +8386,24 @@ class MainWindow(QMainWindow):
         self.recovery_stop_cycle_btn.setObjectName("RecoveryCautionButton")
         self.recovery_cancel_app_order_btn.setObjectName("RecoveryDangerButton")
         self.recovery_mark_manual_btn.setObjectName("RecoveryDangerButton")
-        for button in [
+        for index, button in enumerate([
             self.recovery_resume_btn,
             self.recovery_stop_cycle_btn,
             self.recovery_cancel_app_order_btn,
             self.recovery_mark_manual_btn,
-        ]:
-            guided_buttons.addWidget(button)
+        ]):
+            guided_buttons.addWidget(button, index // 2, index % 2)
+        guided_buttons.setColumnStretch(0, 1)
+        guided_buttons.setColumnStretch(1, 1)
         guidance_layout.addLayout(guided_buttons)
+        self.recovery_historical_label = QLabel()
+        self.recovery_historical_label.setWordWrap(True)
+        guidance_layout.addWidget(self.recovery_historical_label)
+        self.recovery_historical_btn = QPushButton("Review historical blockers")
+        self.recovery_historical_btn.setObjectName("RecoveryCautionButton")
+        self.recovery_historical_btn.clicked.connect(self._recovery_historical_clicked)
+        guidance_layout.addWidget(self.recovery_historical_btn)
+        self._update_historical_recovery_controls(self.current_snapshot)
         root.addWidget(guidance_box, 0)
 
         # Lower recovery area: the audit/details log expands to fill all spare
@@ -7924,9 +8426,7 @@ class MainWindow(QMainWindow):
         recovery_lower_layout.addWidget(self.recovery_details, 1)
 
         advanced_box = QGroupBox("Advanced stop strategy actions")
-        advanced_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        advanced_box.setMinimumHeight(104)
-        advanced_box.setMaximumHeight(132)
+        advanced_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         advanced_layout = QVBoxLayout(advanced_box)
         advanced_hint = QLabel("Use these only after comparing SQLite and TWS. They call the existing stop strategy controls and do not change strategy math.")
         advanced_hint.setObjectName("Muted")
@@ -8069,6 +8569,133 @@ class MainWindow(QMainWindow):
             method(operator_note)
             return
         QMessageBox.warning(self, "Recovery", "This build does not expose a mark-manually-handled command.")
+
+    @staticmethod
+    def _historical_recovery_candidates(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+        active_id = str((snapshot.get("active_cycle") or {}).get("id") or "")
+        rows = snapshot.get("historical_unresolved_cycles")
+        if not isinstance(rows, list):
+            return []
+        candidates = []
+        seen = set()
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            cycle_id = str(row.get("id") or "")
+            if (
+                not cycle_id or cycle_id == active_id or cycle_id in seen
+                or row.get("stage") not in {Stage.STOPPED.value, Stage.CYCLE_COMPLETE.value}
+            ):
+                continue
+            seen.add(cycle_id)
+            candidates.append(row)
+        return candidates
+
+    def _historical_recovery_action_allowed(self) -> bool:
+        snapshot = self.current_snapshot or {}
+        return not (
+            bool(getattr(self, "_manual_input_lock_enabled", False))
+            or bool((snapshot.get("storage_fault") or {}).get("active"))
+            or bool((snapshot.get("watchdog_override") or {}).get("active"))
+            or bool(((snapshot.get("database_snapshot") or {}).get("errors") or {}).get("historical_unresolved_cycles"))
+        )
+
+    def _update_historical_recovery_controls(self, snapshot: dict[str, Any]) -> None:
+        if not hasattr(self, "recovery_historical_btn"):
+            return
+        candidates = self._historical_recovery_candidates(snapshot or {})
+        visible = bool(candidates)
+        self.recovery_historical_btn.setVisible(visible)
+        self.recovery_historical_label.setVisible(visible)
+        self.recovery_historical_btn.setEnabled(visible and self._historical_recovery_action_allowed())
+        if visible:
+            numbers = ", ".join(f"#{row.get('cycle_number', '?')} {row.get('ticker') or ''}" for row in candidates)
+            self.recovery_historical_label.setText(
+                f"Historical cycles still block trading: {numbers}. Review their audit logs and independently "
+                "verify IBKR orders, fills and position. This separate action preserves the active cycle."
+            )
+        self.recovery_historical_btn.setToolTip(
+            "Select a historical cycle to acknowledge manual handling after independent IBKR verification. "
+            "No broker order is sent and trading is not started. Unlock inputs first if locked."
+        )
+
+    def _select_historical_recovery_cycle(self, candidates: list[dict[str, Any]]) -> str:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Select historical blocker")
+        layout = QVBoxLayout(dialog)
+        explanation = QLabel("Select the historical cycle you have independently reconciled in IBKR.")
+        explanation.setWordWrap(True)
+        layout.addWidget(explanation)
+        selection = QComboBox()
+        selection.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        selection.setMinimumContentsLength(24)
+        selection.addItem("Select a historical cycle...", "")
+        for row in candidates:
+            selection.addItem(
+                f"#{row.get('cycle_number', '?')} {row.get('ticker') or ''} / {row.get('stage')} / {row['id']}",
+                str(row["id"]),
+            )
+        layout.addWidget(selection)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        buttons.button(QDialogButtonBox.Cancel).setDefault(True)
+        layout.addWidget(buttons)
+        try:
+            if dialog.exec() != QDialog.Accepted:
+                return ""
+            return str(selection.currentData() or "")
+        finally:
+            dialog.deleteLater()
+
+    def _recovery_historical_clicked(self) -> None:
+        if not self._historical_recovery_action_allowed():
+            return
+        candidates = deepcopy(self._historical_recovery_candidates(self.current_snapshot or {}))
+        if not candidates:
+            return
+        cycle_id = str(candidates[0]["id"]) if len(candidates) == 1 else self._select_historical_recovery_cycle(candidates)
+        selected = next((row for row in candidates if str(row["id"]) == cycle_id), None)
+        if selected is None:
+            return
+
+        def selection_is_current() -> bool:
+            current = self._historical_recovery_candidates(self.current_snapshot or {})
+            return self._historical_recovery_action_allowed() and selected in current
+
+        if not selection_is_current():
+            QMessageBox.warning(self, "Historical recovery", "The selected historical cycle changed. Review the latest snapshot again.")
+            return
+        lines = [
+            f"Cycle #{selected.get('cycle_number', '?')} / {selected.get('ticker') or '-'} / {selected.get('stage')}",
+            f"Cycle ID: {cycle_id}",
+            f"Recorded fills: BUY {selected.get('buy_filled_qty', 0)}; SELL {selected.get('sell_filled_qty', 0)}; "
+            f"protective SELL {selected.get('protective_sell_filled_qty', 0)}.",
+        ]
+        for role, label in (("buy", "BUY"), ("sell", "SELL"), ("protective_sell", "Protective SELL")):
+            lines.append(f"{label}: {selected.get(f'{role}_status') or '-'} / {selected.get(f'{role}_order_ref') or 'no recorded reference'}")
+        message = "\n".join(lines) + (
+            "\n\nRecorded totals can be incomplete. Have you independently verified this cycle's IBKR fills, "
+            "orders and remaining position, and handled it outside the app?\n\n"
+            "Confirming transfers responsibility for this historical cycle to you and removes its trading block. "
+            "The app sends no broker order: any old broker orders are NOT cancelled and any remaining shares are NOT sold. "
+            "Recorded fills remain unchanged. The active cycle is preserved and trading is not automatically started."
+        )
+        choice = QMessageBox.question(self, "Acknowledge historical cycle handling", message, QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if choice != QMessageBox.Yes:
+            return
+        if not selection_is_current():
+            QMessageBox.warning(self, "Historical recovery", "The selected historical cycle or input availability changed. Review again before acknowledging it.")
+            return
+        method = getattr(self.controller, "mark_historical_cycle_manually_handled", None)
+        if callable(method):
+            method(
+                cycle_id,
+                "Operator explicitly confirmed independent IBKR verification of this historical cycle's fills, orders and remaining position, and handling outside the app; responsibility transferred to the operator.",
+                expected_cycle=deepcopy(selected),
+            )
+        else:
+            QMessageBox.warning(self, "Historical recovery", "This build does not expose historical-cycle manual handling.")
 
     def _pct_spin(self, value: float, *, allow_zero: bool = False) -> QDoubleSpinBox:
         spin = QDoubleSpinBox()
@@ -8554,7 +9181,7 @@ class MainWindow(QMainWindow):
         self.connection_hint_label.setText(
             f"Selected: {label} {mode.upper()} at {host}:{port}. Log in manually and complete 2FA. "
             "The bot connects to the API socket only after the platform is running and logged in. "
-            "Account is optional; blank leaves account selection to IBKR."
+            "Account is optional; blank requires one unambiguous managed account."
         )
         if hasattr(self, "connection_risk_label"):
             risk = "LIVE ORDERS" if mode == "live" else "Paper trading"
@@ -9197,6 +9824,12 @@ class MainWindow(QMainWindow):
         return True
 
     def _connect_clicked(self) -> None:
+        if bool(getattr(self, "_manual_input_lock_enabled", False)):
+            return
+        self._update_command_bar_states(self.current_snapshot)
+        connect_button = getattr(self, "command_step_buttons", {}).get("connect")
+        if connect_button is not None and not connect_button.isEnabled():
+            return
         self.controller.connect_tws(self._connection_from_ui())
 
     def _start_platform_clicked(self) -> None:
@@ -9417,8 +10050,8 @@ class MainWindow(QMainWindow):
         self._apply_atr_adaptive_snapshot_to_inputs(snapshot)
         self._apply_suggested_risk_limits_from_amount()
         dashboard_active = not hasattr(self, "tabs") or self.tabs.currentIndex() == 0
+        self.stage_ribbon.set_stage(stage)
         if dashboard_active:
-            self.stage_ribbon.set_stage(stage)
             self._update_metrics(cycle)
             self._update_price_feed(snapshot.get("price_snapshot"), snapshot.get("price_poll_interval_seconds"))
             self._update_strategy_previews()
@@ -9559,6 +10192,7 @@ class MainWindow(QMainWindow):
     def _update_recovery_panel(self, snapshot: dict[str, Any]) -> None:
         if not hasattr(self, "recovery_details"):
             return
+        self._update_historical_recovery_controls(snapshot)
         cycle = snapshot.get("active_cycle") or {}
         events = snapshot.get("events") or []
         broker = snapshot.get("broker_recovery") or {}
@@ -10018,8 +10652,7 @@ class MainWindow(QMainWindow):
                         elif action_state in {"success", "active"}:
                             item.setBackground(_theme_color("#ecfdf5", "#123524"))
                     self.recovery_compare_table.setItem(row_idx, col_idx, item)
-            _auto_size_table_columns(self.recovery_compare_table, minimum=72, maximum=460, last_maximum=620)
-            _fit_table_height_to_rows(self.recovery_compare_table, min_rows=5, max_visible_rows=7, min_height=220, max_fit_height=360)
+            self.recovery_compare_table.fit_rows()
 
         has_working_local_order = False
         if has_cycle:
@@ -10252,6 +10885,12 @@ class MainWindow(QMainWindow):
             "Max losing streak": summary.get("max_consecutive_losses"),
             "Avg hold": summary.get("avg_holding_minutes"),
             "Max drawdown": summary.get("max_completed_drawdown"),
+            "Average net P/L": (
+                float(summary["total_net_pnl"]) / float(summary["cycles"])
+                if (_float_or_none(summary.get("cycles")) or 0) > 0
+                and _float_or_none(summary.get("total_net_pnl")) is not None
+                else None
+            ),
         }
         for title, value in mapping.items():
             card = self.history_summary_cards.get(title)
@@ -10512,9 +11151,7 @@ class MainWindow(QMainWindow):
 
     def _update_metrics(self, cycle: Optional[dict[str, Any]]) -> None:
         mapping: dict[str, Any] = {title: None for title in self.metrics}
-        if not cycle:
-            mapping["Stage"] = "Idle"
-        else:
+        if cycle:
             mapping.update({
                 "Current last price": cycle.get("last_price"),
                 "Anchor price": cycle.get("anchor_price"),
@@ -10524,9 +11161,9 @@ class MainWindow(QMainWindow):
                 "Minimum-profit trigger price": cycle.get("rise_trigger_price"),
                 "Protective SELL stop": cycle.get("protective_sell_initial_stop_price"),
                 "SELL initial trailing-stop": cycle.get("sell_initial_trail_stop_price"),
-                "Stage": cycle.get("stage"),
                 "Quantity": cycle.get("quantity"),
                 "Buy filled qty": cycle.get("buy_filled_qty"),
+                "Total buy cost": _format_currency(_cycle_purchase_cost(cycle), 2),
                 "Sell filled qty": cycle.get("sell_filled_qty"),
                 "Buy order ID": cycle.get("buy_order_id"),
                 "Buy permId": cycle.get("buy_perm_id"),
@@ -10678,7 +11315,7 @@ class MainWindow(QMainWindow):
                 return f"{float(value):+.2f}%" if key not in plain_pct_keys else f"{float(value):.2f}%"
             except Exception:
                 return str(value)
-        money_keys = {"avg_buy_price", "avg_sell_price", "gross_pnl", "net_pnl", "budget", "reinvested_profit", "buy_commission", "sell_commission"}
+        money_keys = {"avg_buy_price", "avg_sell_price", "gross_pnl", "net_pnl", "budget", "reinvested_profit", "buy_commission", "sell_commission", "__invested_amount"}
         if key in money_keys:
             try:
                 decimals = 4 if key.startswith("avg_") else 2
@@ -11123,7 +11760,15 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "Audit details", f"Could not read the audit details for this cycle:\n{exc}")
                 return
         dialog = CycleAuditDialog(row, details, self)
-        dialog.exec()
+        try:
+            dialog.exec()
+        finally:
+            dialog._close_audit_loading()
+            try:
+                dialog.deleteLater()
+            except RuntimeError:
+                # The main window may have destroyed its modal child already.
+                pass
 
     @staticmethod
     def _history_outcome_badge(row: dict[str, Any]) -> str:
@@ -11211,6 +11856,7 @@ class MainWindow(QMainWindow):
                 "net_pnl",
                 "net_pnl_pct",
                 "budget",
+                "__invested_amount",
                 "reinvested_profit",
                 "buy_vs_anchor_pct",
                 "initial_sell_stop_vs_buy_pct",
@@ -11241,6 +11887,7 @@ class MainWindow(QMainWindow):
                 "Net P/L",
                 "Net %",
                 "Budget",
+                "Invested",
                 "Reinvested",
                 "Buy vs anchor %",
                 "Initial stop vs buy %",
@@ -11258,7 +11905,7 @@ class MainWindow(QMainWindow):
             ]
             right_keys = {
                 "buy_filled_qty", "avg_buy_price", "avg_sell_price", "sell_vs_buy_pct",
-                "gross_pnl", "gross_pnl_pct", "net_pnl", "net_pnl_pct", "budget",
+                "gross_pnl", "gross_pnl_pct", "net_pnl", "net_pnl_pct", "budget", "__invested_amount",
                 "reinvested_profit", "buy_vs_anchor_pct", "initial_sell_stop_vs_buy_pct",
                 "configured_min_profit_pct", "configured_initial_drop_pct",
                 "configured_buy_rebound_pct", "configured_sell_trail_pct",
@@ -11281,7 +11928,7 @@ class MainWindow(QMainWindow):
                 for r, row in enumerate(display_rows):
                     tooltip = self._history_tooltip(row)
                     for c, key in enumerate(columns):
-                        raw_value = row.get(key)
+                        raw_value = _cycle_purchase_cost(row) if key == "__invested_amount" else row.get(key)
                         if key == "__outcome":
                             value = self._history_outcome_badge(row)
                         elif key == "ticker" and row.get("__example"):
@@ -11309,12 +11956,18 @@ class MainWindow(QMainWindow):
                             item.setTextAlignment(Qt.AlignCenter)
                         elif key in right_keys:
                             item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                        item.setToolTip(tooltip)
+                        item.setToolTip(
+                            "Actual BUY cost including recorded BUY commission, not the configured budget. "
+                            "Includes all BUY fills even after the cycle exits.\n" + tooltip
+                            if key == "__invested_amount" else tooltip
+                        )
                         self.history_table.setItem(r, c, item)
                 if not self._history_columns_sized:
-                    _cap_table_columns_for_horizontal_scroll(self.history_table, minimum=72, maximum=220)
+                    _auto_size_table_columns(
+                        self.history_table, minimum=72, maximum=220, last_maximum=220,
+                        horizontal_scroll=Qt.ScrollBarAlwaysOn,
+                    )
                     self._history_columns_sized = True
-                _fit_table_height_to_rows(self.history_table, min_rows=8, max_visible_rows=18, min_height=320, max_fit_height=620)
             finally:
                 self.history_table.setSortingEnabled(True)
                 self.history_table.setUpdatesEnabled(True)
@@ -11958,8 +12611,18 @@ class MainWindow(QMainWindow):
                 font-size: 11px;
                 font-weight: 400;
             }
-            QLabel#MetricValue {
+            QLabel#MetricValue, QTextEdit#MetricValue {
                 color: #111827;
+                font-size: 15px;
+                font-weight: 600;
+            }
+            QTextEdit#MetricValue {
+                background-color: #ffffff;
+                color: #111827;
+                border: none;
+                border-radius: 0px;
+                padding: 0px;
+                font-family: "Segoe UI", sans-serif;
                 font-size: 15px;
                 font-weight: 600;
             }

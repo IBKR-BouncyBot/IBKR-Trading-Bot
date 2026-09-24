@@ -1,0 +1,143 @@
+BouncyBot v4.0.0 - ATR Close-Window Persistence Correction
+========================================================
+Same-version source rerelease. No application/package version increment.
+
+BASELINE
+Previous v4.0.0 source archive:
+IBKR_Trading_Bot_4.0.0_ATR_Session_Memory_Order_Editing_Source.zip
+SHA-256: de17ad36636e9606a879eb1ac7fdecdef2b0383bd9bc352b68912932ef2ea469
+The exact extracted baseline independently passed all 1,284 tests in 183.94s.
+
+REQUEST AND SCOPE
+Restrict persistent ATR checkpoint writes to the final five minutes of RTH,
+the final session-close flush, and orderly application shutdown. The aim is to
+retain the latest valid estimate for the next matching session, not to save it
+once a minute throughout the entire trading day.
+
+Only one runtime file changes: app/atr_memory.py.
+One regression module is added: tests/test_v400_atr_close_persistence.py.
+README, changelog, current ATR/release/database/test documentation and this report
+are updated. Existing test files are unchanged.
+
+Controller, GUI, strategy, models, adapter, storage, main.py, watchdog, lockfile,
+order-edit policy, capture writer, order diagnostics and all other runtime
+modules remain byte-identical to the preceding v4.0.0. GUI improvements and
+next-order editing from the initial v4.0.0 are retained. Application metadata,
+dependencies, Windows build scripts, LICENSE and image assets are unchanged.
+
+IMPLEMENTED BEHAVIOR
+1. ATR continues to calculate normally throughout RTH. Each valid, ready ATR
+   estimate updates the in-memory candidate; ordinary intraday calculations do
+   not write that candidate to SQLite.
+2. During the recorded session's final 300 seconds, the dirty candidate can be
+   persisted at most once per 60 seconds. The five-minute boundary is inclusive.
+   The existing verified broker RTH session times determine this window, including
+   early closes and timezone offsets. Five minutes is a saving window, NOT a new
+   ATR lookback or averaging period.
+3. At/on the first processing pass after the recorded session close, the latest
+   dirty candidate receives a final save attempt, even if the previous save was
+   less than one minute ago. This retains the most recent observed estimate rather
+   than leaving only the estimate from the last periodic checkpoint.
+4. An explicit orderly application-close flush still saves the latest valid
+   candidate, even when the user exits earlier in the trading day. The controller's
+   existing shutdown call is unchanged. Unchanged checkpoints are not rewritten.
+5. Temporary RTH-status loss or an intraday identity/parameter change no longer
+   forces a save outside the closing window. Actual elapsed session close can
+   still be recognized from the previously validated candidate's recorded close.
+   A direct move into the next session can flush the old candidate before reset.
+6. Persistence failures keep the dirty candidate. Automatic retries are bounded
+   to once per minute after the one immediate final-close attempt, including
+   when status flaps; failures cannot cause a database write on every callback.
+7. Stored estimates are revalidated before writes. A reused checkpoint is not
+   relabelled as a fresh observation; incomplete warm-up does not replace it.
+
+COMPATIBILITY AND SAFETY BOUNDARIES
+- Existing atr_rth_seed_v1 records and v4.0.0 databases remain compatible. No
+  schema, persisted-settings format or dependency change is introduced.
+- Exact contract/currency/exchange/profile/ATR-period/bar-duration matching,
+  ready-state checks, finite positive values, session provenance, future-time
+  rejection and the seven-calendar-day age limit are unchanged.
+- Current-session ATR replaces the starting estimate through the existing logic.
+- No synthetic ticks, refreshed bid/ask/Last timestamps, historical-data requests,
+  relaxed freshness/session guards or broker actions are introduced by saving.
+- A first session without a valid saved checkpoint still needs normal warm-up.
+- A sudden crash or power loss before the saving window can lose that day's
+  unsaved intraday candidate. The previous valid disk checkpoint is retained.
+  Orderly app-close saving requires the worker to reach shutdown and the database
+  to accept the write; a dead/blocked process cannot guarantee it.
+- A seed from an early orderly exit is the latest estimate observed before that
+  exit, not a claim to contain the actual later RTH closing observation.
+
+MEASURED VALIDATION FOR THIS CORRECTION
+Environment: Linux; Python 3.13.5; pytest 9.0.2; coverage.py 7.13.3.
+Tests use headless Qt and deterministic broker doubles, no live IBKR access.
+
+- Corrected full pytest suite: 1,310/1,310 passed in 173.19 seconds under coverage.
+- 130 test modules collected; no skipped, xfailed or xpassed cases.
+- ResourceWarning promoted to an error throughout the pytest runs.
+- All four v4.0.0 focused modules: 99/99 passed in 4.11 seconds.
+- New checkpoint-timing module: 26 cases included in both runs.
+- Combined statement/branch coverage: 78.8% (required minimum: 75%).
+- Statement coverage: 82.3%; branch coverage: 68.1%.
+- All 1,038/1,038 executable application callables entered.
+- app/atr_memory.py: 163/163 statements and 57/58 branches covered;
+  100.0% statement, 98.3% branch, 99.5% combined coverage.
+- 17/17 targeted safety mutants killed.
+- 58/58 deterministic simulation contracts passed across 54 CSV price paths.
+- Compilation of app/tests/scripts/main.py and Git whitespace checks passed.
+- Differential replay against the baseline over two synthetic RTH sessions:
+  all 1,560 ATR result snapshots identical; automatic writes reduced from 776
+  to 12; final saved records equal in both sessions. These write counts describe
+  the test fixture, not a guaranteed production count.
+- The original baseline's per-module process-isolated test runs are not claimed
+  for this rerelease; the complete current suite ran together in a fresh process.
+
+REGRESSION COVERAGE
+No ordinary intraday writes; continuous in-memory calculation; exact five-minute
+boundary; once-per-minute save cadence; latest final-close save; early-close and
+timezone handling; missing/stale/future/malformed session metadata; identity and
+period/profile changes; actual close after status loss; direct next-session
+rollover; orderly midday shutdown; real SQLite restoration in the same and next
+session; preservation of yesterday's disk record until an allowed save; invalid
+candidate rejection; warm-up without re-dating a seed; bounded failure retries;
+status-flap retry suppression; controller integration without synthetic quotes.
+
+COMMANDS
+python -W error::ResourceWarning -m coverage run --branch --source=app,main -m pytest -q --tb=short -ra
+python -m coverage report --fail-under=75
+python -m coverage json -o coverage.json
+python -m coverage xml -o coverage.xml
+python scripts/check_callable_coverage.py --coverage-json coverage.json --source app --source main.py
+python scripts/run_mutation_smoke.py
+python scripts/run_all_simulations.py
+python -W error::ResourceWarning -m pytest -q --tb=short -ra tests/test_v400*.py
+python -m compileall -q app tests scripts main.py
+git diff --check
+
+Test environment: PYTEST_DISABLE_PLUGIN_AUTOLOAD=1, IBKR_BOT_HEADLESS_SIGNALS=1,
+QT_QPA_PLATFORM=offscreen, PYTHONDONTWRITEBYTECODE=1.
+
+UNPERFORMED REQUIRED PLATFORM/QUALITY GATES
+Ruff and Pyright are not installed; installation attempts could not obtain their
+packages. The actual command `python scripts/run_quality_checks.py --require-tools`
+returned exit code 1 for missing Ruff and Pyright. Neither check is recorded as
+passing. The configured Pyright application scope remains byte-identical.
+
+Real PySide6/Qt, ib_async and native Windows/PyInstaller execution are unavailable.
+No Windows executable was built. No paper/live Gateway test was performed. The
+installed pytest is 9.0.2; the project Windows requirement remains pytest>=8,<9,
+so this is not a substitute for the Windows environment's quality run.
+
+Run run_all_tests.bat on Windows before build_windows.bat. Verify final-five-minute
+saving, orderly early shutdown and next-session seed provenance in the paper
+account before unattended live deployment. Keep the existing database and stable
+per-instance client ID; the existing ownership/reconciliation guards are unchanged.
+
+RELEASE LAYOUT
+Source ZIP root: IBKR-Trading-Bot-main/.
+The correction patch targets the preceding v4.0.0 source, not v3.9.0.
+Windows packaging scripts and root shortcut behavior are unchanged.
+The source includes all original Images assets but excludes runtime databases,
+checkpoints, restart tokens, captures, logs, backups, build outputs, caches,
+bytecode, coverage artifacts, virtual environments and Git metadata.
+An external copy of this report records the final archive/patch verification.

@@ -1,4 +1,4 @@
-"""v4.0.0 fail-closed worker watchdog and replacement-process regressions."""
+"""v4.1.0 fail-closed worker watchdog and replacement-process regressions."""
 
 from __future__ import annotations
 

@@ -1,8 +1,8 @@
 # Automated test coverage specification
 
-This document defines the automated verification scope for v4.0.0. It is the maintainer-facing map between the application modules, test layers, and repository quality gates.
+This document defines the automated verification scope for v5.0.0. It is the maintainer-facing map between the application modules, test layers, and repository quality gates.
 
-The v4.0.0 offline test architecture includes focused coverage for audit diagnostic coalescing, live Stage-3 guard status, reconnect/native-order wait aggregation, BUY partial-fill grace/timeout safety, shutdown checkpoints, event-driven worker scheduling, independent cadences, nonblocking broker reads, GUI responsiveness, broker connectivity, reconciliation, flowchart history selection, the optional Stage-3/Stage-4 close-before-RTH workflows, market-rule price normalization, strict what-if interpretation, broker error retention, rejection circuit breaking, exact USD/EUR SMART contract selection, one-currency database enforcement, atomic resume-checkpoint currency validation, qualified-currency market-data fallbacks, persistent commission-mismatch idempotence, contract capability/session validation, and fixed ten-second indefinite reconnect behavior. Tests use temporary databases, deterministic clocks and data, protocol-shaped broker doubles, and headless Qt doubles. They do not connect to IBKR, launch TWS/Gateway, or transmit orders.
+The v5.0.0 offline test architecture includes focused coverage for audit diagnostic coalescing, live Stage-3 guard status, reconnect/native-order wait aggregation, BUY partial-fill grace/timeout safety, shutdown checkpoints, event-driven worker scheduling, independent cadences, nonblocking broker reads, GUI responsiveness, broker connectivity, reconciliation, flowchart history selection, the optional Stage-3/Stage-4 close-before-RTH workflows, market-rule price normalization, strict what-if interpretation, broker error retention, rejection circuit breaking, exact USD/EUR SMART contract selection, one-currency database enforcement, atomic resume-checkpoint currency validation, qualified-currency market-data fallbacks, persistent commission-mismatch idempotence, contract capability/session validation, and fixed ten-second indefinite reconnect behavior. Tests use temporary databases, deterministic clocks and data, protocol-shaped broker doubles, and headless Qt doubles. They do not connect to IBKR, launch TWS/Gateway, or transmit orders.
 
 ## Test objectives
 
@@ -17,7 +17,7 @@ The automated suite applies six complementary checks:
 
 Per-callable entry coverage is intentionally not described as complete path coverage. A function can contain mutually exclusive branches, external failure modes, timing races, or platform-specific behavior that require additional tests or manual verification. The line/branch report and assertions remain necessary.
 
-## Current module inventory
+## Historical module inventory (initial v4.1.0)
 
 The callable gate is derived from the effective function map in `coverage.json`. Shadowed definitions that are not part of the imported runtime module are not counted. `app/__init__.py` contains no executable callables.
 
@@ -25,7 +25,7 @@ The callable gate is derived from the effective function map in `coverage.json`.
 |---|---:|---|
 | `app/controller.py` | 246 / 246 | Event-driven command queue, independent broker/strategy/database/GUI/maintenance cadences, lifecycle, connectivity, guards, recovery, execution reconstruction, order-side effects, snapshots |
 | `app/flowchart_model.py` | 10 / 10 | Stage-card construction, labels, details, filtering |
-| `app/gui.py` | 373 / 373 | Formatting, blocker/recovery classification, runtime theme styling, custom-painted views, widget state, command gating, timelines, panels, dialogs, layout helpers |
+| `app/gui.py` | 377 / 377 | Formatting, blocker/recovery classification, runtime theme styling, custom-painted views, widget state, command gating, timelines, panels, dialogs, layout helpers |
 | `app/ib_adapter.py` | 134 / 134 | Data normalization, event ownership, connectivity, market data, contracts, orders, executions, positions |
 | `app/ib_platform.py` | 11 / 11 | Profiles, path discovery, socket probing, process-launch outcomes |
 | `app/lockfile.py` | 8 / 8 | Acquisition, stale-lock handling, release, context-manager behavior |
@@ -41,11 +41,13 @@ The callable gate is derived from the effective function map in `coverage.json`.
 | `main.py` | 11 / 11 | Light-mode startup, palette/theme helpers, application icon, single-instance startup, watchdog replacement, window lifecycle, cleanup |
 | `app/atr_memory.py` | 9 / 9 | Validated per-contract RTH estimates, expiry, optional persistence, session rollover |
 | `app/order_edit_policy.py` | 5 / 5 | Exact-cycle pending guards, working-order isolation, safe next-order boundaries |
-| **Total** | **1,038 / 1,038** | All effective executable application callables |
+| **Total** | **1,042 / 1,042** | All effective executable application callables |
 
-The counts are a snapshot of v4.0.0. The gate recalculates them from the current source and coverage report on every full test run. Adding a callable without a test causes the callable-coverage step to fail.
+The table above is a historical snapshot of the initial v4.1.0 release, not the current release result. The gate recalculates them from the current source and coverage report on every full test run. Adding a callable without a test causes the callable-coverage step to fail.
 
-The corrected v4.0.0 source tree passed **1,310/1,310** pytest cases across **130 test modules**, with `ResourceWarning` promoted to an error and no skipped or expected-failure cases. The complete suite ran in one fresh Python process; per-module process-isolated reruns were not repeated for this correction. The measured combined statement/branch coverage was **78.8%** (82.3% statements; 68.1% branches), and **1,038/1,038** executable application callables were entered. The release killed **17/17** safety mutants and passed **58/58** deterministic simulation contracts across 54 CSV paths. The four v4.0.0 modules contain **99 focused regression cases**, including **26 new ATR checkpoint-timing cases**. Ruff and Pyright could not run because their packages were unavailable; native Windows/PyInstaller, real Qt, and live IBKR validation remain unperformed.
+The initial v4.1.0 source tree passed **1,360/1,360** pytest cases across **132 test modules**, with `ResourceWarning` promoted to an error and no skipped or expected-failure cases. The complete suite ran in one fresh Python process; per-module process-isolated reruns were not performed for this release. Measured combined statement/branch coverage is **79.2%** (82.7% statements; 68.8% branches), with **1,042/1,042** executable application callables entered. The release killed **17/17** safety mutants and passed **58/58** deterministic simulations across 54 CSV paths. The two v4.1.0 modules contain **50 new regression cases** (45 GUI and 5 release cases). All previous corrected v4.0.0 ATR-saving tests remain. Ruff and Pyright were unavailable; the required quality command returns failure for missing tools, not a passing gate. Native Windows/PyInstaller, real Qt and live IBKR validation remain unperformed.
+
+Current v5.0.0 results and remaining validation limits are recorded in [`../IMPLEMENTATION_TEST_REPORT.txt`](../IMPLEMENTATION_TEST_REPORT.txt). The final supplied v4.1.0 baseline report is preserved in [`legacy/V4_1_0_STATUS_ORDER_LINKED_CROSSHAIRS_IMPLEMENTATION_TEST_REPORT.txt`](legacy/V4_1_0_STATUS_ORDER_LINKED_CROSSHAIRS_IMPLEMENTATION_TEST_REPORT.txt).
 
 ## Test layers
 
@@ -99,11 +101,7 @@ Focused tests cover terminal BUY settlement after partial fills, cancellation-ra
 
 Focused tests cover exact positive `conId` selection, USD/EUR ordinary `STK` validation, SMART routing, contract identity mismatch rejection, required `MKT`/`TRAIL` capability metadata, price/quantity increment handling, non-US `liquidHours` and timezone fail-closed behavior, one contract currency per SQLite database, legacy USD inference, mixed-currency rejection, exact-conId risk and position scoping, commission-currency mismatch handling without FX conversion, currency-aware GUI/flowchart presentation, and fixed ten-second reconnect attempts with no retry limit until manual disconnect or shutdown.
 
-### v3.2.0 EUR SMART and reconnect layer
-
-Focused tests cover exact positive `conId` selection, USD/EUR ordinary-`STK` validation, SMART-only routing, exact identity requalification, required `MKT`/`TRAIL` capabilities, price and quantity increments, non-U.S. session fail-closed behavior, European time zones, one-currency database migration/locking, currency-aware GUI presentation, commission-currency mismatch handling, initial-connection retry, repeated ten-second reconnect attempts without a limit, successful recovery reset, and manual Disconnect/shutdown cancellation.
-
-### v3.2.0 same-release bugscan layer
+### v3.2.0 bugscan regression layer
 
 Eleven regressions cover broker-returned symbol/route/primary-exchange mismatches, retention of a selected primary exchange when IBKR omits it, EUR fallback-market-data request identity, atomic shutdown-checkpoint currency enforcement, the reconnect interval at monotonic time zero, zero-valued cross-currency commissions, persistent commission-mismatch deduplication after a controller restart, and compatibility with mismatch events written by the earlier v3.2.0 build. Static release tests also pin the exact Ruff-safe import boundaries reported by Ruff 0.16.0.
 
@@ -129,13 +127,39 @@ Focused tests cover nonterminal and terminal final-SELL partials, contradictory 
 
 ### v3.5.0 Fusion themes, branding, and audit-layout layer
 
-Focused tests cover forced light-mode startup, retained manual **View > Light mode / Dark mode** switching, light and neutral Fusion-dark palette roles, stylesheet conversion, menu check-state synchronization, post-theme workflow-button and input-lock reconciliation, refresh of cached semantic widgets, price-monitor-first Advanced/Debug layout, dark-aware custom-painted charts, qualified-contract long-name and classification propagation, exact instrument-identity formatting in the price monitor, the dedicated non-overlapping About-logo panel, bounded Timeline columns with full-width 3:2 table allocation, Market capture internal scrollbars without an outer page scrollbar, and top-aligned Orders, Executions, and Decision events tabs. The GUI helpers and lazy tab builders are entered through headless Qt doubles; native Windows visual rendering remains a manual validation item.
+Focused tests cover forced light-mode startup, retained manual **View > Light mode / Dark mode** switching, light and neutral Fusion-dark palette roles, stylesheet conversion, menu check-state synchronization, post-theme workflow-button and input-lock reconciliation, refresh of cached semantic widgets, price-monitor-first Advanced/Debug layout, dark-aware custom-painted charts, qualified-contract long-name and classification propagation, exact instrument-identity formatting in the price monitor, the dedicated non-overlapping About-logo panel, bounded Timeline columns with full-width 3:2 table allocation, Market capture internal scrollbars without an outer page scrollbar, and top-aligned Orders and Executions, expanding Decision events tabs. The GUI helpers and lazy tab builders are entered through headless Qt doubles; native Windows visual rendering remains a manual validation item.
+
+## Current v5.0.0 regression modules
+
+| Test module | Focus |
+|---|---|
+| `tests/test_v500_uncertain_submission.py` | Persistent submission uncertainty and no duplicate transmission |
+| `tests/test_v500_broker_safety.py` | Exact cancellation ownership, market-data generations and reused subscription diagnostics |
+| `tests/test_v500_recovery_safety.py` | Recovery quantity evidence, shortages and late fills |
+| `tests/test_v500_guard_identity.py` | Account/contract identity and independent BUY quote/spread evidence |
+| `tests/test_v500_protection_safety.py` | Protective cancellation handoff, protection availability and stop precision |
+| `tests/test_v500_restore_and_gui.py` | Restore validation and GUI eligibility |
+| `tests/test_v500_python314_migration.py` | Runtime requirements and source/test/build launchers |
+| `tests/test_v500_audit_worker.py` | One read-only reader, shared results, cancellation/destruction, bounded Decision batches and Account display |
+| `tests/test_v500_audit_context.py` | Validated cross-cycle fill context, streaming/cancellation and actual Timeline stage changes |
+| `tests/test_v500_rth_no_fallback.py` | Missing/invalid metadata, no guessed sessions/timezone, valid sessions and preserved LSE narrowing |
+| `tests/test_v500_checkpoint_identity.py` | Unchanged-identity checkpoints and guarded worker/fallback writes |
+| `tests/test_v500_historical_recovery.py` | Exact historical acknowledgement, reviewed-state revalidation and active-cycle preservation |
+| `tests/test_v500_historical_recovery_gui.py` | Explicit target selection, default cancellation and stale/locked-state rejection |
+| `tests/test_v500_legacy_account_evidence.py` | Exact legacy fill/account evidence without evaluating archived text |
+| `tests/test_v500_freshness_status.py` | Accurate quote-age display between events with unchanged submission and settings gates |
+| `tests/test_v500_startup_price_monitor.py` | Exact restored-contract quotes before Start, qualification failures, delayed upstream recovery and ATR-ready stage/order preservation |
+| `tests/test_v500_start_workflow_status.py` | Historical guard messages on running cycles, retained Stage 1 blocks and recovery/input locks |
+| `tests/test_v500_start_account_rejection.py` | Rejected unstarted account routing without a phantom cycle, valid retry and truthful resume status |
+| `tests/test_v500_legacy_stage1_start.py` | Legacy Stage 1 through its first BUY and complete lifecycle, exact account ownership and settings edits before Start |
+
+These modules supplement the retained suite; they do not establish current coverage percentages. Current measured results and unavailable gates are recorded only in the root implementation report.
 
 ## Full validation sequence
 
 `run_all_tests.bat` performs the Windows gate in this order:
 
-1. Create or reuse `.venv`.
+1. Create or reuse `.venv` and verify standard GIL-enabled CPython 3.14.x before installing dependencies.
 2. Install `requirements.txt`, including Coverage.py.
 3. Compile `app`, `tests`, `scripts`, and `main.py`.
 4. Erase stale coverage data.
@@ -149,7 +173,7 @@ Focused tests cover forced light-mode startup, retained manual **View > Light mo
 12. Run Pyright with the configured type-checking scope.
 13. Return a nonzero exit code if any stage fails.
 
-The Unix-like `scripts/run_tests.sh` performs compilation, non-soak coverage, callable entry, bounded soak, mutation smoke, and CSV simulation stages. Ruff/Pyright remain part of the complete Windows `run_all_tests.bat` gate.
+The Unix-like `scripts/run_tests.sh` first verifies the Python runtime, then performs compilation, non-soak coverage, callable entry, bounded soak, mutation smoke, and CSV simulation stages. Ruff/Pyright remain part of the complete Windows `run_all_tests.bat` gate.
 
 ## Generated test artifacts
 
@@ -210,8 +234,19 @@ Those limits are addressed through paper-account integration testing, audit insp
 
 `test_v400_atr_memory_and_order_edits.py` covers first-session warmup, weekend/restart reuse, session and contract separation, corrupt/future/expired estimates, bounded persistence failures, live takeover, same-contract volatility-history preservation, and explicit next-order guard persistence/isolation. `test_v400_gui.py` checks amber LIVE status, retained error colors, removal of only the profit banner, risk-field/manual locks, saved ATR provenance, and non-selling dialog defaults. `test_v400_release.py` checks metadata, documentation layout, compatibility, and unchanged order/broker modules.
 
-Final v4.0.0 validation results are recorded in the root `IMPLEMENTATION_TEST_REPORT.txt` and the current release note. The measured figures above correspond to the final v4.0.0 test run.
+Historical corrected v4.0.0 results are preserved in [`legacy/V4_0_0_IMPLEMENTATION_TEST_REPORT.txt`](legacy/V4_0_0_IMPLEMENTATION_TEST_REPORT.txt). The root `IMPLEMENTATION_TEST_REPORT.txt` records the current v5.0.0 verification.
 
-### v4.0.0 same-version ATR checkpoint saving correction
+### v4.0.0 ATR checkpoint saving correction
 
 `test_v400_atr_close_persistence.py` covers zero routine intraday writes, the exact five-minute boundary, one-minute closing-window writes, final-value flushing, stale/missing RTH status, identity edits, broker early-close/timezone handling, same-session and next-session restoration after an orderly app close, preservation of yesterday's persisted seed during today's trading, no re-dating of reused seeds, bounded failed-write retries, and the controller-to-SQLite close/restore path. Existing ATR calculation, quote-safety, order-editing, and GUI tests remain unchanged.
+
+
+## v5.0.0 GUI regression layer
+
+The retained GUI regression suites cover fill/commission-derived costs, remaining-inventory allocation, invalid/missing data, USD/EUR formatting, five merged monitor cards, collapsed stage details, Simple-mode log visibility, exact-copy wrapping OrderRefs, twelve summary cards, numeric Invested sorting, stable row identity, bounded table height, expanding Decision events and equal Timeline table heights. Current checks cover Trading/Position details in the top-right header with the title font, and independent Timeline crosshairs with separate price scales. Hovering one plot must not draw a cursor on the other; offscreen records must not replace a local tooltip. Table regressions cover all eight wrapped Reconciliation rows, width/font/style/data-triggered refitting, the two-by-two guided-action layout, horizontal-scrollbar height allowance, and reachable overflow in height-capped Summary/compact tables. Native DPI rendering remains a separate unperformed check on this host. `tests/test_v410_release.py` checks current release consistency, retained documentation and unchanged safety boundaries. The full v5.0.0 release also includes targeted controller, strategy, broker adapter, model and storage safety fixes.
+
+The current measured suite, coverage and quality-gate results are in [`../IMPLEMENTATION_TEST_REPORT.txt`](../IMPLEMENTATION_TEST_REPORT.txt). Qt doubles verify observable layout policies and painter coordinates, not native pixel geometry. Native Windows/DPI, a packaged build, and the actual GUI scrollbar/crosshair interaction still require the visual checks in `TEST_PLAN.md`.
+
+## v5.0.0 safety regression layer
+
+`tests/test_v500_*.py` covers broker submission uncertainty, cancellation ownership, market-data generations, recovery quantities/late fills, account/contract identity, independent BUY evidence/spread limits, protective handoff/precision, restore validation, GUI eligibility, Python 3.14 launcher checks, audit-reader lifecycle and batching, validated post-fill capture context, actual stage transitions, disconnected Account display and metadata-only RTH handling. New unittest classes are also pytest-collectable. Real pytest/coverage/quality gates remain required; any dependency-free fallback results in the implementation report are explicitly separate and do not replace them.

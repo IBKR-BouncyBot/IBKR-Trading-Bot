@@ -27,7 +27,7 @@ def test_v224_atr_protective_sell_option_is_present_but_manual_by_default():
 
 
 def test_v224_price_monitor_time_and_paper_warning_cleanup():
-    assert '"Current time"' in GUI
+    assert '"RTH status": f"{rth}\\n{_current_time_status_text()}"' in GUI
     assert '"Current UTC"' in GUI
     assert '"System time"' in GUI
     assert "Use paper mode first" not in GUI

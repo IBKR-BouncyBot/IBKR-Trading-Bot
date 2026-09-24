@@ -14,18 +14,22 @@ def test_live_account_is_optional_in_controller_and_gui():
     assert "Live trading requires an explicit IBKR account" not in CONTROLLER
     assert "Live trading requires an explicit IBKR account" not in GUI
     assert 'and account:' in CONTROLLER
-    assert 'account=(self.connection.account or cycle.account)' in CONTROLLER
+    # The optional GUI override no longer permits ambiguous execution routing:
+    # v5.0 binds the cycle before transmitting any order.
+    assert 'def _bind_cycle_account(' in CONTROLLER
+    assert 'account=cycle.account,' in CONTROLLER
+    assert 'account=(self.connection.account or cycle.account)' not in CONTROLLER
 
 
-def test_blank_account_is_described_as_ibkr_default():
-    assert 'account_text = account or "IBKR default"' in GUI
-    assert "Optional override; blank uses IBKR default" in GUI
-    assert "Account is optional; blank leaves account selection to IBKR." in GUI
+def test_blank_account_requires_one_unambiguous_managed_account():
+    assert 'account_text = account or ("Auto (single managed account)" if connected and local_connected else "N/A")' in GUI
+    assert "Optional; auto-select a single managed account" in GUI
+    assert "Account is optional; blank requires one unambiguous managed account." in GUI
 
 
 def test_v306_version_and_documentation():
-    assert "BouncyBot - IBKR Portable Trading Bot v4.0.0" in GUI
+    assert "BouncyBot - IBKR Portable Trading Bot v5.0.0" in GUI
     assert "# BouncyBot - an IBKR Portable Trading Bot " in README
-    assert 'version = "4.0.0"' in PYPROJECT
+    assert 'version = "5.0.0"' in PYPROJECT
     assert "v3.0.6 optional IBKR account routing" in ARCHIVE
     assert "v3.0.6 optional IBKR account routing" in DOC

@@ -66,7 +66,8 @@ def controller_module(monkeypatch: pytest.MonkeyPatch) -> Any:
 
 
 def _submit_buy(controller: Any, broker: DeterministicBrokerAdapter, anchor: float) -> Any:
-    cycle = StrategyEngine.start_cycle(controller.strategy, 1, "", anchor, 0.0)
+    cycle = StrategyEngine.start_cycle(controller.strategy, 1, "DU_TEST", anchor, 0.0)
+    cycle.con_id = broker.contract.con_id
     controller.active_cycle = cycle
     controller.storage.upsert_cycle(cycle)
     publish_fresh_price(controller, broker, anchor)

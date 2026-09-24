@@ -6,7 +6,7 @@ from app.ib_adapter import MarketPriceSnapshot, PolledOrderState
 from app.models import Stage, StrategySettings, atr_from_price_history, utc_now_iso
 from app.storage import BotStorage
 from app.strategy import StrategyEngine
-from tests.test_controller_headless import _install_qt_stub
+from tests.test_controller_headless import RthFakeAdapter, _install_qt_stub
 
 GUI = Path("app/gui.py").read_text(encoding="utf-8")
 
@@ -45,14 +45,14 @@ def test_max_spread_is_never_rewritten_from_live_market_data() -> None:
     assert "self.max_spread_pct_spin," in GUI
 
 
-def test_live_dashboard_uses_full_width_recovery_audit_log_in_all_modes() -> None:
+def test_live_dashboard_uses_full_width_audit_log_except_simple_mode() -> None:
     view_start = GUI.index("def _apply_view_mode")
     view_block = GUI[view_start : GUI.index("def _build_dashboard", view_start)]
     dashboard_start = GUI.index("def _build_dashboard")
     dashboard_block = GUI[dashboard_start : GUI.index("def _connection_group", dashboard_start)]
 
     assert '"control_box"' not in view_block
-    assert '("event_log_box", True)' in view_block
+    assert '("event_log_box", not simple)' in view_block
     assert "self.control_box" not in dashboard_block
     assert "self._control_group" not in dashboard_block
     assert "root.addWidget(self.event_log_box, 1)" in dashboard_block
@@ -71,7 +71,7 @@ def test_stop_and_recovery_use_persisted_app_owned_quantity() -> None:
     recovery_block = GUI[recovery_start : GUI.index("def _set_recovery_details_text_preserve_scroll", recovery_start)]
 
     assert 'getattr(self.controller, "app_owned_unsold_position", None)' in visible_block
-    close_start = GUI.index("def closeEvent")
+    close_start = GUI.index("def closeEvent", GUI.index("class MainWindow("))
     close_block = GUI[close_start : GUI.index("def _apply_styles", close_start)]
 
     assert "unsold_qty = self._persisted_app_unsold_quantity(cycle)" in stop_block
@@ -159,13 +159,17 @@ def test_terminal_sell_poll_retires_older_recovery_probe_order(tmp_path, monkeyp
     controller_module = _install_qt_stub(monkeypatch)
     storage = BotStorage(tmp_path / "bot_state.sqlite")
     controller = controller_module.TradingController(storage=storage)
+    controller.adapter = RthFakeAdapter(is_open=True)
+    controller.connection.account = "SIM"
+    controller.contract = controller.adapter.qualify_stock("AAPL", "SMART", "USD", con_id=123)
     settings = _settings(
+        contract_con_id=123,
         auto_repeat=True,
         hard_risk_limits_enabled=True,
         max_cycles_per_ticker_day=1,
     )
     controller.strategy = settings
-    cycle = StrategyEngine.start_cycle(settings, 1, "", 100.0, 0.0)
+    cycle = StrategyEngine.start_cycle(settings, 1, "SIM", 100.0, 0.0)
     cycle.stage = Stage.SELL_TRAIL_ACTIVE
     cycle.quantity = 10
     cycle.buy_filled_qty = 10

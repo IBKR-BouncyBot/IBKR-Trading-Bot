@@ -1,6 +1,6 @@
 # Deterministic offline behavior tests
 
-This document describes the current non-GUI, non-Windows, non-network test layer in v4.0.0. It covers strategy behavior, controller state transitions, audit diagnostic coalescing, BUY partial-fill grace/timeout safety, broker-event handling, persistence and recovery, shutdown checkpoints, GUI contracts, and bounded performance behavior.
+This document describes the current non-GUI, non-Windows, non-network test layer in v5.0.0. Here, non-GUI excludes native widget rendering; GUI contracts are exercised with Qt doubles. It covers strategy behavior, controller state transitions, audit diagnostic coalescing, BUY partial-fill grace/timeout safety, broker-event handling, persistence and recovery, shutdown checkpoints, GUI contracts, and bounded performance behavior.
 
 The suite deliberately avoids:
 
@@ -143,7 +143,7 @@ The doubles intentionally do not import a live IB session, open sockets, or clai
 
 ## Validation sequence
 
-The complete Windows launcher runs the deterministic layers in this order:
+The complete Windows launcher verifies standard GIL-enabled CPython 3.14.x, installs `requirements.txt`, and runs the deterministic layers in this order:
 
 1. Compile `app`, `tests`, `scripts`, and `main.py`.
 2. Run every collected pytest test, including the bounded soak tests, with `ResourceWarning` promoted to an error and Coverage.py branch tracking enabled. No marker filter is applied.
@@ -156,9 +156,9 @@ The complete Windows launcher runs the deterministic layers in this order:
 
 The Unix `scripts/run_tests.sh` helper still separates non-soak coverage from the soak subset to keep that development-host command practical.
 
-The v4.0.0 source tree passed **1,284/1,284** pytest cases across **129 test modules**, with `ResourceWarning` promoted to an error. All 129 modules also passed individually in fresh Python processes. The measured combined statement/branch coverage was **78.8%** (82.3% statements; 68.1% branches), and **1,038/1,038** executable application callables were entered. The release killed **17/17** safety mutants and passed **58/58** deterministic simulation contracts across 54 CSV paths. The three new v4.0.0 modules contain **73 focused regression cases**. Ruff, Pyright, native Windows/PyInstaller, and live IBKR testing were not available in this environment.
+The original v4.0.0 source tree (before the ATR checkpoint saving correction) passed **1,284/1,284** pytest cases across **129 test modules**, with `ResourceWarning` promoted to an error. All 129 modules also passed individually in fresh Python processes. The measured combined statement/branch coverage was **78.8%** (82.3% statements; 68.1% branches), and **1,038/1,038** executable application callables were entered. The release killed **17/17** safety mutants and passed **58/58** deterministic simulation contracts across 54 CSV paths. The three new v4.0.0 modules contain **73 focused regression cases**. Ruff, Pyright, native Windows/PyInstaller, and live IBKR testing were not available in this environment.
 
-The CSV matrix itself passes cleanly in the offline Linux environment. The full Windows launcher remains the authoritative combined run for Coverage.py, Ruff, Pyright, and native launcher behavior.
+Current results, the interpreter used and unperformed native gates are recorded in the root `IMPLEMENTATION_TEST_REPORT.txt`. The full Windows launcher remains the authoritative combined run for Coverage.py, Ruff, Pyright, and native launcher behavior.
 
 ## Scope that remains external
 
@@ -178,4 +178,15 @@ Use [`TEST_PLAN.md`](TEST_PLAN.md) for those manual and integration checks.
 
 `test_v400_atr_memory_and_order_edits.py` covers first-session warmup, weekend/restart reuse, session and contract separation, corrupt/future/expired estimates, bounded persistence failures, live takeover, same-contract volatility-history preservation, and explicit next-order guard persistence/isolation. `test_v400_gui.py` checks amber LIVE status, retained error colors, removal of only the profit banner, risk-field/manual locks, saved ATR provenance, and non-selling dialog defaults. `test_v400_release.py` checks metadata, documentation layout, compatibility, and unchanged order/broker modules.
 
-Final v4.0.0 validation results are recorded in the root `IMPLEMENTATION_TEST_REPORT.txt` and the current release note. The measured figures above correspond to the final v4.0.0 test run.
+Historical corrected v4.0.0 results are preserved in [`legacy/V4_0_0_IMPLEMENTATION_TEST_REPORT.txt`](legacy/V4_0_0_IMPLEMENTATION_TEST_REPORT.txt). The root `IMPLEMENTATION_TEST_REPORT.txt` records the current v5.0.0 verification.
+
+
+## v5.0.0 GUI regression layer
+
+The retained GUI regression suites cover fill/commission-derived costs, remaining-inventory allocation, invalid/missing data, USD/EUR formatting, five merged monitor cards, collapsed stage details, Simple-mode log visibility, exact-copy wrapping OrderRefs, twelve summary cards, numeric Invested sorting, stable row identity, bounded table height, expanding Decision events and equal Timeline table heights. Current checks cover Trading/Position details in the top-right header with the title font, and independent Timeline crosshairs with separate price scales. Hovering one plot must not draw a cursor on the other; offscreen records must not replace a local tooltip. Table regressions cover all eight wrapped Reconciliation rows, width/font/style/data-triggered refitting, the two-by-two guided-action layout, horizontal-scrollbar height allowance, and reachable overflow in height-capped Summary/compact tables. Native DPI rendering remains a separate unperformed check on this host. `tests/test_v410_release.py` checks current release consistency, retained documentation and unchanged safety boundaries. The full v5.0.0 release also includes targeted controller, strategy, broker adapter, model and storage safety fixes.
+
+The current measured suite, coverage and quality-gate results are in [`../IMPLEMENTATION_TEST_REPORT.txt`](../IMPLEMENTATION_TEST_REPORT.txt). Qt doubles verify observable layout policies and painter coordinates, not native pixel geometry. Native Windows/DPI, a packaged build, and the actual GUI scrollbar/crosshair interaction still require the visual checks in `TEST_PLAN.md`.
+
+## v5.0.0 safety regression layer
+
+`tests/test_v500_*.py` covers broker submission uncertainty, cancellation ownership, market-data generations, recovery quantities/late fills, account/contract identity, independent BUY evidence/spread limits, protective handoff/precision, restore validation, GUI eligibility, Python 3.14 launcher checks, audit-reader lifecycle and batching, validated post-fill capture context, actual stage transitions, disconnected Account display and metadata-only RTH handling. New unittest classes are also pytest-collectable. Real pytest/coverage/quality gates remain required; any dependency-free fallback results in the implementation report are explicitly separate and do not replace them.

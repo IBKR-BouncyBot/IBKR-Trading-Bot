@@ -1,4 +1,4 @@
-"""v4.0.0 price-monitor and Cycle Audit layout regressions."""
+"""v4.1.0 price-monitor and Cycle Audit layout regressions."""
 
 from __future__ import annotations
 
@@ -147,11 +147,11 @@ def test_market_capture_tab_uses_internal_scrollbars_without_outer_scroll_area()
     assert "return cls._scrollable_tab(tab)" not in section
 
 
-def test_orders_executions_and_decisions_use_top_aligned_table_tabs() -> None:
+def test_orders_and_executions_keep_compact_tabs_but_decisions_expand() -> None:
     source = Path("app/gui.py").read_text(encoding="utf-8")
     audit = source[source.index("class CycleAuditDialog") : source.index("class MainWindow")]
 
-    assert audit.count("return self._top_aligned_table_tab(table)") == 3
+    assert audit.count("return self._top_aligned_table_tab(table)") == 2
     helper = audit[
         audit.index("def _top_aligned_table_tab") : audit.index(
             "def _enriched_details", audit.index("def _top_aligned_table_tab")
@@ -189,6 +189,13 @@ def test_audit_record_builders_construct_top_aligned_tabs(gui_module) -> None:
             }
         ],
     }
+    # The dialog now hands the builder rows prepared by its audit reader.
+    audit._decision_rows = [
+        ([gui_module._format_field_value(key, event.get(key))
+          for key, _label in audit._DECISION_COLUMNS], str(event.get("raw_json") or ""))
+        for event in audit.details["decision_events"]
+    ]
+    audit._audit_timer = gui_module.QTimer()
 
     assert audit._build_orders_tab() is not None
     assert audit._build_executions_tab() is not None

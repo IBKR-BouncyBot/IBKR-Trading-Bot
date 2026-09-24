@@ -1,0 +1,121 @@
+BouncyBot v4.1.0 - Same-version GUI Layout Corrections
+====================================================
+Source release only. This is a replacement v4.1.0 source archive, not v4.2.0.
+No native Windows executable is included.
+
+BASELINE AND SCOPE
+Baseline: IBKR_Trading_Bot_4.1.0_GUI_Metrics_Audit_Layout_Source.zip
+SHA-256: 79cf9c22a6a70d8dbab41b0a631446a889610e80ad5cebdf0d58866fe949c472
+Only app/gui.py differs among runtime application sources. All other app/*.py
+and main.py are byte-identical to the baseline. The 4.1.0 version, dependency
+requirements, Windows build scripts, trading/controller/broker/storage/ATR/
+watchdog/recovery logic, database schema and CSV export schemas are unchanged.
+Keep the existing database, settings and ATR checkpoints when replacing source.
+The previous 4.1.0 implementation report is archived under docs/legacy/ as
+V4_1_0_INITIAL_IMPLEMENTATION_TEST_REPORT.txt and is not current verification.
+
+ELEVEN REQUESTED CORRECTIONS
+1. All ten status boxes use equal stretch, a zero explicit minimum width and
+   horizontal Ignored size policy so content hints cannot widen just Trading
+   or Position. Status/detail text wraps; price/trigger and remaining invested
+   cost remain right-aligned. The lock retains its fixed 48-pixel width.
+2. Total BUY cost is renamed Total buy cost, including the metric update key.
+   Actual-fill/fee calculation and history Invested are unchanged.
+3. OrderRef retains read-only wrap-anywhere plain text, exact selection/copy and
+   bounded internal scrolling. A targeted QTextEdit#MetricValue rule overrides
+   the generic black/monospace log style: matching card background/foreground,
+   proportional Segoe UI/sans-serif font, no inner border and no extra padding.
+   The existing light/dark conversion applies to that targeted rule too.
+4. Raw API table: five content-sized Field columns alternate with five Value
+   columns that share spare horizontal width. Stretch modes are reapplied after
+   autosizing on refresh/show; narrow-window scrolling remains available.
+5. Strategy input map: minimum height reduced from 560 to 420 (25 percent),
+   block height 90 to 72, row spacing 116 to 82. All sixteen blocks, lane labels,
+   calculations, font sizes and footer remain. Text rectangles fit each block.
+6. A single stage ribbon is created in the fixed shell above status and tabs,
+   not inside the Live Strategy scroll area. It updates on every snapshot even
+   while another tab is selected; its existing unchanged-stage cache remains.
+7. Average net P/L follows Best net P/L and Worst net P/L in reading order.
+   Twelve summary cards remain in three columns and four rows; formulas and
+   summary/filter scope are unchanged.
+8. All linked-hover code is removed. The four graph _draw_hover_overlay methods
+   and CycleTimelineWidget.paintEvent are AST-identical to the corrected v4.0.0
+   source. This includes removing unintended undefined linked-state references
+   in three other graph overlays. Crosshairs draw only in the hovered plot.
+   Existing shared time axis, zoom/pan and aligned Timeline tables are retained.
+9. Audit Orders retains a top-aligned bounded table; OrderRef stretches across
+   unused horizontal width. Editing remains disabled and scrolling remains.
+10. Audit Executions uses the same full-width final-OrderRef policy.
+11. Market capture has zero extra container margins, a top-aligned summary,
+    stretching summary Value and preview Capture ZIP columns, and a trailing
+    spacer when no preview rows exist. It no longer vertically centers a lone
+    summary. A populated preview can consume the remaining height. Tables and
+    the source-file list scroll independently, without a page-level scroll area.
+
+MEASURED VERIFICATION
+Host: Linux; Python 3.13.5; pytest 9.0.2; coverage.py 7.13.3.
+Project requirements remain Python >=3.11, pytest >=8,<9, PySide6 >=6.7,<7.
+- Complete suite under branch coverage: 1388/1388 passed in 323.73 seconds.
+- ResourceWarning promoted to an error. No skipped/xfail/xpass cases reported.
+- Current v4.1.0 GUI/release suites: 78 cases, including 28 new correction cases.
+- Existing linked-feature tests were replaced with independent-hover assertions;
+  the older hover-only-transition test was restored to its independent hook.
+  No test module was removed, skipped or marked expected-failure.
+- Combined statement/branch coverage: 80.4% (required minimum 75%).
+- CALLABLE COVERAGE CHECK PASSED: 1041/1041 executable application callables entered.
+- Safety mutation smoke: 17/17 mutants killed.
+- Deterministic simulations: 58 scenarios across 54 price-path CSV files passed.
+- Compilation and Python 3.11 grammar parsing passed.
+- Git whitespace validation passed.
+- Non-GUI runtime, dependency, version and Windows build byte comparisons passed.
+- Independent crosshair baseline AST comparisons passed for all five methods.
+
+The regression cases cover equal stretch/minimum-width policies under both
+color themes, long status/details, ribbon placement and updates on all four
+tabs, the OrderRef style/copy contract, raw table refresh/show/hide sizing,
+compact-map geometry, summary ordering, independent hover/leave behavior,
+and empty/few/many-row audit tables including capture-file-only cases.
+
+RELEASE VERIFICATION
+The corrected source uses root folder IBKR-Trading-Bot-main/ and contains 377
+tracked files, including all 22 unchanged source image assets. Archives exclude
+Git metadata, caches, bytecode, coverage output, runtime databases, logs, captures,
+backups, exports, virtual environments and build output. The correction patch
+is relative to the exact initial v4.1.0 source above, not to a different release.
+The packaging gate checks ZIP integrity, strict patch application and complete
+byte identity of patched, working and archived tracked files. It independently
+runs the 78 current-release tests from the cleanly extracted source ZIP.
+Checksum manifest covers the source ZIP, patch and this report. The bundle also
+contains that manifest. This report does not embed its own/source ZIP hash to
+avoid a circular hash dependency.
+
+REPRODUCIBLE COMMANDS
+Set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1, IBKR_BOT_HEADLESS_SIGNALS=1,
+QT_QPA_PLATFORM=offscreen, and PYTHONDONTWRITEBYTECODE=1 for the headless gate.
+python -W error::ResourceWarning -m coverage run --branch --source=app,main -m pytest -q --tb=short -ra
+python -m coverage report --fail-under=75
+python -m coverage json -o coverage.json
+python scripts/check_callable_coverage.py --coverage-json coverage.json --source app --source main.py
+python scripts/run_mutation_smoke.py
+python scripts/run_all_simulations.py
+python -W error::ResourceWarning -m pytest -q tests/test_v410_gui_metrics_and_layout.py tests/test_v410_layout_corrections.py tests/test_v410_release.py
+python -m compileall -q app tests scripts main.py
+git diff --check
+python scripts/run_quality_checks.py --require-tools
+
+VALIDATION LIMITS / REQUIRED WINDOWS GATE
+Ruff and Pyright are not installed in this host and installation attempts did
+not obtain them. The required quality command returned exit code 1 for missing
+tools; neither check is claimed as passing. Python grammar checks and pytest
+are not substitutes for those tools. The configured Pyright application files
+are byte-identical to the baseline.
+
+PySide6 could not be installed here. GUI tests use observable Qt doubles and
+recorded painter coordinates, not actual Qt/Windows rendering. They verify the
+requested layout/style policies and behavior, not native font metrics or screen
+pixels. There was no Windows/PyInstaller build or paper/live IB Gateway test,
+and no real broker order was submitted during validation. No native EXE is
+included. On Windows run run_all_tests.bat, then build_windows.bat. Complete the
+100/150/200-percent scaling, theme-switch, fixed-ribbon, long-OrderRef, table
+resize/scroll and independent-crosshair checks in docs/TEST_PLAN.md before
+unattended deployment. Do not disable trading safeguards to test the layout.

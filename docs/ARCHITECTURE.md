@@ -28,7 +28,7 @@ TradingController (worker thread)
 
 `main.py` creates the Qt application, applies the selected Fusion palette, acquires the single-instance lock, creates the controller/window, connects Qt's session-management commit signal, and starts the Qt event loop. A Windows-controlled session termination calls the GUI's non-interactive checkpoint handler through a direct Qt connection. The handler saves resume state but does not stop the worker or exit from inside the session callback; this keeps the application usable if another program cancels shutdown. If shutdown proceeds, normal event-loop cleanup stops the worker and releases the process lock.
 
-For a watchdog replacement, the GUI exits Qt with a dedicated internal code and a one-time handoff token. `main.py` attempts controller shutdown, releases the same single-instance lock, and uses a properly quoted `subprocess.Popen` argument list on Windows or `os.execv` on POSIX to relaunch the complete source or frozen process. The replacement consumes the handoff once before the worker starts. There is no second worker thread and no intentional overlap between old and new BouncyBot processes.
+For a watchdog replacement, the GUI exits Qt with a dedicated internal code and a one-time handoff token. `main.py` attempts controller shutdown, releases the same single-instance lock, and uses a properly quoted `subprocess.Popen` argument list on Windows or `os.execv` on POSIX to relaunch the complete source or frozen process. The replacement consumes the handoff once before the worker starts. There is no second controller/broker worker thread and no intentional overlap between old and new BouncyBot processes.
 
 `app/paths.py` defines the portable application directory:
 
@@ -51,9 +51,13 @@ The database and generated folders are derived from this location. The applicati
 
 The GUI does not decide when a BUY or SELL should occur. Graphs and projections are explanatory views. `TradingController` and `StrategyEngine` are authoritative.
 
+Opening a Cycle audit log schedules one read-only `CycleAuditReader` thread after the dialog is shown. The controller/storage path supplies the SQLite audit snapshot before opening the dialog; the reader receives a detached copy, formats Decision events and streams completed capture archives. It never accesses widgets, the controller or a live database connection. A GUI-owned timer consumes its queue, populates Decision cells and refits wrapped rows in batches of up to 40 with a 6 ms time-budget check. Timeline and Market capture share the prepared rows; their widgets/graphs are built on the GUI thread when requested. Orders, Executions and Raw log remain lazy. Closing the dialog or destroying its parent signals cancellation, and queued callbacks check it before accessing widgets.
+
+Validated fill archives may contribute same-instrument pre/post-fill context across cycle boundaries, including the next cycle after a SELL. This affects audit display only: cycle/order ownership and recorded data remain unchanged. Timeline stage markers and its stage table include only transitions with two nonempty, differing stages; Decision events retains all records.
+
 The top input lock is an accidental-edit guard. It disables editable configuration and all five workflow buttons while leaving monitoring, tabs, history, and reconciliation views usable. It does not stop the worker or cancel broker orders.
 
-The fixed five-button command bar is the dashboard workflow control surface. The former duplicate Controls group has been removed; the Recovery / audit log occupies the full dashboard width in Simple, Advanced, and Debug modes.
+The fixed five-button command bar is the dashboard workflow control surface. The former duplicate Controls group has been removed; the Recovery / audit log occupies the full dashboard width in Advanced/Debug and is hidden in Simple. Diagnostics and audit recording continue while hidden.
 
 ## Controller layer
 
@@ -106,7 +110,7 @@ It does not import Qt, connect to IBKR, or write SQLite. The controller validate
 - market-data subscription and price-source selection;
 - actual `pendingTickersEvent` sequencing, subscription identity, callback timestamps, raw tick-type inspection, and independent per-price-field update/change identity so unrelated ticker activity cannot refresh cached Last/bid/ask values;
 - separate local-socket and upstream IBKR connectivity state driven by broker system messages, including 1100, 1101, 1102, 1300, and 2110;
-- contract-specific RTH/liquid-hours interpretation with non-U.S. fail-closed behavior;
+- contract-specific RTH/liquid-hours interpretation with fail-closed behavior for every contract when authoritative session metadata is unavailable;
 - SMART/order-type capability checks, route-specific IBKR market-rule selection, price-band loading, side-aware order-price normalization, and whole-share minimum/step validation;
 - native trailing and market order construction;
 - strict dedicated what-if checks;
@@ -160,6 +164,7 @@ The storage layer also creates restore-validated online backups and audit bundle
 - A lightweight headless signal implementation is used only by tests/build validation when `IBKR_BOT_HEADLESS_SIGNALS=1`.
 - Broker calls are kept in the worker path to avoid concurrent access from GUI callbacks.
 - Market-capture ZIP writing uses a separate bounded writer path after the full post-fill window is available.
+- Each open Cycle audit dialog has one read-only preparation thread; it does not share or replace the trading worker. Widget updates remain on the Qt main thread.
 
 ## Timekeeping
 
@@ -167,9 +172,9 @@ All app-generated timestamps are recorded and displayed in UTC. This includes cy
 
 The GUI can show workstation-local time alongside UTC for comparison. Imported timestamps without timezone information are interpreted as UTC for audit alignment rather than as the workstation’s local zone.
 
-The adapter parses the active exact contract's date-specific IBKR `liquidHours` and `timeZoneId` into explicit regular-session open/close boundaries. For `LSE` and `LSEETF`, the adapter intersects those broker boundaries with the verified 08:00-16:30 `Europe/London` continuous session because an IBKR SMART `liquidHours` endpoint can include auction or post-continuous phases. The venue policy can only narrow the IBKR window; an IBKR holiday, late open, or earlier close remains authoritative. The controller uses the effective boundaries for the base RTH decision, first/last-minute BUY blockers, active-BUY cancellation, optional pre-close liquidation, and RTH-only ATR collection. The conservative weekday 09:30-16:00 New York fallback is available only for recognized U.S. equity primary exchanges. A non-U.S. contract with missing, invalid, or unparseable metadata fails closed.
+The adapter parses the active exact contract's date-specific IBKR ContractDetails `liquidHours` and `timeZoneId` into explicit regular-session open/close boundaries. These are contract metadata, not an inference from incoming price ticks. For `LSE` and `LSEETF`, the adapter intersects those broker boundaries with the verified 08:00-16:30 `Europe/London` continuous session because an IBKR SMART `liquidHours` endpoint can include auction or post-continuous phases. The venue policy can only narrow the IBKR window; an IBKR holiday, late open, or earlier close remains authoritative. The controller uses the effective boundaries for the base RTH decision, first/last-minute BUY blockers, active-BUY cancellation, optional pre-close liquidation, and RTH-only ATR collection. No weekday schedule or replacement timezone is guessed. Missing, invalid or unparseable authoritative metadata blocks RTH-restricted submissions for every contract. Without a usable authoritative window, the GUI shows no estimated session hours or opening/closing countdown; published current or upcoming windows remain displayable.
 
-Local BUY guards are evaluated before any order intent is written. A blocked action rolls back to Stage 1 with status `PreflightBlocked`; `SubmitFailed` is reserved for a broker-submission attempt that raised before acceptance could be confirmed. Repeated warnings use a stable cycle-and-blocker throttle key and are written at most once per 60 seconds while the guard remains enforced on every strategy cadence.
+Local BUY guards are evaluated before any order intent is written. A blocked action rolls back to Stage 1 with status `PreflightBlocked`; `SubmitFailed` is reserved for definite pre-transmit submission failure. A possibly transmitted order is retained as `SUBMISSION_UNKNOWN` and requires persistent manual review. Repeated warnings use a stable cycle-and-blocker throttle key and are written at most once per 60 seconds while the guard remains enforced on every strategy cadence.
 
 ## Order ownership boundary
 
@@ -187,10 +192,10 @@ The position boundary is different: IBKR exposes an account-level stock position
 
 `ConnectionSettings.account` is optional:
 
-- blank: the adapter does not set `Order.account`; TWS/Gateway selects the account;
-- explicit: the order carries that account and live BUY preflight validates it against managed accounts.
+- blank: a new cycle resolves one unambiguous managed account and persists it before any order; exposed legacy cycles require owned-order/execution account evidence;
+- explicit: the selected managed account is pinned to the cycle and revalidated before its order operations.
 
-The account IDs shown in the status bar are display/recovery facts. A displayed account is not silently copied into the routing override.
+The account IDs shown in the status bar are display/recovery facts. A displayed account is not silently copied into the routing override. When no account is known, the placeholder is `Auto (single managed account)` only while both local and upstream connections are available, and `N/A` otherwise. A known account remains displayable while disconnected.
 
 ## Guard and recovery boundary
 

@@ -222,7 +222,9 @@ def test_controller_timing_uses_effective_lse_close(
 
     assert timing["available"] is True
     assert timing["minutes_to_close"] == pytest.approx(5.0)
-    assert timing["session_close_display"] == "17:30 CEST"
+    assert controller._latest_rth_status["session_close"] == "2026-07-24T17:30:00+02:00"
+    # MET uses CEST or MEST depending on the installed timezone database.
+    assert timing["session_close_display"] in {"17:30 CEST", "17:30 MEST"}
 
 
 def test_non_lse_contract_keeps_ibkr_liquid_hours_boundary() -> None:

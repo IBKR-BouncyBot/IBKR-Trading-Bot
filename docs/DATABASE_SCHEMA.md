@@ -24,7 +24,7 @@ Do not copy only the main SQLite file while the application is writing. Use an a
 
 ## `app_settings`
 
-Key/value storage for editable drafts.
+Key/value storage for editable drafts, resume checkpoints, the database currency lock, saved ATR estimates, and pending next-order risk edits.
 
 | Column | Type | Meaning |
 |---|---|---|
@@ -54,7 +54,7 @@ One row per strategy cycle. This is the core restart/recovery and completed-hist
 - `account`, exact IBKR `con_id`, SMART `exchange`, native `primary_exchange`, one-database `currency`, and `rth_only`;
 - `recovery_required`, `close_position_market_requested`, `stop_after_current_cycle`, `error_message`.
 
-A blank `account` is valid and means no explicit IBKR order account override.
+A blank connection-settings `account` requests automatic selection of a single unambiguous managed account for a new cycle. The resolved cycle account is persisted and used explicitly. Historical blank cycle accounts require exact ownership evidence before exposed-cycle recovery.
 
 ### Budget and strategy snapshot
 
@@ -66,7 +66,7 @@ A blank `account` is valid and means no explicit IBKR order account override.
 - hard risk, delayed-data, what-if, freshness, volatility, and session-timing settings;
 - Stage-3/Stage-4 close policy: `cancel_sell_and_liquidate_before_close_enabled` and `liquidate_before_close_minutes`.
 
-`rise_trigger_pct` is the historical persisted name for user-facing **Minimum profit %**. `max_cycles_per_ticker_day` is also retained as a compatibility name; current guard behavior treats it as a total completed-cycle cap for the selected ticker.
+`rise_trigger_pct` is the historical persisted name for user-facing **Minimum profit %**. `max_cycles_per_ticker_day` is also retained as a compatibility name; current guard behavior treats it as a total completed-cycle cap for the selected ticker/conId.
 
 ### Price and trigger state
 
@@ -98,7 +98,7 @@ During blocked ATR warmup, `drop_trigger_price` can remain `NULL` by design.
 
 Indexes support stage/ticker/history/recovery lookups by `ticker`, `stage`, `updated_at`, and `sell_filled_at`.
 
-The application-owned unsold ledger is reconstructed from these persisted cycle fill fields: BUY quantity minus the larger of final-SELL and protective-SELL filled quantity for each unresolved cycle. Cycles explicitly marked manually handled are excluded. BUY gating, Stop, main-window close, and Reconciliation all use this local ledger rather than the account-wide IBKR position.
+The application-owned unsold ledger is reconstructed from these persisted cycle fill fields: BUY quantity minus the larger of final-SELL and protective-SELL filled quantity for each unresolved cycle. Cycles explicitly marked manually handled are excluded. BUY gating, Stop, main-window close, and Reconciliation all use this local ledger rather than the account-wide IBKR position. With a selected positive conId, the query includes only matching ticker/conId rows plus legacy same-ticker rows with no conId; another positive conId is excluded. Reinvestment, ticker-specific daily loss, completed-cycle caps, and loss streaks use the same contract filter.
 
 ## `orders`
 
@@ -177,7 +177,7 @@ Normal application operation does not delete completed cycle history as part of 
 1. when an existing database is present, make a best-effort pre-schema-check online backup;
 2. create any missing tables/indexes;
 3. add known missing `cycles` columns with `ALTER TABLE`;
-4. preserve unknown/newer row data when deserializing by using known dataclass fields and defaults.
+4. deserialize cycle rows using known dataclass fields and defaults, ignoring unknown columns in the in-memory object without dropping those columns from SQLite.
 
 The migration path does not drop tables or rewrite trading history.
 
@@ -214,11 +214,15 @@ Completed-cycle history is read from `cycles` and enriched in memory with displa
 
 These derived metrics do not alter stored order/fill facts and are not account-wide performance figures.
 
-## v4.0.0 optional application-settings records
+## Optional ATR and next-order application-settings records
 
-v4.0.0 adds no table, column, or index and does not migrate existing cycle or order rows. Two optional key families use the existing `app_settings` JSON storage:
+Two optional key families use the existing `app_settings` JSON storage without adding tables, columns or indexes:
 
-- `atr_rth_seed_v1:<identity hash>`: version, exact contract/profile/ATR configuration, RTH boundaries, observation timestamp, and a validated ready ATR snapshot. Raw tick history is not persisted by this feature. Automatic writes occur at most once per minute only in the final five minutes of the broker-reported RTH window, plus a final recorded-session-close flush. Orderly application shutdown may save earlier. Midday identity/configuration edits or transient status loss do not force writes. Failed final saves retry no faster than once per minute; successful unchanged estimates are not repeatedly written overnight. The observed RTH timestamp is not advanced to the save time. The record format is unchanged by this same-version saving-policy correction.
+- `atr_rth_seed_v1:<identity hash>`: version, exact contract/profile/ATR configuration, RTH boundaries, observation timestamp, and a validated ready ATR snapshot. Raw tick history is not persisted by this feature. Automatic writes occur at most once per minute only in the final five minutes of the broker-reported RTH window, plus a final recorded-session-close flush. Orderly application shutdown may save earlier. Midday identity/configuration edits or transient status loss do not force writes. Failed final saves retry no faster than once per minute; successful unchanged estimates are not repeatedly written overnight. The observed RTH timestamp is not advanced to the save time. These writes use the existing version-1 record format.
 - `next_order_risk_edits_v1`: version, exact originating cycle ID/account/contract, and the reviewed guard values explicitly edited by the operator. Invalid or mismatched records are ignored; working order fields are not rewritten from this record.
 
-Normal SQLite backups include these records. Copy the existing database when upgrading; do not copy another running bot's database or share an active database between instances. v3.9.0 has no ATR seed to import, so the first valid v4.0.0 observation window still warms normally.
+Normal SQLite backups include these records. Copy the existing database when upgrading; do not copy another running bot's database or share an active database between instances. A database from before checkpoint support has no ATR seed and requires normal warmup until a valid estimate is saved.
+
+## v5.0.0 compatibility
+
+v5.0.0 adds no table, column or index. `SUBMISSION_UNKNOWN` uses existing order/cycle status fields, and manual-review state uses existing recovery fields. Historical order-role/account evidence is read from existing orders/executions. Restore readiness now requires original core columns and primary keys and checks declared foreign-key integrity, then tests existing additive migrations on a disposable consistent SQLite backup. No active database or supplied backup is modified by that validation. It is not a blanket validation of all stored values or a substitute for broker reconciliation.

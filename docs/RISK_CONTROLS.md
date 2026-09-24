@@ -48,9 +48,9 @@ These are not disabled by the optional hard-risk master.
 
 Strategy orders use `outsideRth=False`. New order placement requires the controller’s current RTH evaluation to permit it. Unknown or stale RTH status fails closed where the corresponding check applies.
 
-The production adapter obtains date-specific regular-session ranges from the exact qualified contract's IBKR `liquidHours` and `timeZoneId`. For `LSE` and `LSEETF`, the effective range is the intersection of that broker window and the verified 08:00-16:30 `Europe/London` continuous session; this prevents timing-sensitive market orders from being scheduled in a later auction/post-continuous phase. An IBKR early close remains earlier and therefore still wins. The effective boundaries drive the first-minutes, last-minutes, pre-close BUY-cancellation, Stage-3/Stage-4 liquidation, and RTH-only ATR controls. The weekday 09:30-16:00 New York fallback is permitted only for a recognized U.S. primary exchange. A non-U.S. or unknown contract with missing or unusable session metadata fails closed; BouncyBot does not guess U.S. hours for an EUR listing.
+The production adapter obtains date-specific regular-session ranges from the exact qualified contract's IBKR ContractDetails `liquidHours` and `timeZoneId`, rather than from price ticks. For `LSE` and `LSEETF`, the effective range is the intersection of that broker window and the verified 08:00-16:30 `Europe/London` continuous session; this prevents timing-sensitive market orders from being scheduled in a later auction/post-continuous phase. An IBKR early close remains earlier and therefore still wins. The effective boundaries drive the first-minutes, last-minutes, pre-close BUY-cancellation, Stage-3/Stage-4 liquidation, and RTH-only ATR controls. There is no guessed weekday schedule or timezone substitution. Missing or unusable authoritative session metadata blocks RTH-restricted submissions for every contract and does not produce estimated session hours or an opening/closing countdown in the GUI.
 
-A configured BUY blocker is not a broker submission failure. Before an order intent exists, BouncyBot records `PreflightBlocked` and returns the cycle to Stage 1. The guard remains active on every evaluation, but v4.0.0 coalesces repeated audit rows per cycle while retaining stable blocker reason codes. Expected waits use INFO entry/15-minute summaries; hard risk, data, or broker blockers use an immediate WARN, a one-minute first WARN summary, and later WARN summaries at five-minute intervals. Recovery is recorded once when the blocker clears.
+A configured BUY blocker is not a broker submission failure. Before an order intent exists, BouncyBot records `PreflightBlocked` and returns the cycle to Stage 1. The guard remains active on every evaluation, but v5.0.0 coalesces repeated audit rows per cycle while retaining stable blocker reason codes. Expected waits use INFO entry/15-minute summaries; hard risk, data, or broker blockers use an immediate WARN, a one-minute first WARN summary, and later WARN summaries at five-minute intervals. Recovery is recorded once when the blocker clears.
 
 Native orders accepted by IBKR can remain working according to broker rules. The application’s RTH guard controls its own submissions/activation decisions, not the broker’s entire account.
 
@@ -93,7 +93,7 @@ IBKR contract `minTick` can be the smallest increment seen anywhere for a contra
 
 ### Exact contract, database currency, and quantity validation
 
-The live adapter accepts only an exact IBKR API selection with a positive `conId`, ordinary `STK` security type, `SMART` routing, and contract currency `USD` or `EUR`. It verifies that qualification returns the same conId and currency, that SMART is an advertised route when exchange metadata is supplied, and that the contract advertises the `MKT` and `TRAIL` order types required by the strategy. A mismatch blocks Start, recovery, or order creation rather than falling back to symbol-only qualification.
+The live adapter accepts only an exact IBKR API selection with a positive `conId`, ordinary `STK` security type, `SMART` routing, and contract currency `USD` or `EUR`. It verifies that qualification returns the same conId and currency, that nonempty exchange metadata advertises SMART, and that the contract advertises the `MKT` and `TRAIL` order types required by the strategy. Missing route/order-type metadata or a mismatch blocks Start, recovery, or order creation rather than falling back to symbol-only qualification.
 
 Each portable SQLite database uses one contract currency. A draft database can be rebound between USD and EUR while it has no cycles. The first persisted cycle locks the database currency; an existing v3.1.2 database is inferred from its historical cycles. Mixed-currency evidence fails closed because BouncyBot does not convert P/L, risk limits, reinvestment, or commissions through FX.
 
@@ -109,7 +109,7 @@ An unfilled BUY that becomes `Inactive` or `Rejected`, or that carries a substan
 
 ### ATR warmup
 
-Enabled by default when ATR adaptive mode is on. No initial-drop trigger is armed until enough RTH-only observed bars exist. The ready update resets the Stage-1 anchor; the drop must occur afterward.
+Enabled by default when ATR adaptive mode is on. No initial-drop trigger is armed until ATR is ready, either from enough RTH-only observed bars with a finite positive calculation or from a validated saved starting estimate. The ready update resets the Stage-1 anchor; the drop must occur afterward.
 
 RTH observation and bar collection is independent of the adaptation switch. Turning adaptation off prevents calculated ATR values from changing strategy percentages, but the current-session in-memory RTH buffer continues warming. Collection pauses outside RTH and resets when the application restarts.
 
@@ -133,22 +133,24 @@ This is not a historical-volatility model and does not predict future movement.
 
 ## Optional hard risk limits
 
-The master is off by default. A numeric zero disables the corresponding limit.
+The master is off by default and controls loss, cycle-count, minimum-price, and gap limits. The spread ceiling is independent of this master. A numeric zero disables the corresponding limit.
 
 ### Loss limits
 
-- maximum completed application net loss for the selected ticker during the current stored date scope;
-- maximum completed application net loss across stored tickers during that scope.
+- maximum completed application net loss for the selected ticker/conId;
+- maximum completed application net loss across stored tickers.
+
+Both daily queries select the current UTC date from each completed cycle’s `updated_at` field; they are not exchange-local trading-day calculations. Contract-specific queries include legacy same-ticker rows without a conId and exclude another positive conId.
 
 The values come from local completed cycles in the database's single contract currency, not real-time account P/L. Open losses, unrelated trades, FX, financing, and broker adjustments are outside the calculation. A commission reported in another currency is retained for audit but excluded from local net P/L, and Auto-repeat is disabled because no FX conversion is performed.
 
 ### Completed-cycle cap
 
-The persisted field name is `max_cycles_per_ticker_day`, but current runtime behavior treats it as a total completed-cycle cap for the selected ticker, not a per-day count. Zero disables it. When the cap is reached after a completed SELL, auto-repeat stops without creating another cycle.
+The persisted field name is `max_cycles_per_ticker_day`, but current runtime behavior treats it as a total completed-cycle cap for the selected ticker/conId, not a per-day count. Zero disables it. When the cap is reached after a completed SELL, auto-repeat stops without creating another cycle.
 
 ### Consecutive-loss cap
 
-Counts consecutive completed application cycles with negative net P/L. Zero disables it.
+Counts consecutive completed application cycles for the selected ticker/conId with negative net P/L, inspecting up to the latest 100 completed cycles. Legacy same-ticker rows without a conId remain included. Zero disables it.
 
 ### Spread limit
 
@@ -172,13 +174,13 @@ Blocks a BUY below the configured selected-price floor. Zero disables it.
 
 ### Application-owned long quantity
 
-A new app cycle is blocked when local persisted fills show unsold shares created by the application, unless the cycle was marked manually handled.
+A new app cycle is blocked when local persisted fills show unsold shares created by the application for the selected ticker/conId, including legacy same-ticker rows without a conId, unless the cycle was marked manually handled. A different positive conId is excluded from that quantity calculation; it does not permit replacing another unresolved active cycle.
 
 An account-wide external long position does not block a new app BUY. This prevents unrelated manual holdings from stopping the strategy, but it does not create broker-side lot separation.
 
 ### Exact order-reference ownership
 
-The `IBKRBOT|` prefix identifies the application family but is not sufficient ownership proof when multiple installations share one account or Master API feed. Cancel, recovery, callback, and error attribution require the complete `OrderRef` to exactly match a value already persisted by this installation. Unmatched prefixed orders remain unowned diagnostics and cannot change the active cycle. Losing the local database can therefore require manual recovery rather than broad prefix-based cancellation.
+The `IBKRBOT|` prefix identifies the application family but is not sufficient ownership proof when multiple installations share one account or Master API feed. Cancel, recovery, callback, and error attribution require the complete `OrderRef` to exactly match a value already persisted by this installation. Unmatched prefixed orders remain unowned diagnostics and cannot change the active cycle. Cancellation also requires the exact broker order to belong to the current API client and any supplied order ID to match. Losing the local database can therefore require manual recovery rather than broad prefix-based cancellation.
 
 ### One app SELL at a time
 
@@ -212,9 +214,9 @@ Stop, exit, and Reconciliation derive market-close quantity from the persisted a
 
 ## Saved ATR is not market-data freshness
 
-Starting in v4.0.0, a validated ready ATR estimate is checkpointed in the existing SQLite `app_settings` table for the exact confirmed contract, currency, venue, trading/data profile, ATR period, and bar duration. At a verified open RTH session, that estimate can supply the starting ATR/ATR% while current-session bars warm up. It does not insert synthetic observations or make a quote fresh. The first ready current-session calculation replaces it. The GUI identifies the saved session and today's observed bar count.
+A validated ready ATR estimate is checkpointed in the existing SQLite `app_settings` table for the exact confirmed contract, currency, venue, trading/data profile, ATR period, and bar duration. At a verified open RTH session, that estimate can supply the starting ATR/ATR% while current-session bars warm up. It does not insert synthetic observations or make a quote fresh. The first ready current-session calculation replaces it. The GUI identifies the saved session and today's observed bar count.
 
-The seed must be no more than seven calendar days old and must contain finite positive, internally consistent values observed inside its recorded RTH window. Weekends and short holidays can therefore reuse the most recent observed session; the application does not guess missing exchange sessions. First use, an expired/corrupt/mismatched checkpoint, or a changed ATR period/bar duration without a matching checkpoint retains normal warmup. v3.9.0 did not store these checkpoints, so the first v4.0.0 session needs enough observations once. A same-session application/watchdog restart can also reuse a valid checkpoint. Current market-data, opening-delay, RTH, gap, spread, two-observation SELL, and broker-reconciliation guards still apply. A saved estimate is not evidence that today's volatility is unchanged.
+The seed must be no more than seven calendar days old and must contain finite positive, internally consistent values observed inside its recorded RTH window. Weekends and short holidays can therefore reuse the most recent observed session; the application does not guess missing exchange sessions. First use, an expired/corrupt/mismatched checkpoint, or a changed ATR period/bar duration without a matching checkpoint retains normal warmup. A database from before checkpoint support also needs normal warmup until a valid estimate has been saved. A same-session application/watchdog restart can also reuse a valid checkpoint. Current market-data, opening-delay, RTH, gap, spread, two-observation SELL, and broker-reconciliation guards still apply. A saved estimate is not evidence that today's volatility is unchanged.
 
 ## Risk and Timing edits before the next order
 
@@ -228,3 +230,9 @@ Reviewed guards can be edited during an active cycle. Edits are saved as explici
 | Optional close-before-RTH liquidation policy | Existing restrictions remain; Stage-4 changes that would change cancellation/liquidation of a working SELL stay locked. |
 
 A working Stage-2 BUY retains its original partial-fill, safety-cancellation, and cutoff policy. A working Stage-4 SELL also retains its submitted terms. Quote-guard changes clear any first Stage-3 confirmation, so the next SELL requires fresh confirmation under the revised policy. BUY-only edits cannot retrospectively alter an already purchased position. Previously saved edits survive an application restart; reverting an edit clears the pending override. No change is made to the default values or trading formulas.
+
+## v5.0.0 entry evidence
+
+The BUY spread ceiling and its numeric validation are independent of the hard-risk master. Whenever the ceiling is nonzero, a valid fresh bid/ask book is required even if the separate stale-data toggle is off. When stale-data protection is enabled, the selected price basis and each quote side are checked independently; settings edits and partial-BUY remainder supervision use the same evidence. A recent ticker/size event cannot refresh an old price field.
+
+The weekday RTH fallback and timezone substitution have been removed. Missing authoritative contract-session evidence blocks RTH-restricted submissions and produces no guessed session hours or countdown. A substantive terminal partial-BUY rejection disables automatic repetition while the acquired position continues to be managed.

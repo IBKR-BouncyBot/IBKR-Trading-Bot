@@ -10,7 +10,7 @@ All strategy orders receive an `OrderRef` beginning with:
 IBKRBOT|
 ```
 
-The suffix identifies cycle/side intent. The prefix alone is not ownership proof when several portable installations share a Master API feed. Recovery, cancellation, and callback attribution require the complete `OrderRef` to exactly match a reference already persisted by that installation. Unmatched prefixed orders are left unowned and are never assigned to the active cycle. Manual orders must not reuse an app reference.
+The suffix identifies cycle/side intent. The prefix alone is not ownership proof when several portable installations share a Master API feed. Recovery, cancellation, and callback attribution require the complete `OrderRef` to exactly match a reference already persisted by that installation. Unmatched prefixed orders are left unowned and are never assigned to the active cycle. Cancellation additionally requires the exact broker order to belong to the currently connected API client, and a supplied order ID must match. Manual orders must not reuse an app reference.
 
 ## Before any new BUY
 
@@ -32,7 +32,7 @@ The controller requires, as applicable:
 
 The controller returns the first fail-closed blocker to the submission path while the GUI can display the complete evaluated list.
 
-If one of these checks blocks the action before an order intent is written, the cycle returns to Stage 1 with BUY status `PreflightBlocked`. `SubmitFailed` is reserved for a live submission attempt that raises before broker acceptance can be confirmed. A preflight blocker is enforced on every cadence while its audit representation is coalesced per cycle with stable blocker reason codes: expected waits use INFO entry/15-minute summaries, hard blockers use immediate WARN plus one-minute/five-minute WARN summaries, and successful submission records one recovery event.
+If one of these checks blocks the action before an order intent is written, the cycle returns to Stage 1 with BUY status `PreflightBlocked`. `SubmitFailed` describes a definite pre-transmission failure. An exception during or after the broker submission attempt instead retains the exact order identity as `SUBMISSION_UNKNOWN` and requires manual reconciliation. A preflight blocker is enforced on every cadence while its audit representation is coalesced per cycle with stable blocker reason codes: expected waits use INFO entry/15-minute summaries, hard blockers use immediate WARN plus one-minute/five-minute WARN summaries, and successful submission records one recovery event.
 
 An account-wide external stock position is not part of this BUY block. Only the local unsold quantity reconstructed from application fills is considered.
 
@@ -55,10 +55,10 @@ For a positive BUY trail, the adapter creates a BUY trailing-stop order with:
 - whole-share total quantity;
 - configured trailing percent;
 - explicit initial trail stop;
-- `TIF=GTC`;
+- configured time in force, normally `GTC`;
 - `outsideRth=False`;
 - app `OrderRef`;
-- account set only when an explicit override is configured.
+- explicit persisted cycle account, including an account resolved from a single managed-account selection.
 
 The controller chooses a stop reference at or above visible ask/last/selected values. When IBKR advertises market rules, the adapter selects the rule for the requested route, requests its price bands, and rounds the stop upward to the increment applicable at that price. The quantity sizing price is normalized independently because a slippage adjustment can cross a market-rule boundary. If the advertised rule cannot be resolved or loaded, submission is blocked. Contract `minTick` is used only when no market rule is advertised.
 
@@ -70,7 +70,7 @@ When BUY trail is zero, the drop condition produces a market BUY rather than a n
 
 ### Acceptance and persistence
 
-Before transmission the application creates a database backup. After the adapter returns a submission handle, the controller records the reported IDs, reference, status, payload, and cycle stage. A submission failure rolls the logical cycle back to the waiting stage because the application must not claim an unconfirmed active order.
+Before transmission the application durably records the order intent and creates a database backup. After the adapter returns a submission handle, the controller records the reported IDs, reference, status, payload, and cycle stage. A definite pre-transmission failure may roll the logical cycle back to its waiting stage. An exception during or after `placeOrder` leaves the exact reference and any returned IDs stored as `SUBMISSION_UNKNOWN`, with the cycle in `MANUAL_REVIEW` and recovery required. An empty open-order response does not prove that the order was never sent; automatic retry remains blocked until the uncertainty is resolved.
 
 ### What-if validation
 
@@ -90,7 +90,7 @@ Order-status polling, execution callbacks, commission callbacks, and recent-exec
 
 Order status can expose cumulative filled quantity before individual execution IDs arrive. BouncyBot stores a stable residual cumulative placeholder for only the unrepresented quantity and commission. As real execution callbacks arrive, the placeholder shrinks and is deleted when the callback ledger fully represents the broker cumulative total. This prevents both lost fills and double counting.
 
-After the first positive BUY fill:
+When a BUY reports a positive partial fill while still nonterminal:
 
 1. the cycle remains in Stage 2 and starts a fixed 3.0-second grace period;
 2. the original marketable BUY is allowed to finish normally during that grace;
@@ -103,15 +103,17 @@ The timeout is measured from the first positive fill and is not reset by later p
 
 ## Protective SELL flow
 
-When enabled, the controller submits a native SELL trail after a positive BUY fill for the current unsold application-owned quantity.
+When enabled, the controller submits a native SELL trail only after the BUY is terminal with a positive filled quantity, using the settled application-owned quantity. A nonterminal partial BUY remains under remainder supervision before protection is placed.
 
 If it fills, those shares reduce the remaining app quantity. If the normal minimum-profit exit becomes eligible first, the controller:
 
-1. requests protective cancellation;
-2. records cancellation-request state;
+1. verifies the proposed final SELL’s identity, session, normalized price/quantity, and quote evidence while protection is still working;
+2. requests protective cancellation and records cancellation-request state;
 3. polls until the order is no longer working;
-4. re-evaluates protective fills;
+4. re-evaluates protective fills and revalidates replacement evidence;
 5. submits a final SELL only for the remaining quantity.
+
+An uncertain cancellation or a replacement that can no longer be validated leaves the cycle requiring recovery; it does not authorize a second SELL.
 
 No final SELL is intentionally sent while another app-created SELL may still execute for the same shares.
 
@@ -128,7 +130,7 @@ For a positive SELL trail, the adapter creates a SELL `TRAIL` order with:
 - initial stop below the confirmed executable bid used as the current SELL reference;
 - initial stop not below the minimum-profit planning floor;
 - downward rounding to the route-specific IBKR market-rule increment, with contract `minTick` fallback only when no rule is advertised;
-- `TIF=GTC`, `outsideRth=False`, app `OrderRef`, and optional explicit account.
+- configured time in force (normally `GTC`), `outsideRth=False`, app `OrderRef`, and the explicit persisted cycle account.
 
 ### Market SELL
 
@@ -162,9 +164,9 @@ Before sending it, the controller cancels any working app-created SELL and waits
 
 ## Account routing
 
-When Account is blank, order construction omits the IBKR account field. TWS/Gateway selects the account according to the connected session. When an explicit account is present, it is added to BUY, SELL, protective, market, trailing, and what-if orders.
+Before a new cycle, a blank Account is resolved only when one managed account is unambiguous. All cycle BUY, SELL, protective, market, trailing and what-if orders explicitly use the persisted cycle account. Existing exposed cycles with no account require exact owned-order/execution evidence; changing a draft account cannot redirect their orders.
 
-In live mode, an explicit account must be among the managed accounts reported by IBKR before a BUY is allowed. Blank is not an error.
+The resolved cycle account must be among IBKR managed accounts. Blank configuration remains valid only when account ownership can be resolved unambiguously; otherwise the app pauses for explicit selection or recovery.
 
 ## Broker-side versus application-side trailing
 

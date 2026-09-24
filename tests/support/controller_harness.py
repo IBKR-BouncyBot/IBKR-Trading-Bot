@@ -23,6 +23,7 @@ def permissive_strategy(*, ticker: str = "AAPL", auto_repeat: bool = False) -> S
         atr_block_new_buy_until_ready=False,
         protective_sell_enabled=False,
         hard_risk_limits_enabled=False,
+        max_spread_pct=0.0,
         block_delayed_data_in_live=False,
         what_if_check_enabled=False,
         stale_data_guard_enabled=False,

@@ -35,8 +35,8 @@ def test_real_pyinstaller_failures_and_missing_executable_still_fail():
 
 
 def test_v307_version_and_documentation():
-    assert "BouncyBot - IBKR Portable Trading Bot v4.0.0" in GUI
+    assert "BouncyBot - IBKR Portable Trading Bot v5.0.0" in GUI
     assert "# BouncyBot - an IBKR Portable Trading Bot " in README
-    assert 'version = "4.0.0"' in PYPROJECT
+    assert 'version = "5.0.0"' in PYPROJECT
     assert "v3.0.7 Windows build result handling" in ARCHIVE
     assert "v3.0.7 Windows build result handling" in DOC

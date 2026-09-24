@@ -37,7 +37,8 @@ def test_live_edit_re_evaluation_does_not_bypass_rth_guard(tmp_path: Path, monke
         atr_adaptive_enabled=False,
         atr_block_new_buy_until_ready=False,
     )
-    cycle = StrategyEngine.start_cycle(base, 1, "", 100.0, 0.0)
+    # Account binding is already complete; this case isolates the RTH edit gate.
+    cycle = StrategyEngine.start_cycle(base, 1, "SIM", 100.0, 0.0)
     cycle.last_price = 96.0
     cycle.drop_trigger_price = 90.0
     cycle.stage = Stage.WAIT_INITIAL_DROP

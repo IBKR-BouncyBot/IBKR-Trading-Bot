@@ -157,6 +157,14 @@ def _tracked_snapshot(sequence: int, *, event_age: float = 0.0, price: float = 1
         market_data_update_received_at=utc_now_iso(),
         market_data_update_age_seconds=event_age,
         market_data_event_tracking=True,
+        market_data_field_tracking=True,
+        field_update_sequences={"last": sequence, "bid": sequence, "ask": sequence},
+        field_update_age_seconds={"last": event_age, "bid": event_age, "ask": event_age},
+        selected_price_basis="last",
+        selected_price_basis_fields=["last"],
+        selected_price_basis_update_sequence=sequence,
+        selected_price_basis_age_seconds=event_age,
+        selected_price_basis_updated_in_event=True,
         upstream_connected=True,
         upstream_state="connected",
     )
@@ -348,8 +356,13 @@ def test_new_buy_and_sell_orders_are_blocked_while_upstream_is_unavailable(tmp_p
     controller.adapter = adapter
     controller.connected = True
     controller._broker_connectivity_initialized = True
+    # Pin the existing cycle identity so this test reaches the connectivity gate.
+    controller.connection.account = "SIM"
+    controller.contract = QualifiedContract(ticker="AAPL", con_id=123, raw=object())
     controller.strategy = StrategySettings(
         ticker="AAPL",
+        contract_con_id=123,
+        max_spread_pct=0.0,
         hard_risk_limits_enabled=False,
         what_if_check_enabled=False,
         stale_data_guard_enabled=False,
@@ -359,7 +372,7 @@ def test_new_buy_and_sell_orders_are_blocked_while_upstream_is_unavailable(tmp_p
         atr_block_new_buy_until_ready=False,
     )
 
-    buy_cycle = StrategyEngine.start_cycle(controller.strategy, 1, "", 100.0, 0.0)
+    buy_cycle = StrategyEngine.start_cycle(controller.strategy, 1, "SIM", 100.0, 0.0)
     buy_action = StrategyAction(
         "PLACE_BUY_MARKET",
         {"quantity": 10, "order_ref": "IBKRBOT|AAPL|CYCLE-1|BUY_MKT"},
@@ -370,7 +383,10 @@ def test_new_buy_and_sell_orders_are_blocked_while_upstream_is_unavailable(tmp_p
     assert controller.active_cycle.stage == Stage.WAIT_INITIAL_DROP
     assert "IBKR server connectivity is not confirmed" in str(controller.active_cycle.error_message)
 
-    sell_cycle = StrategyEngine.start_cycle(controller.strategy, 2, "", 100.0, 0.0)
+    # The BUY scenario was never submitted and is resolved before testing SELL.
+    buy_cycle.stage = Stage.STOPPED
+    controller.storage.upsert_cycle(buy_cycle)
+    sell_cycle = StrategyEngine.start_cycle(controller.strategy, 2, "SIM", 100.0, 0.0)
     sell_cycle.stage = Stage.WAIT_RISE_TRIGGER
     sell_cycle.buy_filled_qty = 10
     sell_cycle.avg_buy_price = 100.0
@@ -483,8 +499,13 @@ def test_submission_boundary_pumps_a_late_connectivity_event_before_place_order(
     controller.adapter = adapter
     controller.connected = True
     controller._broker_connectivity_initialized = True
+    # Pin the existing cycle identity so this test reaches the connectivity gate.
+    controller.connection.account = "SIM"
+    controller.contract = QualifiedContract(ticker="AAPL", con_id=123, raw=object())
     controller.strategy = StrategySettings(
         ticker="AAPL",
+        contract_con_id=123,
+        max_spread_pct=0.0,
         hard_risk_limits_enabled=False,
         what_if_check_enabled=False,
         stale_data_guard_enabled=False,
@@ -493,7 +514,7 @@ def test_submission_boundary_pumps_a_late_connectivity_event_before_place_order(
         atr_adaptive_enabled=False,
         atr_block_new_buy_until_ready=False,
     )
-    cycle = StrategyEngine.start_cycle(controller.strategy, 1, "", 100.0, 0.0)
+    cycle = StrategyEngine.start_cycle(controller.strategy, 1, "SIM", 100.0, 0.0)
     action = StrategyAction(
         "PLACE_BUY_MARKET",
         {"quantity": 10, "order_ref": "IBKRBOT|AAPL|CYCLE-1|BUY_MKT"},
@@ -653,8 +674,11 @@ def test_stop_side_broker_actions_are_blocked_during_upstream_outage(tmp_path, m
     controller.adapter = adapter
     controller.connected = True
     controller._broker_connectivity_initialized = True
+    # Pin the existing cycle identity so this test reaches the connectivity gate.
+    controller.connection.account = "SIM"
+    controller.contract = QualifiedContract(ticker="AAPL", con_id=123, raw=object())
 
-    cycle = StrategyEngine.start_cycle(StrategySettings(ticker="AAPL"), 1, "", 100.0, 0.0)
+    cycle = StrategyEngine.start_cycle(StrategySettings(ticker="AAPL", contract_con_id=123), 1, "SIM", 100.0, 0.0)
     cycle.stage = Stage.WAIT_RISE_TRIGGER
     cycle.buy_filled_qty = 10
     cycle.avg_buy_price = 100.0

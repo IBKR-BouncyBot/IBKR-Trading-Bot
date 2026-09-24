@@ -93,6 +93,7 @@ def _controller_with_cycle(tmp_path, monkeypatch, is_open: bool):
         initial_drop_pct=5.0,
         buy_rebound_trail_pct=2.0,
         hard_risk_limits_enabled=False,
+        max_spread_pct=0.0,  # Isolate RTH/rounding from the independent spread guard.
         block_delayed_data_in_live=False,
         stale_data_guard_enabled=False,
         volatility_filter_enabled=False,
@@ -117,6 +118,7 @@ def test_strategy_edit_does_not_bypass_rth_guard_when_market_closed(tmp_path, mo
         initial_drop_pct=5.0,
         buy_rebound_trail_pct=2.0,
         hard_risk_limits_enabled=False,
+        max_spread_pct=0.0,  # Isolate RTH/rounding from the independent spread guard.
         block_delayed_data_in_live=False,
         stale_data_guard_enabled=False,
         volatility_filter_enabled=False,
@@ -142,6 +144,7 @@ def test_strategy_edit_places_order_when_same_condition_is_rth_open(tmp_path, mo
         initial_drop_pct=5.0,
         buy_rebound_trail_pct=2.0,
         hard_risk_limits_enabled=False,
+        max_spread_pct=0.0,  # Isolate RTH/rounding from the independent spread guard.
         block_delayed_data_in_live=False,
         stale_data_guard_enabled=False,
         volatility_filter_enabled=False,

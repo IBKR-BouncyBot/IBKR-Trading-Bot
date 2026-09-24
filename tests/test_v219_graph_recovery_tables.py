@@ -6,9 +6,9 @@ PYPROJECT = Path("pyproject.toml").read_text(encoding="utf-8")
 
 
 def test_v219_version_package_metadata_are_current():
-    assert "BouncyBot - IBKR Portable Trading Bot v4.0.0" in GUI
+    assert "BouncyBot - IBKR Portable Trading Bot v5.0.0" in GUI
     assert "# BouncyBot - an IBKR Portable Trading Bot " in README
-    assert 'version = "4.0.0"' in PYPROJECT
+    assert 'version = "5.0.0"' in PYPROJECT
     assert Path("docs/legacy/V2_20_RECOVERY_GRAPH_RECOVERY_UI.md").exists()
 
 
@@ -50,4 +50,8 @@ def test_general_tables_use_content_based_column_sizing_without_forced_stretch()
     assert "horizontal_scroll: Any = Qt.ScrollBarAsNeeded" in helper
     assert "table.setHorizontalScrollBarPolicy(horizontal_scroll)" in helper
     assert "QHeaderView.Stretch" not in helper
-    assert "_auto_size_table_columns(self.recovery_compare_table" in GUI
+    assert "_auto_size_table_columns(self.recovery_compare_table" not in GUI
+    recovery = GUI[GUI.index("def _build_recovery") : GUI.index("def _recovery_resume_clicked")]
+    assert "header.setSectionResizeMode(0, QHeaderView.ResizeToContents)" in recovery
+    assert "header.setSectionResizeMode(column, QHeaderView.Stretch)" in recovery
+    assert "self.recovery_compare_table.fit_rows()" in GUI

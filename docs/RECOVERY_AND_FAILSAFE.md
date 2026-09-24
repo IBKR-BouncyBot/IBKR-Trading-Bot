@@ -13,7 +13,7 @@ Recovery reconciles local application state with app-owned broker facts after st
 7. **Probe freshness matters.** A recovery probe is a point-in-time snapshot. A newer terminal broker poll for the same app order supersedes an older working-order row; a later probe that still reports the order remains authoritative and visible.
 8. **Guards are not recovery faults.** ATR warmup, spread/session/data guards, and ordinary strategy waits do not expose broker-changing recovery actions unless an independent order, position, or state mismatch also exists.
 9. **Connectivity has two layers.** A live local API socket does not prove that Gateway/TWS is connected to IBKR servers. Upstream loss invalidates quote freshness and pauses broker/strategy activity.
-10. **Cached quote fields are evidence, not fresh events.** Only a newly delivered ticker event can refresh quote age or drive waiting stages/ATR.
+10. **Cached quote fields are evidence, not fresh events.** Only a newly delivered ticker event whose relevant price field or quote basis actually updated can refresh that field’s age or drive waiting stages/ATR.
 11. **Exact contract and currency identity are durable.** Recovery requires the stored positive conId to resolve to the same USD/EUR ordinary STK contract, and the active cycle must agree with the database's one-currency lock.
 
 ## Startup behavior
@@ -79,7 +79,9 @@ The controller does not cancel a native order solely because connectivity was in
 
 For the live adapter, an active cycle without a positive stored conId cannot be resumed automatically. Qualification must return the same conId, contract currency, ordinary `STK` type, and SMART route. A mismatch or a database currency-lock conflict moves the cycle to `MANUAL_REVIEW` or blocks recovery rather than searching by symbol or rewriting the stored identity.
 
-For a recognized U.S. primary exchange, the legacy New York RTH fallback remains available when IBKR session metadata cannot be read. A non-U.S. or unknown contract requires usable `liquidHours` and `timeZoneId`; missing metadata fails closed. BouncyBot does not assign U.S. hours to an EUR contract. For `LSE` and `LSEETF`, the effective boundary is additionally capped at the verified 08:00-16:30 `Europe/London` continuous session so recovery and pre-close replacement logic do not treat a later broker auction/post-continuous endpoint as ordinary RTH.
+Older cycles using automatic account selection may have a blank stored account. Recovery can read their original persisted `Fill(...)` evidence without executing that text, verifying its execution ID, exact owned OrderRef and contract against the local records. The proven account must still agree with the configured account when present and belong to the current broker's managed accounts. Conflicting evidence or unavailable proof keeps recovery blocked; a sole managed account or matching account-wide position is insufficient proof of historical ownership. This compatibility check does not reconstruct missing fills, change quantities or automatically clear a previously persisted `MANUAL_REVIEW` state. Preserve an audit bundle when an earlier failed attempt already moved the cycle into manual review; the prior stage must not be guessed.
+
+Every contract requires usable IBKR ContractDetails `liquidHours` and `timeZoneId` for RTH-restricted submissions; missing or unusable metadata fails closed. This schedule comes from contract metadata, not price ticks. BouncyBot does not guess a weekday session or substitute a timezone, and the GUI shows no estimated hours or countdown when an authoritative window is unavailable. For `LSE` and `LSEETF`, the effective boundary is additionally capped at the verified 08:00-16:30 `Europe/London` continuous session so recovery and pre-close replacement logic do not treat a later broker auction/post-continuous endpoint as ordinary RTH.
 
 The database contains only one contract currency. BouncyBot does not convert P/L, risk limits, reinvestment, or commissions through FX. A commission received in another currency is retained for audit, excluded from local net P/L, and disables Auto-repeat for that cycle.
 
@@ -87,7 +89,7 @@ The database contains only one contract currency. BouncyBot does not convert P/L
 
 Depending on stage and availability, recovery examines:
 
-- open orders with `IBKRBOT|` references;
+- open orders whose complete `IBKRBOT|` references match locally persisted ownership;
 - order IDs, permanent IDs, action, quantity, and status;
 - recent executions and execution IDs;
 - duplicate/replayed execution callbacks and commission-before-execution ordering;
@@ -166,6 +168,14 @@ It does not:
 
 Confirm broker state before using it. When the app probe is not current, the confirmation is an explicit manual override and requires independent TWS verification.
 
+### Historical cycles blocking Start
+
+A completed or stopped cycle can remain unresolved when its stored order status is nonterminal or its fills leave shares unsold. Completion alone does not prove the broker order and position are settled. Multiple unresolved cycles continue to block Start and new orders; the status message identifies their cycle numbers, tickers and stages.
+
+**Review historical blockers** is a separate Reconciliation action for these historical cycles. Inspect their audit logs and independently verify the exact IBKR orders, executions and remaining shares first. Recorded totals may be incomplete. If the cycle was handled outside the app, select it and explicitly acknowledge that handling; **No** is the default. The worker checks the exact cycle ID and the confirmed snapshot again before recording the decision, rejecting changed or stale selections.
+
+This records an operator responsibility transfer using the existing `MANUALLY_HANDLED` audit decision. It does not repair fills, cancel orders, sell shares, change the active cycle or automatically resume trading. The ordinary **Mark manually handled** action still targets the current recovery cycle; do not use it to clear a different historical blocker. After resolving all actual discrepancies, Start remains an explicit action subject to the usual broker, ownership and data checks.
+
 ## Close-before-RTH recovery
 
 The workflow state and both order identities are persisted. After an explicit startup/reconnect reconciliation:
@@ -182,7 +192,7 @@ A restart does not waive the RTH requirement. If cancellation is confirmed only 
 
 ### Cancel visible app-owned orders
 
-Cancellation targets only app-owned order references. A cancellation request is not treated as complete until status indicates the order is no longer working.
+Cancellation targets only exact app-owned order references, verifies ownership by the current API client, and checks the supplied order ID when present. A cancellation request is not treated as complete until status indicates the order is no longer working.
 
 ### Market-close app quantity
 
@@ -195,6 +205,8 @@ These choices intentionally transfer responsibility to the operator. Native orde
 ### Clean shutdown
 
 Normal worker shutdown writes an audit event and requests a database backup. Closing the main window routes through the stop-choice dialog rather than silently terminating an active strategy. A terminal cycle with no visible app order and no unsold app-ledger quantity is safe to exit without an unnecessary active-order/SELL warning.
+
+A resume checkpoint can preserve unchanged accepted account/session/contract identity while multiple unresolved cycles block trading. A worker-rejected checkpoint is not retried through the direct fallback; an unavailable-worker fallback applies the same identity checks before writing.
 
 Before an accepted exit, the app atomically checkpoints the latest connection/strategy drafts and current cycle. A controlled Windows update restart, sign-out, or orderly shutdown invokes that same checkpoint through Qt session management without asking the operator to choose a stop action. This is equivalent to **Exit app and resume/recover later**: it sends no cancel, SELL, or local-stop command, does not re-evaluate the stored quote, and leaves the stored cycle available for explicit recovery on the next start. The worker is not stopped inside the session callback, so a cancelled Windows shutdown leaves the app operational.
 
@@ -229,3 +241,11 @@ Manual review is required when facts are incomplete or conflicting, for example:
 - no fresh post-recovery ticker event is arriving after the broker reports connectivity restored.
 
 Do not resolve these by editing SQLite. Preserve the audit bundle and use broker records/TWS order history.
+
+## v5.0.0 uncertain orders and exact recovery
+
+`SUBMISSION_UNKNOWN` means an order might have reached IBKR. Its exact reference and any returned IDs remain stored with `MANUAL_REVIEW`/`recovery_required`. Reconnect or an empty open-order response does not prove absence and cannot enable automatic retry. Use Reconciliation to inspect exact owned orders, completed orders/executions and position before any operator resolution. Mark manually handled only after the broker exposure has actually been dealt with.
+
+Recovered terminal partial SELLs stay incomplete. Holdings must be sufficient for reconciled app-owned unsold quantity in the exact account/conId; unrelated extra holdings do not invalidate recovery. Legacy blank accounts with exposure require unambiguous owned broker evidence. A new ticker cannot replace an unresolved cycle. Late fills for replaced references update the ledger and may require cancellation/reconciliation of an oversized owned replacement.
+
+Configured protection that is absent, uncertain, or cancelled without a feasible replacement is a recovery condition. This does not close or insure the shares. Protective handoffs check normalized order feasibility before cancellation and require subsequent confirmation/revalidation.

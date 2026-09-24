@@ -4,7 +4,9 @@
   <img src="Images/BouncyBot_logo.png" alt="BouncyBot logo" width="640" />
 </p>
 
-**Current release: v4.0.0**
+**Current release: v5.0.0**
+
+Version 5.0.0 adds targeted broker/recovery safeguards, authoritative RTH handling, background audit loading and complete post-SELL market context, and migrates source launch/build tooling to standard CPython 3.14.x. See the [release and upgrade notes](docs/V5_0_0_TRADING_SAFETY_AND_PYTHON314.md) and [measured verification report](IMPLEMENTATION_TEST_REPORT.txt), including the outstanding native Windows/Python 3.14 checks.
 
 ![Simple-view](Images/Trading-Simple-view.png)
 
@@ -88,7 +90,7 @@ The actual average BUY fill is the profit reference. Without the optional slippa
 
 ```text
 minimum initial SELL stop = average BUY fill × (1 + minimum profit % / 100)
-required last price = minimum initial SELL stop / (1 - SELL trail % / 100)
+required rise-trigger price = minimum initial SELL stop / (1 - SELL trail % / 100)
 ```
 
 The final SELL is not submitted merely because a selected convenience price reaches the required level. The current bid and ask must each be independently fresh, complete, non-crossed, and within the configured maximum spread; the executable SELL-side bid must confirm the rise trigger on two consecutive distinct quote updates. The same quote identity is revalidated immediately before the durable order intent and again immediately before broker submission. A stale Last exposed by a different ticker-field update cannot arm the exit. This remains a gross planning threshold before commissions and actual market-order slippage; it is not a profit guarantee.
@@ -101,7 +103,7 @@ A positive SELL trail creates a native SELL `TRAIL` order. A zero SELL trail cre
 
 The optional **Cancel SELL trail and liquidate before close** policy is off by default and uses the contract's date-specific RTH close. In Stage 4, the app starts the workflow at the configured number of minutes before close, requests cancellation of the final native SELL trail, waits for a terminal broker state, recalculates the remaining app-owned quantity from the idempotent execution ledger, and submits one `DAY` market SELL with `outsideRth=False`. A fill during the cancellation race is recorded normally; a partial trail fill reduces the replacement quantity. The market exit can fill below the trailing stop and can realize a loss. If cancellation is not confirmed before close, no second SELL is submitted. If cancellation succeeds but the replacement cannot be submitted or completed before close, the cycle moves to an error/manual-review state rather than submitting outside RTH.
 
-An optional protective SELL trail can be submitted immediately after a BUY fill. When the normal minimum-profit exit becomes eligible, the application first requests cancellation of the protective order and waits for confirmation before submitting the final SELL. This prevents two application-created SELL orders from intentionally working for the same shares at once.
+An optional protective SELL trail can be submitted after the BUY becomes terminal and its acquired quantity is reconciled. It is not placed on the first partial fill while the BUY remainder is still working. When the normal minimum-profit exit becomes eligible, the application validates the replacement, requests cancellation of the protective order, waits for confirmation, and revalidates before submitting the final SELL. Failed or uncertain protection becomes a visible recovery condition; separate cancellation and submission cannot guarantee uninterrupted protection.
 
 ### Broker price validation and rejection handling
 
@@ -172,11 +174,11 @@ ATR adaptation is enabled by default. Minimum profit is adapted by default; prot
 
 RTH observations and diagnostic ATR bars are collected even while adaptation is disabled. In that state the GUI can show warmup/readiness, but no strategy percentage is changed. Collection pauses outside RTH. The observation buffer is held in memory for the current application session and is reset when the process restarts; it is not a broker historical-bar cache.
 
-Starting in v4.0.0, a validated ready ATR estimate is checkpointed in the existing SQLite `app_settings` table for the exact confirmed contract, currency, venue, trading/data profile, ATR period, and bar duration. At a verified open RTH session, that estimate can supply the starting ATR/ATR% while current-session bars warm up. It does not insert synthetic observations or make a quote fresh. The first ready current-session calculation replaces it. The GUI identifies the saved session and today's observed bar count.
+A validated ready ATR estimate is checkpointed in the SQLite `app_settings` table for the exact confirmed contract, currency, venue, trading/data profile, ATR period, and bar duration. At a verified open RTH session, that estimate can supply the starting ATR/ATR% while current-session bars warm up. It does not insert synthetic observations or make a quote fresh. The first ready current-session calculation replaces it. The GUI identifies the saved session and today's observed bar count.
 
-ATR continues updating in memory throughout RTH. In the corrected v4.0.0 release, checkpoints are saved only in the **last five minutes of the broker-reported RTH window** (at most once per minute), with a final session-close flush and an **orderly app-close save**. The five minutes control saving, not the ATR lookback. There are no routine intraday checkpoint writes. Transient RTH-status loss and midday identity/configuration edits do not force a save. After a crash before the closing window, the last previously saved valid estimate is reused, not necessarily today's latest intraday value; first use still warms up if no valid checkpoint exists. Failed final saves retry at a bounded one-minute interval. Existing v4.0.0 checkpoints remain compatible.
+ATR continues updating in memory throughout RTH. Checkpoints are saved only in the **last five minutes of the broker-reported RTH window** (at most once per minute), with a final session-close flush and an **orderly app-close save**. The five minutes control saving, not the ATR lookback. There are no routine intraday checkpoint writes. Transient RTH-status loss and midday identity/configuration edits do not force a save. After a crash before the closing window, the last previously saved valid estimate is reused, not necessarily today's latest intraday value; first use still warms up if no valid checkpoint exists. Failed final saves retry at a bounded one-minute interval. Existing v4.0.0 checkpoints remain compatible.
 
-The seed must be no more than seven calendar days old and must contain finite positive, internally consistent values observed inside its recorded RTH window. Weekends and short holidays can therefore reuse the most recent observed session; the application does not guess missing exchange sessions. First use, an expired/corrupt/mismatched checkpoint, or a changed ATR period/bar duration without a matching checkpoint retains normal warmup. v3.9.0 did not store these checkpoints, so the first v4.0.0 session needs enough observations once. A same-session application/watchdog restart can also reuse a valid checkpoint. Current market-data, opening-delay, RTH, gap, spread, two-observation SELL, and broker-reconciliation guards still apply. A saved estimate is not evidence that today's volatility is unchanged.
+The seed must be no more than seven calendar days old and must contain finite positive, internally consistent values observed inside its recorded RTH window. Weekends and short holidays can therefore reuse the most recent observed session; the application does not guess missing exchange sessions. First use, an expired/corrupt/mismatched checkpoint, or a changed ATR period/bar duration without a matching checkpoint retains normal warmup. A database from before ATR checkpoint support also requires normal warmup until its first valid estimate is saved. A same-session application/watchdog restart can reuse a valid checkpoint. Current market-data, opening-delay, RTH, gap, spread, two-observation SELL, and broker-reconciliation guards still apply. A saved estimate is not evidence that today's volatility is unchanged.
 
 ### Gateway connectivity and quote freshness
 
@@ -200,11 +202,13 @@ After upstream restoration, normal processing remains paused until the applicati
 
 ### Entry and market-data guards
 
-The controller evaluates configured blockers before a BUY is transmitted. The top-right **Trading** status shows a compact blocker summary; its tooltip lists all currently evaluated blockers. Depending on configuration and runtime state, blockers include:
+The controller evaluates configured blockers before a BUY is transmitted. The top **Trading** status shows a compact blocker summary; its tooltip lists all currently evaluated blockers.
 
-The regular-session open/close window comes from the exact qualified IBKR contract's date-specific `liquidHours` and `timeZoneId`. For `LSE` and `LSEETF`, BouncyBot intersects that broker window with the verified 08:00-16:30 `Europe/London` continuous session, so ordinary timing-sensitive orders do not use a later auction/post-continuous `liquidHours` endpoint. An IBKR holiday or earlier close still wins. The same effective boundaries drive the first-minutes, last-minutes, cancel-before-close, and RTH-only ATR controls. The weekday 09:30-16:00 New York fallback is retained only for recognized U.S. equity primary exchanges. A non-U.S. contract with missing or invalid session metadata fails closed instead of inheriting U.S. hours.
+The regular-session open/close window comes from the exact qualified IBKR contract's date-specific `liquidHours` and `timeZoneId`. For `LSE` and `LSEETF`, BouncyBot intersects that broker window with the verified 08:00-16:30 `Europe/London` continuous session, so ordinary timing-sensitive orders do not use a later auction/post-continuous `liquidHours` endpoint. An IBKR holiday or earlier close still wins. The same effective boundaries drive the first-minutes, last-minutes, cancel-before-close, and RTH-only ATR controls. RTH comes from IBKR contract-session metadata, not price ticks. Guessed weekday hours and timezone substitutions have been removed. Missing or invalid authoritative session metadata blocks RTH-restricted submissions for every contract; the GUI does not invent session hours or a countdown.
 
 When a BUY is prevented before any live order is submitted, the cycle records `PreflightBlocked` rather than `SubmitFailed`. Persistent preflight, reconnect, Stage-3 quote-evidence, close-before-RTH, and native-order waiting conditions are coalesced into a condition-entry event, bounded periodic summaries, and one recovery event instead of one SQLite audit row per controller cadence. The safeguards themselves remain evaluated and enforced on every cadence, and safety-critical rejections, quantity mismatches, worker/storage faults, reconciliation failures, and confirmed pre-submission SELL revalidation failures remain immediate.
+
+Depending on configuration and runtime state, blockers include:
 
 - a disconnected local API socket, lost Gateway-to-IBKR server link, or incomplete post-reconnect reconciliation;
 - no actual post-connect/post-recovery ticker event, or missing, invalid, cached-only, or stale selected price;
@@ -224,7 +228,7 @@ Expected guard/session pauses are displayed as caution states. **Red is reserved
 
 ### Optional account routing
 
-The Account field is optional. When it is blank, the application leaves `Order.account` unset and lets TWS or IB Gateway apply the connected session’s account selection. Entering an account creates an explicit routing override; in live mode it is validated against the accounts reported by IBKR.
+The Account field is optional for a new cycle when IBKR reports one unambiguous managed account. The application resolves and persists that account before placing orders; every order remains pinned to the cycle account. With multiple managed accounts, select one explicitly. Recovering an exposed historical cycle with a blank account requires exact owned-order/execution evidence.
 
 ### Application-owned position scope
 
@@ -239,6 +243,8 @@ The Reconciliation tab compares local SQLite state with app-owned open orders, t
 1. **Refresh from IBKR/TWS** to retrieve current broker facts without placing, modifying, or cancelling an order.
 2. Compare SQLite with the returned orders, position, and executions.
 3. Choose a resolution action only after the comparison is understood.
+
+The comparison table fits all eight wrapped rows without an internal scrollbar. Its columns use the available width and its rows refit after resizing, font/style changes or data updates. If the window is too short, the page scrolls to keep the table and actions accessible. The four guided actions use a two-by-two grid; the advanced action area follows its content height.
 
 The screen shows whether the broker probe is **Not refreshed**, **Current**, **Stale**, or **Refresh failed**, including the last successful refresh time when a later attempt fails. A successful probe remains current for at most 60 seconds and only while it matches the active cycle's reconciliation-relevant stage, order, and fill facts. Ordinary price updates do not invalidate it; a disconnect, upstream outage, or reconciliation-relevant local/broker change does.
 
@@ -270,7 +276,7 @@ The market-close path waits for cancellation confirmation of a working applicati
 
 ### Market-data capture and audit tools
 
-A bounded in-memory market-data buffer supports per-fill debug capture. After a BUY or SELL fill, the capture contains up to 15 minutes before and 15 minutes after the event. The ZIP is written only after the post-event window completes; an incomplete capture is intentionally lost if the process closes early.
+A bounded in-memory market-data buffer supports per-fill debug capture. After a BUY or SELL fill, the capture contains up to 15 minutes before and 15 minutes after the event. The ZIP is written only after the post-event window completes; an incomplete capture is intentionally lost if the process closes early. A verified fill capture can contain the same instrument after Auto-repeat starts another cycle. The audit display retains those prices within the capture window, including post-SELL context, without importing the next cycle's orders or decisions. Archives without complete identity/window evidence retain strict cycle filtering.
 
 ## What the bot does not do
 
@@ -278,7 +284,7 @@ This project is intentionally limited. It does not:
 
 - trade multiple tickers or independent cycles concurrently;
 - open short positions;
-- trade options, futures, forex, bonds, crypto, funds, or non-`STK` contracts;
+- trade non-`STK` contracts, such as options, futures, forex, bonds or crypto;
 - support contract currencies other than USD and EUR, direct/non-SMART routing, or mixed-currency cycles in one portable database;
 - convert commissions, P/L, budgets, risk limits, or reinvestment between currencies;
 - manage arbitrary manual orders or orders from other software;
@@ -301,7 +307,7 @@ This project is intentionally limited. It does not:
 ### Runtime prerequisites
 
 - Windows 10 or later is the intended desktop and packaging environment.
-- Python 3.11 or newer when running from source.
+- Standard GIL-enabled CPython 3.14.x when running from source.
 - Interactive Brokers TWS or IB Gateway with API/socket access enabled.
 - An IBKR account with appropriate trading permissions.
 - Suitable real-time market data for live operation. Delayed/frozen data may be displayed, but configured guards can block live BUY orders.
@@ -310,33 +316,35 @@ This project is intentionally limited. It does not:
 
 | Package | Constraint | Purpose |
 |---|---|---|
-| `PySide6` | `>=6.7,<7` | Desktop GUI and Qt signals |
+| `PySide6` | `>=6.10.1,<7` | Desktop GUI and Qt signals |
 | `ib_async` | `>=2.1.0,<3` | IBKR TWS/Gateway socket API wrapper |
-| `tzdata` | `>=2025.2` | Time-zone data, including New York session calculations |
+| `tzdata` | `>=2025.2` | IBKR contract timezones and the London continuous-session policy |
 | `PyInstaller` | `>=6.21,<7` | Windows portable executable build |
-| `pytest` | `>=8,<9` | Automated tests |
-| `coverage` | `>=7.6,<8` | Statement, branch, and per-callable test-coverage gates |
-| `ruff` | `>=0.8,<1` | Required lint/import quality gate |
-| `pyright[nodejs]` | `>=1.1,<2` | Required type-check quality gate with bundled Node runtime where available |
+| `pytest` | `>=8.4.2,<9` | Automated tests |
+| `coverage` | `>=7.10.7,<8` | Statement, branch, and per-callable test-coverage gates |
+| `ruff` | `>=0.14,<1` | Required lint/import quality gate |
+| `pyright[nodejs]` | `>=1.1.407,<2` | Required type-check quality gate with bundled Node runtime where available |
 
-The complete local development/build set is installed from `requirements.txt`. Runtime package metadata is in `pyproject.toml`.
+The complete local development/build set is installed from `requirements.txt`. Runtime package metadata is in `pyproject.toml`. These are version constraints, not a deployment lockfile; record the exact installed versions when qualifying a build.
 
 ## Installation
 
 ### Option A — Windows launcher
 
 1. Clone or download the repository into a writable folder.
-2. Install Python 3.11 or newer. The standard Python launcher (`py`) is supported.
+2. Install standard GIL-enabled CPython 3.14.x. The standard Python launcher (`py`) is supported.
 3. Double-click `run_dev.bat` from the project root.
 
 The launcher creates `.venv` if needed, upgrades `pip`, installs `requirements.txt`, clears test-only environment variables, and starts the GUI. Its `ExecutionPolicy Bypass` setting applies only to that PowerShell process; it does not change the machine-wide PowerShell policy.
+
+An older `.venv` is rejected before package changes. With the app closed, retain your database/backups and rename the old environment to `.venv-pre-5`, then let the launcher create a standard Python 3.14 environment. Source changes do not update the interpreter inside an existing executable; rebuild it on Windows and validate paper-broker recovery before deployment.
 
 ### Option B — command line
 
 From PowerShell in the project root:
 
 ```powershell
-py -3.11 -m venv .venv
+py -3.14 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe main.py
@@ -370,7 +378,7 @@ Host and port remain editable. The optional Start helper can launch a configured
 
 ### 1. Connect
 
-Select the TWS/Gateway profile, host, port, client ID, market-data mode, and optional account override. Click **1. Connect**. A blank account means IBKR default routing. The Connection indicator distinguishes a local socket connection from the Gateway/TWS upstream IBKR link; **Gateway only** means the local process is reachable but trading is paused because upstream connectivity is not confirmed. Contract search, ticker confirmation, and strategy start stay disabled until the upstream link is ready and any post-restoration reconciliation has completed. After an enabled local API connection is lost, BouncyBot retries every ten seconds without an attempt limit. Manual **Disconnect** and application shutdown stop those retries.
+Select the TWS/Gateway profile, host, port, client ID, market-data mode, and optional account override. Click **1. Connect**. A blank account requests automatic selection of one unambiguous managed account before a new cycle. The Connection indicator distinguishes a local socket connection from the Gateway/TWS upstream IBKR link; **Gateway only** means the local process is reachable but trading is paused because upstream connectivity is not confirmed. Contract search, ticker confirmation, and strategy start stay disabled until the upstream link is ready and any post-restoration reconciliation has completed. After an enabled local API connection is lost, BouncyBot retries every ten seconds without an attempt limit. Manual **Disconnect** and application shutdown stop those retries.
 
 ### 2. Search for a contract
 
@@ -378,7 +386,7 @@ Enter a stock symbol and use **2. Search/select ticker**. Choose the exact ordin
 
 ### 3. Confirm the ticker and price
 
-Use **3. Confirm ticker + get price**. The application rechecks the selected symbol, `conId`, currency, ordinary `STK` type, SMART route, primary exchange, supported order types, and contract session metadata before starting or refreshing market-data diagnostics. Review the selected price source, bid/ask, **actual update age**, update sequence/subscription identity, market-data type, contract minimum tick, and RTH state. The applicable market rule is resolved at order-preflight time and recorded in order diagnostics. A cached value can remain visible after an outage, but it is labelled cached-only and does not count as a fresh update.
+Use **3. Confirm ticker + get price**. The application rechecks the selected symbol, `conId`, currency, ordinary `STK` type, SMART route, primary exchange and required order capabilities. It retains IBKR session metadata for the separate RTH check; missing or unusable hours/timezone cannot declare the session open and block RTH-restricted submissions. Review the selected price source, bid/ask, **actual update age**, update sequence/subscription identity, market-data type, contract minimum tick, and RTH state. The applicable market rule is resolved at order-preflight time and recorded in order diagnostics. A cached value can remain visible after an outage, but it is labelled cached-only and does not count as a fresh update.
 
 ### 4. Configure and start
 
@@ -386,9 +394,23 @@ Review the investment amount, manual or ATR-derived percentages, protective exit
 
 The top lock button prevents accidental editing. When locked, the five workflow buttons and editable configuration controls are disabled; monitoring, tabs, history, and reconciliation views remain available.
 
-The **Trading** status is the concise source for current BUY/SELL eligibility. Hover it to see all active blockers rather than only the first one.
+The ten equal-width status boxes and lock control appear first, with the five-stage ribbon immediately below. Both rows are fixed above the tabs and remain visible while scrolling and on other tabs. The lock control retains its compact width. Long status text wraps without enlarging an individual box.
 
-Simple, Advanced, and Debug modes use the full dashboard width for **Recovery / audit log**. Workflow actions remain in the fixed five-button command bar; the former duplicate dashboard Controls panel is not shown.
+The **Trading** status is the concise source for current BUY/SELL eligibility. Hover it to see all active blockers rather than only the first one. Its top-right header value is **current displayed price / minimum-profit trigger**; reaching the trigger does not imply that quote or order-safety gates have passed. The **Position** value at the top-right is the cost of app-owned shares still held, including allocated recorded BUY commission, not market value or other account holdings. Both top-right values use the same font as their top-left titles; the main status and share quantity remain below the header. When disconnected and no account is known, the Account box shows N/A; a known saved/cycle account remains visible.
+
+The Price data monitor combines Data mode with streaming-update age and combines RTH status with UTC/system time. **Show stage details** expands Current stage and Why not moving? beneath the market metrics; these diagnostics continue updating while collapsed. The duplicate Stage metric is removed (the top Stage status and ribbon remain).
+
+**Total buy cost** in Order and position state and **Invested** in Trade history both show actual cumulative BUY quantity times average BUY fill plus recorded BUY commission. They remain the full entry cost after a SELL; the top Position cost falls as shares are sold. Unknown fill facts are not replaced by a budget, and pending commissions can change the displayed cost. Long OrderRefs wrap as exact copyable plain text, using the same card background and proportional value font in light and dark modes, with internal scrolling for unusually long references.
+
+The Strategy input map retains its sixteen values and four lanes in a shorter 420-pixel-minimum-height panel. Expanding raw API fields fills the available width: content-sized Field columns alternate with stretching Value columns.
+
+The Completed trade summary has three columns and four rows; **Average net P/L** follows **Best net P/L** and **Worst net P/L**. It is total realized net P/L divided by completed cycles, including losses and commissions. History keeps its horizontal scrollbar at the table viewport bottom even with many rows. The Invested column sorts numerically; CSV export retains its existing schema and does not gain a derived GUI-only column.
+
+In Cycle audit Timeline, each plot has an independent cursor. Hovering a plot shows its local time/price crosshair and record tooltip without drawing a cursor on the other graph. Moving to the other plot clears the previous overlay; leaving the plots or moving into the gap clears all hover guides. The single-graph Summary and other charts retain independent hover behavior; existing time-axis zoom and scrolling remain. Both lower Timeline tables retain equal height. Orders and Executions use the full available width with OrderRef absorbing spare space. Market capture starts at the top even when no capture ZIP is available; its summary and preview fill the width and scroll independently. Decision events continues to fill its tab. Opening the audit dialog starts one read-only background worker to prepare capture data and decision display rows. Timeline and Market capture share the prepared data; Decision cells and wrapped row heights are added in bounded GUI batches. Closing the dialog cancels the work and discards late results. Other record tabs remain lazy. Timeline shows only actual changes between two recorded stages; all decision events remain available in Decisions.
+
+The Cycle audit Summary details table refits when width, font/style or content changes. If wrapped rows exceed its height cap, a vertical scrollbar keeps all details accessible. Compact table sizing also reserves space for horizontal scrollbars where enabled.
+
+**Simple** hides the **Recovery / audit log**; **Advanced** and **Debug** retain it at full dashboard width. This does not hide the Reconciliation tab, disable recovery, or change audit recording. Workflow actions remain in the fixed five-button command bar; the former duplicate dashboard Controls panel is not shown.
 
 ### 5. Stop or close
 
@@ -442,13 +464,14 @@ Run:
 .\run_all_tests.bat
 ```
 
-This performs Python compilation, every collected pytest test (including the bounded soak tests) with `ResourceWarning` checks, statement and branch coverage with a 75% minimum, a generated per-callable coverage check, a seventeen-mutant safety smoke gate, all deterministic CSV simulations, Ruff, and Pyright. The Windows full-test path applies no pytest marker filter. Every effective executable callable under `app/` and in `main.py` must be entered by at least one test. Failure at any required stage produces a nonzero result.
+This verifies standard GIL-enabled CPython 3.14.x before installing dependencies or running tests, then performs Python compilation, every collected pytest test (including the bounded soak tests) with `ResourceWarning` checks, statement and branch coverage with a 75% minimum, a generated per-callable coverage check, a seventeen-mutant safety smoke gate, all deterministic CSV simulations, Ruff, and Pyright. The Windows full-test path applies no pytest marker filter. Every effective executable callable under `app/` and in `main.py` must be entered by at least one test. Failure at any required stage produces a nonzero result.
 
 The offline suite includes broker-event permutations, generated controller state sequences, numerical/payload properties, recovery decision matrices, differential simulations, crash/restart and schema-migration cases, storage fault injection, Gateway outage sequences, and multi-instance isolation. The CSV gate validates 58 explicit scenario contracts across 54 price-path files, including threshold edges, gap fills, partial fills, RTH transitions, protective exits, slippage buffers, sizing, reinvestment, and zero-trailing market-order branches. It does not launch the GUI, connect to IBKR, or use real market/account/order data. See [Deterministic offline behavior tests](docs/OFFLINE_BEHAVIOR_TESTS.md) and [production incident replay tests](docs/PRODUCTION_INCIDENT_REPLAY_TESTS.md).
 
 ### Direct Python tests
 
 ```powershell
+.\.venv\Scripts\python.exe scripts\check_python_runtime.py
 .\.venv\Scripts\python.exe -m coverage erase
 .\.venv\Scripts\python.exe -X utf8 -W error::ResourceWarning -m coverage run --branch --source=app,main -m pytest -q --tb=short -ra --disable-warnings
 .\.venv\Scripts\python.exe -m coverage report --show-missing --fail-under=75
@@ -479,7 +502,7 @@ dist\IBKRTradingBot\IBKRTradingBot.exe
 and creates the versioned release folder and final ZIP using the same naming pattern as IBKR Market Replay Lab:
 
 ```text
-release\IBKRTradingBot_4.0.0_Windows\
+release\IBKRTradingBot_5.0.0_Windows\
   BouncyBot.lnk
   GUI\IBKRTradingBot.exe
   docs\
@@ -489,7 +512,7 @@ release\IBKRTradingBot_4.0.0_Windows\
   SECURITY.md
   QUICK_START.txt
 
-release\IBKRTradingBot_4.0.0_Windows.zip
+release\IBKRTradingBot_5.0.0_Windows.zip
 release\SHA256SUMS.txt
 ```
 
@@ -498,6 +521,8 @@ To test before packaging:
 ```powershell
 .\scripts\build_windows.ps1 -RunTests
 ```
+
+`-RunTests` runs plain pytest and CSV simulations before packaging. It does not run the full coverage, callable, mutation, Ruff/Pyright or `ResourceWarning` gates above; run `run_all_tests.bat` separately for those checks.
 
 To recreate the virtual environment as part of the build:
 
@@ -513,6 +538,7 @@ The source `Images/` directory is not copied into the Windows release root. PyIn
 
 ```text
 app/
+  atr_memory.py           Validated saved RTH ATR estimates
   controller.py            Worker loop, guards, recovery, broker action execution
   flowchart_model.py       Pure flowchart/card model
   gui.py                   PySide6 interface and audit visualizations
@@ -522,11 +548,13 @@ app/
   market_data_capture.py   In-memory pre/post-fill capture manager
   models.py                Serializable models, defaults, validation, calculations
   order_diagnostics.py     Native trailing-order diagnostics
+  order_edit_policy.py     Reviewed settings edits before the next order
   paths.py                 Portable filesystem locations
   simulation.py            Deterministic simulation helpers
   storage.py               SQLite schema, persistence, backups, exports
   strategy.py              Pure five-stage state machine
   timeline_scaling.py      Audit-chart time and price scaling
+  watchdog.py              Process-replacement handoffs and restart-loop limits
 
 Images/                    BouncyBot branding, application icons, and screenshots
 docs/                      Current guides; archived release notes are under docs/legacy/
@@ -562,7 +590,10 @@ Superseded release-specific documents are indexed under [docs/legacy](docs/legac
 
 ## Release history
 
-- [v4.0.0 release note](docs/V4_0_0_ATR_SESSION_MEMORY_AND_ORDER_EDITING.md) - persisted RTH ATR starting estimates, reviewed next-order risk edits, amber LIVE profile, and non-selling exit defaults.
+- [v5.0.0 release note](docs/V5_0_0_TRADING_SAFETY_AND_PYTHON314.md) - targeted trading/recovery safeguards, standard CPython 3.14 migration, regression tests and smaller stage indicators.
+- [v4.2.0 release note](docs/legacy/V4_2_0_HEADER_AND_INDEPENDENT_TIMELINE.md) - retained header, independent-cursor and responsive-table changes.
+- [v4.1.0 release note](docs/legacy/V4_1_0_GUI_METRICS_AND_AUDIT_LAYOUT.md) - historical GUI metrics/layout and linked-crosshair release; Timeline cursor linking was removed in v4.2.0.
+- [v4.0.0 release note](docs/legacy/V4_0_0_ATR_SESSION_MEMORY_AND_ORDER_EDITING.md) - persisted RTH ATR starting estimates, reviewed next-order risk edits, amber LIVE profile, and non-selling exit defaults.
 
 - [v3.9.0 release note](docs/legacy/V3_9_0_AUDIT_DIAGNOSTIC_COALESCING.md) — stable diagnostic reason codes, bounded condition summaries, recovery events, quieter reconnect/native-order waits, and live Stage-3 quote-evidence status in the Price Data Monitor.
 - [v3.8.0 release note](docs/legacy/V3_8_0_BUY_PARTIAL_FILL_GRACE.md) — three-second marketable-BUY partial-fill grace, timeout cancellation, immediate market/session safety cancellation, restart-safe timing, and focused regressions.

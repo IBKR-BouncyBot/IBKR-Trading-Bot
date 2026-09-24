@@ -46,11 +46,11 @@ def test_restore_validation_copy_failure_is_reported_without_touching_backup(
     assert backup is not None
     original_bytes = backup.read_bytes()
 
-    def fail_copy(*args: Any, **kwargs: Any) -> None:
+    def fail_backup(*args: Any, **kwargs: Any) -> None:
         del args, kwargs
         raise OSError("injected restore-copy failure")
 
-    monkeypatch.setattr(storage_module.shutil, "copy2", fail_copy)
+    monkeypatch.setattr(storage_module._ClosingSqliteConnection, "backup", fail_backup)
     result = storage.validate_restore_candidate(backup)
 
     assert result["ok"] is False

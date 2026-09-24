@@ -123,10 +123,15 @@ _SIGNAL_NAMES = {
     "currentIndexChanged",
     "currentTextChanged",
     "customContextMenuRequested",
+    "dataChanged",
+    "destroyed",
     "history_updated",
     "itemSelectionChanged",
     "rejected",
     "returnPressed",
+    "rowsInserted",
+    "rowsRemoved",
+    "sectionResized",
     "snapshot_updated",
     "stateChanged",
     "textChanged",
@@ -288,6 +293,9 @@ class Dummy(metaclass=DummyMeta):
     def resizeEvent(self, event: Any) -> None:
         del event
 
+    def changeEvent(self, event: Any) -> None:
+        del event
+
     def paintEvent(self, event: Any) -> None:
         del event
 
@@ -305,6 +313,12 @@ class Dummy(metaclass=DummyMeta):
 
     def wheelEvent(self, event: Any) -> None:
         del event
+
+    def setToolTip(self, value: Any) -> None:
+        self._tooltip = str(value)
+
+    def toolTip(self) -> str:
+        return self.__dict__.get("_tooltip", "")
 
     def setText(self, value: Any) -> None:
         self._text = str(value)
@@ -667,7 +681,7 @@ def install_qt_stubs(root: Path) -> dict[str, types.ModuleType]:
     qtcore.Qt = QtNamespace()
     qtcore.Signal = lambda *args, **kwargs: SignalStub(*args, **kwargs)
 
-    for name in ("QAction", "QBrush", "QColor", "QFont", "QIcon", "QPainter", "QPen", "QPixmap"):
+    for name in ("QAction", "QBrush", "QColor", "QFont", "QIcon", "QPainter", "QPen", "QPixmap", "QTextOption"):
         setattr(qtgui, name, Dummy)
     qtgui.QPalette = PaletteStub
 

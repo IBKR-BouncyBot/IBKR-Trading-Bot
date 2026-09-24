@@ -7,14 +7,15 @@ NOTE = "V4_0_0_ATR_SESSION_MEMORY_AND_ORDER_EDITING.md"
 
 def test_current_metadata_and_windows_build_version():
     gui = (ROOT / "app/gui.py").read_text(encoding="utf-8")
-    assert 'APP_VERSION = "4.0.0"' in gui
-    assert 'version = "4.0.0"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert '$version = "4.0.0"' in (ROOT / "scripts/build_windows.ps1").read_text(encoding="utf-8")
-    assert "**Current release: v4.0.0**" in (ROOT / "README.md").read_text(encoding="utf-8")
+    assert 'APP_VERSION = "5.0.0"' in gui
+    assert 'version = "5.0.0"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert '$version = "5.0.0"' in (ROOT / "scripts/build_windows.ps1").read_text(encoding="utf-8")
+    assert "**Current release: v5.0.0**" in (ROOT / "README.md").read_text(encoding="utf-8")
 
 
 def test_current_note_and_archived_v390_material():
-    assert (ROOT / "docs" / NOTE).is_file()
+    assert (ROOT / "docs/legacy" / NOTE).is_file()
+    assert not (ROOT / "docs" / NOTE).exists()
     assert not (ROOT / "docs/V3_9_0_AUDIT_DIAGNOSTIC_COALESCING.md").exists()
     assert (ROOT / "docs/legacy/V3_9_0_AUDIT_DIAGNOSTIC_COALESCING.md").is_file()
     assert (ROOT / "docs/legacy/V3_9_0_IMPLEMENTATION_TEST_REPORT.txt").is_file()
@@ -23,7 +24,7 @@ def test_current_note_and_archived_v390_material():
 
 
 def test_scope_and_upgrade_are_explicit():
-    note = (ROOT / "docs" / NOTE).read_text(encoding="utf-8")
+    note = (ROOT / "docs/legacy" / NOTE).read_text(encoding="utf-8")
     assert "seven calendar days" in note
     assert "working Stage-2 BUY retains its original" in note
     assert "Existing v3.9.0 databases remain compatible" in note

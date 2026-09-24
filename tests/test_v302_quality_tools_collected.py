@@ -16,10 +16,10 @@ DOC = Path("docs/legacy/V3_0_4_QUALITY_GATE_RESULT_FIX.md").read_text(encoding="
 
 
 def test_v302_quality_tools_are_installed_with_local_requirements():
-    assert "ruff>=0.8,<1" in REQUIREMENTS
-    assert "pyright[nodejs]>=1.1,<2" in REQUIREMENTS
-    assert '"ruff>=0.8,<1"' in PYPROJECT
-    assert '"pyright[nodejs]>=1.1,<2"' in PYPROJECT
+    assert "ruff>=0.14,<1" in REQUIREMENTS
+    assert "pyright[nodejs]>=1.1.407,<2" in REQUIREMENTS
+    assert '"ruff>=0.14,<1"' in PYPROJECT
+    assert '"pyright[nodejs]>=1.1.407,<2"' in PYPROJECT
     assert "[project.optional-dependencies]" in PYPROJECT
 
 
@@ -49,7 +49,7 @@ def test_v302_run_all_tests_requires_quality_tools_after_requirements_install():
 
 def test_v302_documentation_and_version_metadata_are_current():
     assert "# BouncyBot - an IBKR Portable Trading Bot " in README
-    assert 'version = "4.0.0"' in PYPROJECT
+    assert 'version = "5.0.0"' in PYPROJECT
     assert "v3.0.4 quality-gate result handling and cleanup" in ARCHIVE
     assert "v3.0.4 quality-gate result handling and cleanup" in DOC
     assert "ruff" in DOC.lower() and "pyright" in DOC.lower()

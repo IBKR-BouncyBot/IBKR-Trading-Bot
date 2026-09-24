@@ -20,6 +20,9 @@ class _AtrStartAdapter:
     def is_connected(self):
         return True
 
+    def managed_accounts(self):
+        return ["SIM"]
+
     def set_market_data_type(self, market_data_type):
         self.market_data_type = market_data_type
 
@@ -56,6 +59,7 @@ def _atr_settings(**overrides):
         "atr_block_new_buy_until_ready": True,
         "atr_period": 14,
         "hard_risk_limits_enabled": False,
+        "max_spread_pct": 0.0,  # Isolate ATR and position guards by default.
         "block_delayed_data_in_live": False,
         "what_if_check_enabled": False,
         "stale_data_guard_enabled": False,
@@ -88,7 +92,8 @@ def test_atr_warmup_ignores_pre_ready_drop_and_uses_fresh_ready_anchor(tmp_path,
     controller_module = _install_qt_stub(monkeypatch)
     controller = controller_module.TradingController(storage=BotStorage(tmp_path / "bot_state.sqlite"))
     settings = _atr_settings(initial_drop_pct=2.0)
-    cycle = StrategyEngine.start_cycle(settings, 1, "", 100.0, 0.0)
+    # Isolate ATR transitions after routing has already been confirmed.
+    cycle = StrategyEngine.start_cycle(settings, 1, "SIM", 100.0, 0.0)
 
     controller.price_snapshot = {
         "price": 90.0,
@@ -155,8 +160,15 @@ def test_trading_status_lists_atr_and_other_active_buy_guards(tmp_path, monkeypa
         "atr_bars_required": 15,
         "atr": {"ready": False, "bars_available": 3, "bars_required": 15},
         "fields": {"bid": 99.0, "ask": 101.0, "last": 100.0},
+        "market_data_field_tracking": True,
+        "upstream_connected": True,
+        "market_data_update_sequence": 1,
+        "market_data_subscription_id": "AAPL|123|SIM",
+        "field_update_sequences": {"bid": 1, "ask": 1},
+        "field_update_age_seconds": {"bid": 0.0, "ask": 0.0},
     }
 
+    controller._api_data_invalidated = False
     status = controller._trading_status_snapshot()
 
     assert status["summary"] == "BUY blocked: ATR 3/15 +1"

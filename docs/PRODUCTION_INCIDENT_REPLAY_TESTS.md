@@ -31,13 +31,13 @@ The committed fixtures cover six observed incidents:
    - preserves IBKR `liquidHours` ending at 16:50 London time and the independently identified 16:30 continuous-session close;
    - verifies that `LSE`/`LSEETF` timing-sensitive actions use the earlier 16:30 continuous-session boundary while retaining the raw IBKR boundary for diagnostics.
 
-## Resolved incident regressions in v3.2.1
+## Retained incident regressions
 
-The three former strict expected-failure sentinels are ordinary passing regressions in v3.2.1:
+The three former strict expected-failure sentinels became ordinary regressions in v3.2.1. The current tests require:
 
 - timing-sensitive `LSE` and `LSEETF` actions use the earlier verified 08:00-16:30 `Europe/London` continuous-session boundary when IBKR `liquidHours` extends later;
 - unchanged delayed-data BUY preflight blockers use a stable per-cycle condition with category reason codes, remain enforced on every evaluation, and emit only the configured entry/persistence/recovery audit sequence; and
-- a local BUY block before broker submission records `PreflightBlocked`, while `SubmitFailed` remains reserved for an actual submission attempt that fails before acceptance can be confirmed.
+- a local BUY block before broker submission records `PreflightBlocked`, while `SubmitFailed` is reserved for a definite pre-transmit failure. A possibly transmitted order is retained as `SUBMISSION_UNKNOWN` for reconciliation rather than treated as a safe retry.
 
 The focused tests also preserve the raw IBKR boundary for diagnostics, verify that an earlier IBKR holiday/early-close boundary still wins, close cached RTH state at the effective boundary, and confirm that no order intent is written for a preflight block.
 
@@ -105,7 +105,7 @@ Run the complete repository gate normally:
 .\run_all_tests.bat
 ```
 
-The new pytest files are collected automatically, and `scripts/run_mutation_smoke.py` automatically executes all 14 mutants.
+The pytest files are collected automatically, and `scripts/run_mutation_smoke.py` executes all 17 configured mutants.
 
 ## Limits
 

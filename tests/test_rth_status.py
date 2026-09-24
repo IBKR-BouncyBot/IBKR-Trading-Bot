@@ -83,10 +83,11 @@ def test_parse_liquid_hours_split_session_gap_is_closed_but_keeps_outer_boundari
 
 
 
-def test_fallback_us_equity_rth_open_and_closed():
-    open_status = IbAsyncTwsAdapter._fallback_us_equity_rth(datetime(2026, 1, 5, 15, 0, tzinfo=timezone.utc))
-    closed_status = IbAsyncTwsAdapter._fallback_us_equity_rth(datetime(2026, 1, 5, 23, 0, tzinfo=timezone.utc))
-    assert open_status.is_open is True
-    assert closed_status.is_open is False
-    assert open_status.session_open.startswith("2026-01-05T09:30:00")
-    assert open_status.session_close.startswith("2026-01-05T16:00:00")
+def test_missing_timezone_does_not_default_to_new_york():
+    status = IbAsyncTwsAdapter._parse_liquid_hours_window(
+        "20260105:0930-1600", "", datetime(2026, 1, 5, 15, 0, tzinfo=timezone.utc)
+    )
+    assert status is not None
+    assert status.is_open is False
+    assert status.source == "contract_time_zone_invalid"
+    assert status.session_open == status.session_close == ""
