@@ -12,7 +12,7 @@ partial fills, cycle completion, and safe mid-cycle setting updates.
 from __future__ import annotations
 
 from copy import copy
-from math import floor
+from math import floor, nextafter
 from typing import Optional
 
 from .models import (
@@ -47,14 +47,14 @@ def _minimum_profit_stop_price(cycle: CycleState) -> float:
     hypothetical SELL fill worse than the stop by that buffer can still meet the
     configured minimum profit before commissions.
     """
-    return round_price(
-        minimum_sell_stop_price_for_profit(
-            avg_buy_price=cycle.avg_buy_price,
-            anchor_price=cycle.anchor_price,
-            minimum_profit_pct=cycle.rise_trigger_pct,
-            slippage_buffer_enabled=bool(getattr(cycle, "slippage_buffer_enabled", False)),
-            slippage_buffer_pct=float(getattr(cycle, "slippage_buffer_pct", 0.0) or 0.0),
-        )
+    # Keep decision precision; the GUI formats prices for display and the
+    # controller applies the contract's market-rule increments before submission.
+    return minimum_sell_stop_price_for_profit(
+        avg_buy_price=cycle.avg_buy_price,
+        anchor_price=cycle.anchor_price,
+        minimum_profit_pct=cycle.rise_trigger_pct,
+        slippage_buffer_enabled=bool(getattr(cycle, "slippage_buffer_enabled", False)),
+        slippage_buffer_pct=float(getattr(cycle, "slippage_buffer_pct", 0.0) or 0.0),
     )
 
 
@@ -65,7 +65,7 @@ def _safe_rise_trigger_price(cycle: CycleState) -> float:
     s = max(0.0, float(cycle.sell_trailing_stop_pct) / 100.0)
     if s >= 1.0:
         return float("inf")
-    return round_price(stop_price / (1.0 - s))
+    return stop_price / (1.0 - s)
 
 
 def _buy_sizing_price(cycle: CycleState, initial_buy_stop: float) -> float:
@@ -215,9 +215,12 @@ class StrategyEngine:
                 # User confirmed: reset anchor upward before initial drop is reached.
                 anchor = float(last_price)
             next_cycle.anchor_price = anchor
-            next_cycle.drop_trigger_price = round_price(anchor * (1.0 - next_cycle.initial_drop_pct / 100.0))
+            drop_trigger = anchor * (1.0 - next_cycle.initial_drop_pct / 100.0)
+            next_cycle.drop_trigger_price = round_price(drop_trigger)
 
-            if last_price <= next_cycle.drop_trigger_price:
+            # Permit only the adjacent binary float at an exact arithmetic
+            # boundary (for example 95 * 0.97 versus the quoted 92.15).
+            if last_price <= nextafter(drop_trigger, float("inf")):
                 if rth_blocked:
                     detail = rth_message or "regular trading hours are closed"
                     next_cycle.error_message = f"RTH guard: initial drop condition is met, but no BUY order will be submitted until RTH is open ({detail})."
@@ -284,20 +287,29 @@ class StrategyEngine:
                         next_cycle.stage = Stage.BUY_TRAIL_ACTIVE
 
         elif next_cycle.stage == Stage.WAIT_RISE_TRIGGER:
-            if next_cycle.avg_buy_price is None or next_cycle.buy_filled_qty <= 0:
+            if next_cycle.protective_sell_enabled and not next_cycle.protective_sell_order_ref:
+                next_cycle.stage = Stage.MANUAL_REVIEW
+                next_cycle.recovery_required = True
+                next_cycle.error_message = (
+                    "RECOVERY REQUIRED: configured protective SELL is absent for the app-owned position. "
+                    "Verify broker orders and remaining exposure before resuming."
+                )
+            elif next_cycle.avg_buy_price is None or next_cycle.buy_filled_qty <= 0:
                 next_cycle.stage = Stage.MANUAL_REVIEW
                 next_cycle.error_message = "Missing buy fill data while waiting for minimum-profit trigger."
             else:
                 next_cycle.rise_trigger_price = _safe_rise_trigger_price(next_cycle)
-                if last_price >= next_cycle.rise_trigger_price:
+                # 95 * 1.10 is one ULP above 104.5 in binary floating point.
+                # This allowance is not a tick-size or display-rounding margin.
+                if last_price >= nextafter(next_cycle.rise_trigger_price, -float("inf")):
                     if rth_blocked:
                         detail = rth_message or "regular trading hours are closed"
                         next_cycle.error_message = f"RTH guard: minimum-profit condition is met, but no SELL order will be submitted until RTH is open ({detail})."
                     else:
                         sell_trail_pct = max(0.0, float(next_cycle.sell_trailing_stop_pct or 0.0))
-                        initial_sell_stop = round_price(float(last_price) * (1.0 - sell_trail_pct / 100.0))
+                        initial_sell_stop = float(last_price) * (1.0 - sell_trail_pct / 100.0)
                         minimum_stop = _minimum_profit_stop_price(next_cycle)
-                        if initial_sell_stop + 1e-9 < minimum_stop:
+                        if nextafter(initial_sell_stop, float("inf")) < minimum_stop:
                             next_cycle.stage = Stage.WAIT_RISE_TRIGGER
                             next_cycle.error_message = (
                                 "SELL order not placed because the initial stop/reference would not protect the configured minimum profit. "
@@ -360,6 +372,13 @@ class StrategyEngine:
                                     )
                                 )
                             next_cycle.stage = Stage.SELL_TRAIL_ACTIVE
+                if next_cycle.stage == Stage.WAIT_RISE_TRIGGER and StrategyEngine.protective_handoff_needs_final_sell(next_cycle):
+                    next_cycle.stage = Stage.MANUAL_REVIEW
+                    next_cycle.recovery_required = True
+                    next_cycle.error_message = (
+                        "RECOVERY REQUIRED: protective SELL was cancelled, but the price no longer "
+                        "supports the profit-protecting SELL. Verify remaining exposure before resuming."
+                    )
 
         next_cycle.touch()
         return next_cycle, actions
@@ -672,6 +691,17 @@ class StrategyEngine:
         return next_cycle, changed
 
     @staticmethod
+    def protective_handoff_needs_final_sell(cycle: CycleState) -> bool:
+        """A confirmed cancelled protective order no longer covers the position."""
+        return bool(
+            cycle.protective_sell_enabled
+            and cycle.protective_sell_order_ref
+            and cycle.protective_sell_status in {"Cancelled", "ApiCancelled"}
+            and cycle.buy_filled_qty > max(cycle.sell_filled_qty, cycle.protective_sell_filled_qty)
+            and not cycle.sell_order_ref
+        )
+
+    @staticmethod
     def rollback_unsubmitted_order(cycle: CycleState, side: str, message: str) -> CycleState:
         """Return to the pre-submit waiting stage when a broker call failed before an order was accepted."""
         next_cycle = copy(cycle)
@@ -686,7 +716,8 @@ class StrategyEngine:
             next_cycle.quantity = 0
             next_cycle.buy_initial_trail_stop_price = None
         elif side == "PROTECTIVE_SELL":
-            next_cycle.stage = Stage.WAIT_RISE_TRIGGER
+            next_cycle.stage = Stage.MANUAL_REVIEW
+            next_cycle.recovery_required = True
             next_cycle.protective_sell_order_ref = None
             next_cycle.protective_sell_order_id = None
             next_cycle.protective_sell_perm_id = None
@@ -700,6 +731,14 @@ class StrategyEngine:
             next_cycle.sell_perm_id = None
             next_cycle.sell_status = "SubmitFailed"
             next_cycle.sell_initial_trail_stop_price = None
+            if StrategyEngine.protective_handoff_needs_final_sell(next_cycle):
+                next_cycle.stage = Stage.MANUAL_REVIEW
+                next_cycle.recovery_required = True
+        if next_cycle.stage == Stage.MANUAL_REVIEW:
+            message = (
+                "RECOVERY REQUIRED: configured protective SELL is not working and no replacement "
+                f"was submitted. Verify remaining exposure before resuming. {message}"
+            )
         next_cycle.error_message = message
         next_cycle.touch()
         return next_cycle

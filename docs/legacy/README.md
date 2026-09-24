@@ -2,7 +2,17 @@
 
 These files document superseded releases and implementation history. They are retained for traceability, but they may describe old labels, defaults, layouts, tests, or limitations.
 
-For current behavior, use the [project README](../../README.md), the [current documentation index](../README.md), the [changelog](../../CHANGELOG.md), and the current [`v4.0.0 release note`](../V4_0_0_ATR_SESSION_MEMORY_AND_ORDER_EDITING.md).
+For current behavior, use the [project README](../../README.md), the [current documentation index](../README.md), the [changelog](../../CHANGELOG.md), and the current [`v5.0.0 release note`](../V5_0_0_TRADING_SAFETY_AND_PYTHON314.md).
+
+## Version 4 release notes
+
+- [`V4_1_0_GUI_METRICS_AND_AUDIT_LAYOUT.md`](V4_1_0_GUI_METRICS_AND_AUDIT_LAYOUT.md) - archived GUI metrics/layout and linked-crosshair release; v4.2.0 removes cursor linking.
+- [`V4_1_0_STATUS_ORDER_LINKED_CROSSHAIRS_IMPLEMENTATION_TEST_REPORT.txt`](V4_1_0_STATUS_ORDER_LINKED_CROSSHAIRS_IMPLEMENTATION_TEST_REPORT.txt) - byte-preserved verification report for the supplied v4.1.0 baseline.
+
+- [`V4_1_0_LAYOUT_CORRECTIONS_IMPLEMENTATION_TEST_REPORT.txt`](V4_1_0_LAYOUT_CORRECTIONS_IMPLEMENTATION_TEST_REPORT.txt) - preceding same-version layout-correction report, before status-row ordering and linked Timeline hover.
+
+- [`V4_0_0_ATR_SESSION_MEMORY_AND_ORDER_EDITING.md`](V4_0_0_ATR_SESSION_MEMORY_AND_ORDER_EDITING.md) - corrected v4.0.0 ATR close-window saving and next-order risk editing.
+- [`V4_0_0_IMPLEMENTATION_TEST_REPORT.txt`](V4_0_0_IMPLEMENTATION_TEST_REPORT.txt) - preserved corrected v4.0.0 verification report.
 
 ## Version 3 release notes
 
@@ -89,3 +99,6 @@ For current behavior, use the [project README](../../README.md), the [current do
 - [`LEGACY_38_STOP_CLOSE_MARKET_EXIT.md`](LEGACY_38_STOP_CLOSE_MARKET_EXIT.md) — legacy release Stop strategy market-exit option
 - [`LEGACY_38_STOP_CLOSE_MARKET_SELL.md`](LEGACY_38_STOP_CLOSE_MARKET_SELL.md) — legacy release Stop strategy market-sell option
 - [`RISK4_RECOVERY_AND_TESTING.md`](RISK4_RECOVERY_AND_TESTING.md) — legacy release safety, recovery, and test additions
+
+- [`V4_2_0_HEADER_AND_INDEPENDENT_TIMELINE.md`](V4_2_0_HEADER_AND_INDEPENDENT_TIMELINE.md) - archived status headers, independent cursors and table sizing.
+- [`V4_2_0_IMPLEMENTATION_TEST_REPORT.txt`](V4_2_0_IMPLEMENTATION_TEST_REPORT.txt) - corrected 4.2.0 verification record.

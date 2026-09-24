@@ -1,0 +1,131 @@
+BouncyBot v4.1.0 - Status Row and Linked Timeline Crosshairs
+=========================================================
+Same-version source rerelease. No native Windows executable is included.
+
+BASELINE
+IBKR_Trading_Bot_4.1.0_GUI_Layout_Corrections_Source.zip
+SHA-256: f90caa1bc0f51a16139eef2c38c6ba8871105bcfa3882dcb2b93789514bafd2b
+The preceding correction report is preserved unchanged in:
+docs/legacy/V4_1_0_LAYOUT_CORRECTIONS_IMPLEMENTATION_TEST_REPORT.txt
+Historical reports are not verification of this rerelease.
+
+REQUESTED CHANGES
+1. MainWindow now places the ten status boxes and lock above the five-stage
+   ribbon, with both fixed rows above the tabs. The equal status-box widths,
+   compact lock, price/trigger and position-cost details, signals, theme and
+   workflow restrictions are unchanged. Neither row moves into a scroll area.
+2. Hovering either Cycle Audit Timeline graph displays a corresponding time
+   guide in the other graph. The hovered graph retains its original cursor
+   price and tooltip. The counterpart's horizontal guide follows its nearest
+   actual plotted record on its own price scale; it does not inherit the
+   first graph's cursor price or invent an interpolated fill.
+   Linked cursor time and the nearest record's actual time are labelled
+   separately. The record marker remains at the record's plotted coordinates,
+   not at a fabricated execution position on the cursor line. With no record
+   in the counterpart, only a time guide is drawn and its absence is stated.
+   Moving through the gap or leaving clears the guides. Position calculations
+   use current plot geometry on every repaint, including after zoom/resize.
+   There is no synthetic mouse event, extra signal, worker or persistent
+   linked-hover state in the runtime implementation.
+
+SCOPE
+Only app/gui.py changes among runtime application modules. Within that file,
+only MainWindow.__init__, CycleTimelineWidget.__init__, its paintEvent, and
+its new _draw_linked_hover_overlay method differ from the baseline.
+All other chart classes and all four original _draw_hover_overlay methods
+are AST-identical to the baseline. The single-graph Summary retains its own
+hover behavior and its original single-graph tooltip wording.
+All non-GUI app/*.py modules, main.py, version metadata, dependencies and
+build scripts are byte-identical to the baseline. The version remains 4.1.0.
+No controller, broker, strategy, order, risk, ATR, persistence, recovery or
+watchdog behavior changes. Keep existing databases/settings/ATR checkpoints.
+No schema or settings migration is needed. No live order or Gateway connection
+was used during verification.
+Documentation and tests are updated for the requested behavior. The new
+scripts/check_v410_gui_real_qt.py is an optional, separate real-dependency smoke
+check; it is not imported by the application or substituted into the unit suite.
+
+MEASURED AUTOMATED VERIFICATION
+Host: Linux, Python 3.13.5, pytest 9.0.2, coverage.py 7.13.3.
+- Final complete suite under branch coverage: 1434/1434 passed in 139.81 seconds.
+- 134 test modules; no skipped, expected-failure or unexpected-pass cases.
+- ResourceWarning promoted to an error throughout that run.
+- Current v4.1.0 regression suites: 124/124 passed, including 46 new cases
+  for status ordering, linked hover, independent Summary/other charts, and help.
+- Statement/branch combined coverage: 80.5% (required minimum 75%).
+- Callable-entry check: 1042/1042 executable application callables entered.
+  This is an entry-coverage metric, not proof that every behavior is correct.
+- Safety mutation smoke: 17/17 targeted mutants killed in temporary copies.
+- Deterministic simulation contracts: 58 passed across 54 CSV price paths.
+- Compilation and Python 3.11 grammar parsing passed for 170 Python files.
+- Git whitespace checks passed.
+- Non-GUI runtime and other chart classes' baseline comparisons passed.
+
+The first full development run found one legacy assertion requiring the text
+'Hover for crosshairs'. The single-graph Summary now retains that original
+wording while the paired Timeline explains linking. The final full run above
+passed after that correction. No trading test, guard or strategy assertion was
+removed, skipped or relaxed.
+
+GUI TEST COVERAGE AND LIMITS
+The automated GUI tests use observable Qt substitutes, not real Qt rendering.
+They record actual calls from the application drawing/layout code and cover:
+- status/ribbon/tab ordering in Simple, Advanced and Debug and across all tabs;
+- shared X/time and independent Y/price behavior in either direction and theme;
+- actual record marker coordinates and distinct record/cursor timestamps;
+- empty counterpart, invalid/non-finite/outside records and unknown time;
+- resize/zoom width changes, time boundaries, gap and leave cleanup;
+- full paired Timeline paint calls and no changes to source audit records;
+- no linked behavior leaking into Summary or other chart classes.
+These checks do not validate Windows font metrics, pixels, real Qt event
+handling, actual ib_async integration or broker execution.
+
+REQUIRED GATES NOT COMPLETED
+PySide6, ib_async, Ruff and Pyright are not installed in this environment.
+The dependency-install attempt failed with package-host name resolution errors.
+python scripts/run_quality_checks.py --require-tools returned exit code 1 for
+missing Ruff/Pyright. Neither tool is recorded as passing. The unchanged
+Pyright configuration checks models, strategy and storage, not all GUI code.
+python scripts/check_v410_gui_real_qt.py returned exit code 1 with:
+  REAL-QT CHECK NOT RUN: missing PySide6, ib_async
+Its nonzero missing-dependency behavior was verified, not its real-Qt path.
+The included real-Qt check is intended to render real light/dark widgets,
+process mouse events and save screenshots with an inert controller. It must
+still be run with the genuine dependencies on the target machine. Review the
+screenshots; pixel-change assertions alone do not prove readable labels.
+
+The available pytest is 9.0.2; the project declares pytest >=8,<9. Requirements
+were not changed to conceal this mismatch. The target Python/pytest/dependency
+combination remains unverified here. Native Windows/PyInstaller compilation,
+Windows display scaling and real Gateway integration were not performed.
+Before deploying, run run_all_tests.bat, run the separate real-Qt check, inspect
+the documented resize/theme/DPI/hover cases, and then run build_windows.bat.
+Do not disable production trading safeguards to test GUI presentation.
+
+REPRODUCIBLE COMMANDS
+Set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1, IBKR_BOT_HEADLESS_SIGNALS=1,
+QT_QPA_PLATFORM=offscreen and PYTHONDONTWRITEBYTECODE=1 for the substitute suite.
+python -W error::ResourceWarning -m coverage run --branch --source=app,main -m pytest -q --tb=short -ra
+python -m coverage report --fail-under=75
+python -m coverage json -o coverage.json
+python -m coverage xml -o coverage.xml
+python scripts/check_callable_coverage.py --coverage-json coverage.json --source app --source main.py
+python scripts/run_mutation_smoke.py
+python scripts/run_all_simulations.py
+python -W error::ResourceWarning -m pytest -q tests/test_v410_status_and_linked_hover.py tests/test_v410_layout_corrections.py tests/test_v410_gui_metrics_and_layout.py tests/test_v410_release.py
+python -m compileall -q app tests scripts main.py
+git diff --check
+python scripts/run_quality_checks.py --require-tools
+
+Separate real-dependency GUI gate (not part of the substitute-based test count):
+python scripts/check_v410_gui_real_qt.py --output-dir gui_smoke
+
+RELEASE PACKAGING
+Source root: IBKR-Trading-Bot-main/
+The patch targets the exact corrected v4.1.0 baseline above.
+Release verification compares every patched file with the source ZIP, checks
+ZIP integrity, and runs pytest from a fresh extraction. Archive-only validation
+results are recorded in the accompanying release validation log rather than
+being inferred from the working-tree test run. Archives exclude Git metadata,
+caches, bytecode, coverage output, runtime databases, logs, exports, captures,
+virtual environments and build output. All 22 source images are unchanged.

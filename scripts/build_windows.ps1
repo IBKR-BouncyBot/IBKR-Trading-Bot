@@ -20,7 +20,7 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
-$version = "4.0.0"
+$version = "5.0.0"
 $appName = "IBKRTradingBot"
 $releaseName = "${appName}_${version}_Windows"
 $releaseDirectory = Join-Path $root "release"
@@ -40,22 +40,7 @@ function Invoke-Checked {
     }
 }
 
-function Resolve-PythonLauncher {
-    if (Get-Command py -ErrorAction SilentlyContinue) {
-        try {
-            & py -3.11 --version > $null 2>&1
-            if ($LASTEXITCODE -eq 0) { return @("py", "-3.11") }
-        } catch {}
-        try {
-            & py -3 --version > $null 2>&1
-            if ($LASTEXITCODE -eq 0) { return @("py", "-3") }
-        } catch {}
-    }
-    if (Get-Command python -ErrorAction SilentlyContinue) {
-        return @("python")
-    }
-    throw "Python was not found. Install Python 3.11+ and retry."
-}
+. (Join-Path $PSScriptRoot "python_runtime.ps1")
 
 if ($CleanVenv -and (Test-Path ".venv")) {
     Write-Host "Removing existing virtual environment..."
@@ -63,7 +48,10 @@ if ($CleanVenv -and (Test-Path ".venv")) {
 }
 
 if (!(Test-Path ".venv\Scripts\python.exe")) {
-    $launcher = Resolve-PythonLauncher
+    if (Test-Path ".venv") {
+        throw "The existing .venv is incomplete. Close BouncyBot, rename .venv to .venv_previous, and retry. Keep the database and other application files in place."
+    }
+    $launcher = @(Resolve-PythonLauncher)
     Write-Host "Creating Python virtual environment with: $($launcher -join ' ')"
     if ($launcher.Length -gt 1) {
         & $launcher[0] $launcher[1] -m venv .venv
@@ -76,6 +64,7 @@ if (!(Test-Path ".venv\Scripts\python.exe")) {
 }
 
 $python = Join-Path $root ".venv\Scripts\python.exe"
+Assert-IbkrPythonRuntime -Python $python
 $pyinstallerExe = Join-Path $root ".venv\Scripts\pyinstaller.exe"
 
 Invoke-Checked "Upgrade pip" { & $python -m pip install --upgrade pip }

@@ -1,6 +1,6 @@
 # Worker watchdog and automatic recovery
 
-This document defines the current v4.0.0 worker/storage supervision behavior. It preserves BouncyBot's single-controller-worker design. The corrective implementation does not add a broker worker, database-writer worker, service, daemon, or second trading process.
+This document defines the current v5.0.0 worker/storage supervision behavior. It preserves BouncyBot's single-controller-worker design. The watchdog does not add a broker worker, database-writer worker, service, daemon, or second trading process. The separate read-only Cycle audit reader and market-capture ZIP writer do not perform broker actions or replace the controller worker.
 
 ## Failure class addressed
 
@@ -22,7 +22,7 @@ The GUI-side age calculation is display-only. Trading decisions remain owned by 
 
 ## Full-process replacement
 
-A Python thread blocked in SQLite, filesystem I/O, or a third-party call cannot be safely killed. BouncyBot therefore never creates a second worker inside the existing process.
+A Python thread blocked in SQLite, filesystem I/O, or a third-party call cannot be safely killed. BouncyBot therefore never creates a replacement controller/broker worker inside the existing process.
 
 The replacement sequence is:
 
@@ -148,4 +148,4 @@ A native Windows executable and its `subprocess.Popen` replacement behavior must
 
 ## ATR and pending settings after replacement
 
-A valid v4.0.0 RTH ATR checkpoint and explicit next-order risk edits can survive full-process replacement in the existing SQLite settings store. Neither is a restart authorization: exact-cycle handoff, ownership checks, fresh broker reconciliation, fresh market data, and RTH validation are unchanged. A missing checkpoint merely causes ATR warmup.
+A valid persisted RTH ATR checkpoint and explicit next-order risk edits can survive full-process replacement in the existing SQLite settings store. Neither is a restart authorization: exact-cycle handoff, ownership checks, fresh broker reconciliation, fresh market data, and RTH validation are unchanged. A missing checkpoint merely causes ATR warmup.

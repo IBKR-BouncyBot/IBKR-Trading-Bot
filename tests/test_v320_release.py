@@ -1,4 +1,4 @@
-"""v3.2.0 feature and current v4.0.0 release regressions."""
+"""v3.2.0 feature and current v5.0.0 release regressions."""
 
 from pathlib import Path
 
@@ -19,7 +19,7 @@ OFFLINE_TESTS = (ROOT / "docs" / "OFFLINE_BEHAVIOR_TESTS.md").read_text(encoding
 TESTING_GUIDE = (ROOT / "docs" / "TESTING_AND_SIMULATION.md").read_text(encoding="utf-8")
 CSV_MATRIX = (ROOT / "docs" / "CSV_SIMULATION_SCENARIO_MATRIX.md").read_text(encoding="utf-8")
 LEGACY_INDEX = (ROOT / "docs" / "legacy" / "README.md").read_text(encoding="utf-8")
-CURRENT_NOTE = ROOT / "docs" / "V4_0_0_ATR_SESSION_MEMORY_AND_ORDER_EDITING.md"
+CURRENT_NOTE = ROOT / "docs" / "V5_0_0_TRADING_SAFETY_AND_PYTHON314.md"
 ARCHIVED_V321_NOTE = ROOT / "docs" / "legacy" / "V3_2_1_INCIDENT_GAP_CORRECTIONS.md"
 ARCHIVED_V320_NOTE = ROOT / "docs" / "legacy" / "V3_2_0_EUR_SMART_AND_RECONNECT.md"
 ARCHIVED_V312_NOTE = (
@@ -28,14 +28,14 @@ ARCHIVED_V312_NOTE = (
 
 
 def test_v320_release_metadata_is_consistent() -> None:
-    assert "BouncyBot - IBKR Portable Trading Bot v4.0.0" in GUI
-    assert "This is synthetic v4.0.0 paper-trading example data." in GUI
-    assert "**Current release: v4.0.0**" in README
-    assert 'version = "4.0.0"' in PYPROJECT
-    assert '$version = "4.0.0"' in BUILD
-    assert "## v4.0.0" in CHANGELOG
-    assert "v4.0.0" in SECURITY
-    assert "current v4.0.0 behavior" in DOCS_INDEX
+    assert "BouncyBot - IBKR Portable Trading Bot v5.0.0" in GUI
+    assert "This is synthetic v5.0.0 paper-trading example data." in GUI
+    assert "**Current release: v5.0.0**" in README
+    assert 'version = "5.0.0"' in PYPROJECT
+    assert '$version = "5.0.0"' in BUILD
+    assert "## v5.0.0" in CHANGELOG
+    assert "v5.0.0" in SECURITY
+    assert "current v5.0.0 behavior" in DOCS_INDEX
 
 
 def test_v320_release_note_is_archived_and_v322_is_current() -> None:
@@ -47,8 +47,8 @@ def test_v320_release_note_is_archived_and_v322_is_current() -> None:
     assert not (
         ROOT / "docs" / "V3_1_2_FILL_RECONCILIATION_AND_STAGE3_CLOSE.md"
     ).exists()
-    assert "V4_0_0_ATR_SESSION_MEMORY_AND_ORDER_EDITING.md" in README
-    assert "V4_0_0_ATR_SESSION_MEMORY_AND_ORDER_EDITING.md" in DOCS_INDEX
+    assert "V5_0_0_TRADING_SAFETY_AND_PYTHON314.md" in README
+    assert "V5_0_0_TRADING_SAFETY_AND_PYTHON314.md" in DOCS_INDEX
     assert "V3_2_1_INCIDENT_GAP_CORRECTIONS.md" in LEGACY_INDEX
     assert "V3_2_0_EUR_SMART_AND_RECONNECT.md" in LEGACY_INDEX
     assert "V3_1_2_FILL_RECONCILIATION_AND_STAGE3_CLOSE.md" in LEGACY_INDEX
@@ -81,8 +81,8 @@ def test_v320_release_note_documents_scope_and_external_validation() -> None:
 
 
 def test_v320_current_verification_documents_match_the_release() -> None:
-    assert "verification scope for v4.0.0" in AUTOMATED_COVERAGE
+    assert "verification scope for v5.0.0" in AUTOMATED_COVERAGE
     assert "v3.2.0 exact-contract, currency, and reconnect layer" in AUTOMATED_COVERAGE
-    assert "current non-GUI, non-Windows, non-network test layer in v4.0.0" in OFFLINE_TESTS
+    assert "current non-GUI, non-Windows, non-network test layer in v5.0.0" in OFFLINE_TESTS
     assert "v3.2.0 USD/EUR SMART and reconnect regressions" in TESTING_GUIDE
-    assert "This v4.0.0 test-only matrix" in CSV_MATRIX
+    assert "This v5.0.0 test-only matrix" in CSV_MATRIX

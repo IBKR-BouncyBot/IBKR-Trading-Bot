@@ -40,7 +40,8 @@ def _generated_settings(rng: random.Random) -> StrategySettings:
 
 
 def _configure_cycle(controller: Any, settings: StrategySettings, anchor: float, cycle_number: int = 1) -> Any:
-    cycle = StrategyEngine.start_cycle(settings, cycle_number, "", anchor, 0.0)
+    cycle = StrategyEngine.start_cycle(settings, cycle_number, "DU_TEST", anchor, 0.0)
+    cycle.con_id = controller.contract.con_id
     controller.strategy = settings
     controller.active_cycle = cycle
     controller.storage.upsert_cycle(cycle)

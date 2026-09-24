@@ -6,9 +6,9 @@ PYPROJECT = Path("pyproject.toml").read_text(encoding="utf-8")
 
 
 def test_v215_version_metadata_and_package_folder_name_are_current():
-    assert "BouncyBot - IBKR Portable Trading Bot v4.0.0" in GUI
+    assert "BouncyBot - IBKR Portable Trading Bot v5.0.0" in GUI
     assert "# BouncyBot - an IBKR Portable Trading Bot " in README
-    assert 'version = "4.0.0"' in PYPROJECT
+    assert 'version = "5.0.0"' in PYPROJECT
     assert Path("docs/legacy/V2_20_RECOVERY_GRAPH_RECOVERY_UI.md").exists()
 
 
@@ -38,13 +38,15 @@ def test_v215_recovery_details_expand_and_advanced_actions_stay_at_bottom():
     assert 'self.recovery_details.setMinimumHeight(180)' in recovery_block
     assert 'self.recovery_details.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)' in recovery_block
     assert 'recovery_lower_layout.addWidget(self.recovery_details, 1)' in recovery_block
-    assert 'advanced_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)' in recovery_block
-    assert 'advanced_box.setMinimumHeight(104)' in recovery_block
-    assert 'advanced_box.setMaximumHeight(132)' in recovery_block
+    assert 'advanced_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)' in recovery_block
+    assert 'advanced_box.setMinimumHeight(104)' not in recovery_block
+    assert 'advanced_box.setMaximumHeight(132)' not in recovery_block
     assert 'recovery_lower_layout.addWidget(advanced_box, 0)' in recovery_block
     assert 'root.addWidget(recovery_lower_panel, 1)' in recovery_block
     assert 'root.addWidget(advanced_box, 0, Qt.AlignBottom)' not in recovery_block
     assert 'self.recovery_details.setMinimumHeight(430)' not in recovery_block
+    assert 'self.recovery_scroll.setWidget(recovery_content)' in recovery_block
+    assert 'self.recovery_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)' in recovery_block
 
 
 def test_v215_recovery_uses_yellow_for_configured_guard_pauses_not_red():

@@ -590,6 +590,11 @@ def test_unresolved_market_rule_blocks_before_order_intent_or_submission(
         market_rule_advertised=True,
     )
     controller, cycle = _controller_cycle(tmp_path, monkeypatch)
+    # Exercise market-rule validation with a confirmed live-adapter identity.
+    cycle.con_id = 1
+    controller.connection.account = cycle.account
+    ib.account_values = [cycle.account]
+    controller.storage.upsert_cycle(cycle)
     controller.adapter = adapter
     controller.contract = contract
     controller.connected = True

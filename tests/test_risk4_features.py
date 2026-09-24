@@ -314,10 +314,11 @@ def test_cancel_active_buy_does_not_guess_without_session_boundaries(tmp_path: P
 def test_submit_failure_rolls_cycle_back_to_waiting_stage(tmp_path: Path, monkeypatch):
     controller = _headless_controller(tmp_path, monkeypatch)
     controller.adapter = _FailingSubmitAdapter()
-    controller.contract = object()
+    controller.contract = controller.adapter.qualify_stock("AAPL", "SMART", "USD")
     settings = StrategySettings(
         ticker="AAPL",
         hard_risk_limits_enabled=False,
+        max_spread_pct=0.0,
         atr_adaptive_enabled=False,
         atr_block_new_buy_until_ready=False,
         block_delayed_data_in_live=False,
@@ -328,6 +329,7 @@ def test_submit_failure_rolls_cycle_back_to_waiting_stage(tmp_path: Path, monkey
     )
     controller.strategy = settings
     cycle = StrategyEngine.start_cycle(settings, 1, "SIM", 100.0, 0.0)
+    cycle.con_id = controller.contract.con_id
     cycle.last_price = 98.0
     cycle.drop_trigger_price = 99.0
     controller.active_cycle = cycle

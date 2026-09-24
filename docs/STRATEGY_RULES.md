@@ -1,6 +1,6 @@
 # Strategy rules
 
-This document is the current functional description of the five-stage strategy in v4.0.0. It describes application decisions; IBKR remains authoritative for accepted order state and execution.
+This document is the current functional description of the five-stage strategy in v5.0.0. It describes application decisions; IBKR remains authoritative for accepted order state and execution.
 
 ## Scope and invariants
 
@@ -76,7 +76,7 @@ A quantity below one blocks order submission. Before intent is stored, the live 
 - `buy_rebound_trail_pct > 0`: submit a native BUY `TRAIL` order.
 - `buy_rebound_trail_pct == 0`: submit a market BUY immediately after the initial-drop condition.
 
-After the first positive BUY fill, the controller starts a fixed 3.0-second grace period so the triggered marketable order can complete an ordinary multi-print execution. No cancellation is sent solely because the first broker update is partial. If the order remains nonterminal after the grace period, or an enabled RTH, data, pre-close, volatility, minimum-price, previous-close-gap, or spread safety condition becomes unsafe, cancellation of the unfilled remainder is requested once. The timer starts at the first persisted fill and is not reset by later partial progress. Every later cumulative fill and execution callback is reconciled before and during that cancellation race. Stage 3 begins only after IBKR reports `Filled`, `Cancelled`, `ApiCancelled`, `Inactive`, or `Rejected`, using the final app-owned quantity, weighted average BUY price, and all commissions received so far. A substantive rejection still activates the rejection circuit breaker.
+After the first positive BUY fill, the controller starts a fixed 3.0-second grace period so the triggered marketable order can complete an ordinary multi-print execution. No cancellation is sent solely because the first broker update is partial. If the order remains nonterminal after the grace period, or an enabled RTH, data, pre-close, volatility, minimum-price, previous-close-gap, or spread safety condition becomes unsafe, cancellation of the unfilled remainder is requested once. The timer starts at the first persisted fill and is not reset by later partial progress. Every later cumulative fill and execution callback is reconciled before and during that cancellation race. Stage 3 begins only after IBKR reports `Filled`, `Cancelled`, `ApiCancelled`, `Inactive`, or `Rejected`, using the final app-owned quantity, weighted average BUY price, and all commissions received so far. A substantive terminal rejection after a positive fill stops automatic repetition while management of the acquired shares continues.
 
 An unfilled BUY that becomes `Inactive` or `Rejected`, or reaches a terminal state with a substantive broker rejection, stops the cycle in `ERROR` for manual review. It is not automatically retried. An ordinary confirmed cancellation without a substantive rejection still resets Stage 2 to Stage 1.
 
@@ -162,18 +162,18 @@ A cycle completes when the application-owned BUY quantity has been sold accordin
 - gross and net P/L;
 - stage timestamps and audit events.
 
-If auto-repeat is enabled, stop-after-current-cycle is false, and the enabled maximum completed-cycle cap has not been reached, a new Stage-1 cycle is created with the current strategy settings. Reaching the cap leaves the completed cycle terminal and stops repetition.
+If auto-repeat is enabled, stop-after-current-cycle is false, and the enabled maximum completed-cycle cap has not been reached, a new Stage-1 cycle is created for the same account and exact contract, using the completed cycle’s active parameters plus applicable saved next-order risk edits. Reaching the cap leaves the completed cycle terminal and stops repetition.
 
 ## Optional protective SELL
 
-When enabled, a positive BUY fill initiates a protective native SELL `TRAIL` for the app-owned quantity. It can fill before the minimum-profit condition, producing a loss-limiting exit rather than a profit exit.
+When enabled, a BUY that has reached terminal status with a positive fill initiates a protective native SELL `TRAIL` for the settled app-owned quantity. A nonterminal partial BUY remains in Stage 2 under remainder supervision before protection is placed. It can fill before the minimum-profit condition, producing a loss-limiting exit rather than a profit exit.
 
-When Stage 3 becomes eligible for the normal final SELL:
+When Stage 3 becomes eligible for the normal final SELL, the controller first verifies replacement identity, session, normalized price/quantity, and quote evidence while the protective order remains working. It then:
 
-1. request cancellation of the protective order;
-2. wait until IBKR reports it no longer working;
-3. account for any protective fills;
-4. submit the final SELL only for remaining app-owned quantity.
+1. requests cancellation of the protective order;
+2. waits until IBKR reports it no longer working;
+3. accounts for any protective fills and revalidates replacement evidence;
+4. submits the final SELL only for remaining app-owned quantity.
 
 The controller does not intentionally leave both protective and final app-created SELL orders working for the same shares.
 
@@ -187,11 +187,11 @@ It is not based on a requested IBKR historical-bar series.
 
 ### Readiness
 
-A period of `N` requires at least `N + 1` observed bar buckets to calculate `N` true ranges. The newest bucket can still be forming. With defaults, readiness therefore needs observations spanning 15 distinct 60-second buckets.
+A period of `N` requires at least `N + 1` observed bar buckets to calculate `N` true ranges. The newest bucket can still be forming. Without a reusable saved estimate, the default bar-count requirement is observations spanning 15 distinct 60-second buckets; the calculated ATR must also be finite and positive.
 
-Starting in v4.0.0, a validated ready ATR estimate is checkpointed in the existing SQLite `app_settings` table for the exact confirmed contract, currency, venue, trading/data profile, ATR period, and bar duration. At a verified open RTH session, that estimate can supply the starting ATR/ATR% while current-session bars warm up. It does not insert synthetic observations or make a quote fresh. The first ready current-session calculation replaces it. The GUI identifies the saved session and today's observed bar count.
+A validated ready ATR estimate is checkpointed in the existing SQLite `app_settings` table for the exact confirmed contract, currency, venue, trading/data profile, ATR period, and bar duration. At a verified open RTH session, that estimate can supply the starting ATR/ATR% while current-session bars warm up. It does not insert synthetic observations or make a quote fresh. The first ready current-session calculation replaces it. The GUI identifies the saved session and today's observed bar count.
 
-The seed must be no more than seven calendar days old and must contain finite positive, internally consistent values observed inside its recorded RTH window. Weekends and short holidays can therefore reuse the most recent observed session; the application does not guess missing exchange sessions. First use, an expired/corrupt/mismatched checkpoint, or a changed ATR period/bar duration without a matching checkpoint retains normal warmup. v3.9.0 did not store these checkpoints, so the first v4.0.0 session needs enough observations once. A same-session application/watchdog restart can also reuse a valid checkpoint. Current market-data, opening-delay, RTH, gap, spread, two-observation SELL, and broker-reconciliation guards still apply. A saved estimate is not evidence that today's volatility is unchanged.
+The seed must be no more than seven calendar days old and must contain finite positive, internally consistent values observed inside its recorded RTH window. Weekends and short holidays can therefore reuse the most recent observed session; the application does not guess missing exchange sessions. First use, an expired/corrupt/mismatched checkpoint, or a changed ATR period/bar duration without a matching checkpoint retains normal warmup. A database from before checkpoint support also needs normal warmup until a valid estimate has been saved. A same-session application/watchdog restart can also reuse a valid checkpoint. Current market-data, opening-delay, RTH, gap, spread, two-observation SELL, and broker-reconciliation guards still apply. A saved estimate is not evidence that today's volatility is unchanged.
 
 ### Derived values
 
@@ -210,14 +210,14 @@ When adaptation is enabled and ready, the controller rewrites the same percentag
 Base cycle budget is the configured investment amount. When reinvestment is enabled:
 
 ```text
-budget = base investment + max(completed app net P/L for ticker, 0)
+budget = base investment + max(completed app net P/L for ticker/conId, 0)
 ```
 
-Stored completed losses do not reduce the configured base. This is local application P/L in the portable database's single contract currency, not available cash, buying power, account-wide P/L, or an FX-converted total. IBKR preflight remains authoritative for order acceptance.
+The calculation includes legacy same-ticker rows without a conId and excludes rows with another positive conId. Stored completed losses do not reduce the configured base. This is local application P/L in the portable database's single contract currency, not available cash, buying power, account-wide P/L, or an FX-converted total. IBKR preflight remains authoritative for order acceptance.
 
 ## External positions
 
-The strategy does not use the account-wide IBKR position to block a new entry. It checks whether persisted application BUY fills remain unsold after application SELL fills. A cycle explicitly marked manually handled is excluded from that blocker.
+The strategy does not use the account-wide IBKR position to block a new entry. It checks whether persisted application BUY fills remain unsold after application SELL fills for the selected ticker/conId, conservatively including legacy same-ticker rows with no conId. A cycle explicitly marked manually handled is excluded from that blocker.
 
 This is local accounting; the broker does not segregate shares by source.
 
@@ -241,3 +241,9 @@ A working Stage-2 BUY retains its original partial-fill, safety-cancellation, an
 ## Stop behavior
 
 Stop is not a single state transition. The operator chooses whether to cancel app orders, market-close app-owned quantity, leave orders working, stop after the cycle, or stop locally without broker action. See [`OPERATIONS.md`](OPERATIONS.md) and [`ORDER_FLOW.md`](ORDER_FLOW.md).
+
+## v5.0.0 boundary safeguards
+
+The initial drop and minimum-profit comparisons use unrounded thresholds derived from current anchors/fills; displayed prices remain formatted. A complete recovered exit is required before automatic repetition. A substantive partial-BUY rejection may stop further cycles without abandoning management of filled shares.
+
+All cycle broker operations must retain the cycle account and exact contract. Existing native protection must not be cancelled before a proposed normal exit passes route-price/quantity normalization and applicable guard checks. Changed evidence after cancellation produces a visible recovery state.

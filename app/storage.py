@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import csv
 import json
-import shutil
 import sqlite3
 import tempfile
 import zipfile
@@ -988,6 +987,17 @@ class BotStorage:
                 ).fetchone()
         return self._row_to_cycle(row) if row else None
 
+    def get_order_for_cycle_ref(self, cycle_id: str, order_ref: str) -> Optional[dict[str, Any]]:
+        """Read an exact persisted order/intent, including superseded cycle refs."""
+        if not cycle_id or not order_ref:
+            return None
+        with self.connect() as con:
+            row = con.execute(
+                "SELECT * FROM orders WHERE cycle_id=? AND order_ref=? ORDER BY id DESC LIMIT 1",
+                (str(cycle_id), str(order_ref)),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
     def known_order_refs(self) -> set[str]:
         """Return exact OrderRefs persisted by this portable installation."""
         refs: set[str] = set()
@@ -1036,6 +1046,43 @@ class BotStorage:
         with self.connect() as con:
             row = con.execute(query, tuple(params)).fetchone()
         return self._row_to_cycle(row) if row else None
+
+    def get_unresolved_cycles(self) -> list[CycleState]:
+        """Return cycles that still own strategy state, shares, or working orders.
+
+        An explicit manually-handled decision transfers recovery responsibility
+        to the operator. Merely stopping local monitoring does not prove that a
+        broker order or position has disappeared.
+        """
+        active = (
+            Stage.WAIT_INITIAL_DROP.value, Stage.BUY_TRAIL_ACTIVE.value,
+            Stage.WAIT_RISE_TRIGGER.value, Stage.SELL_TRAIL_ACTIVE.value,
+            Stage.ERROR.value, Stage.MANUAL_REVIEW.value,
+        )
+        terminal = ("Filled", "Cancelled", "ApiCancelled", "Inactive", "Rejected")
+        working = " OR ".join(
+            f"(COALESCE(c.{role}_order_ref, '')<>'' AND "
+            f"COALESCE(c.{role}_status, '') NOT IN ({','.join('?' for _ in terminal)}))"
+            for role in ("buy", "protective_sell", "sell")
+        )
+        with self.connect() as con:
+            rows = con.execute(
+                f"""
+                SELECT c.* FROM cycles c
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM decision_events d
+                    WHERE d.cycle_id=c.id AND d.event_type='MANUALLY_HANDLED'
+                )
+                AND LOWER(COALESCE(c.error_message, '')) NOT LIKE '%marked manually handled%'
+                AND (c.stage IN ({','.join('?' for _ in active)})
+                     OR COALESCE(c.buy_filled_qty, 0) > MAX(
+                         COALESCE(c.sell_filled_qty, 0), COALESCE(c.protective_sell_filled_qty, 0))
+                     OR ({working}))
+                ORDER BY c.updated_at DESC, c.cycle_number DESC, c.id DESC
+                """,
+                (*active, *terminal, *terminal, *terminal),
+            ).fetchall()
+        return [cycle for row in rows if (cycle := self._row_to_cycle(row)) is not None]
 
     @staticmethod
     def _exact_contract_filter(con_id: Optional[int], *, column: str = "con_id") -> tuple[str, list[Any]]:
@@ -2171,14 +2218,46 @@ class BotStorage:
             "ok": False,
             "integrity_check": None,
             "missing_tables": [],
+            "missing_columns": {},
+            "schema_errors": [],
+            "foreign_key_errors": [],
             "error": "",
         }
         if not target.exists():
             result["error"] = "file does not exist"
             return result
-        required_tables = {"app_settings", "cycles", "orders", "executions", "events", "decision_events"}
+        # These are the original, non-migratable columns. Later optional
+        # columns are added by _ensure_schema and need not exist in an older
+        # valid backup. Table names alone do not establish restore readiness.
+        required_columns = {
+            "app_settings": "key value_json updated_at",
+            "cycles": (
+                "id cycle_number ticker stage created_at updated_at account con_id exchange currency "
+                "investment_amount budget reinvest_profits reinvested_profit initial_drop_pct "
+                "buy_rebound_trail_pct rise_trigger_pct sell_trailing_stop_pct anchor_price last_price "
+                "drop_trigger_price buy_initial_trail_stop_price rise_trigger_price sell_initial_trail_stop_price "
+                "quantity buy_order_id buy_perm_id buy_order_ref buy_status buy_filled_qty avg_buy_price "
+                "buy_commission buy_filled_at sell_order_id sell_perm_id sell_order_ref sell_status "
+                "sell_filled_qty avg_sell_price sell_commission sell_filled_at gross_pnl net_pnl "
+                "stop_after_current_cycle error_message"
+            ),
+            "orders": (
+                "id cycle_id ticker action order_type order_id perm_id order_ref quantity "
+                "trailing_percent initial_stop_price status created_at updated_at raw_json"
+            ),
+            "executions": (
+                "id cycle_id ticker order_ref order_id perm_id execution_id side shares price "
+                "avg_price commission currency executed_at raw_json"
+            ),
+            "events": "id created_at level ticker cycle_id message raw_json",
+            "decision_events": (
+                "id created_at event_type ticker cycle_id stage_before stage_after decision_result "
+                "message broker_order_id perm_id raw_json"
+            ),
+        }
+        required_tables = set(required_columns)
         try:
-            uri = f"file:{target.as_posix()}?mode=ro"
+            uri = target.resolve().as_uri() + "?mode=ro"
             with sqlite3.connect(uri, uri=True, factory=_ClosingSqliteConnection) as con:
                 integrity = con.execute("PRAGMA integrity_check").fetchone()
                 integrity_text = str(integrity[0] if integrity else "")
@@ -2187,7 +2266,26 @@ class BotStorage:
                 existing = {str(row[0]) for row in rows}
                 missing = sorted(required_tables - existing)
                 result["missing_tables"] = missing
-                result["ok"] = integrity_text.lower() == "ok" and not missing
+                for table in sorted(required_tables & existing):
+                    info = con.execute(f'PRAGMA table_info("{table}")').fetchall()
+                    columns = {str(row[1]) for row in info}
+                    absent = sorted(set(required_columns[table].split()) - columns)
+                    if absent:
+                        result["missing_columns"][table] = absent
+                    primary_key = [str(row[1]) for row in info if row[5]]
+                    expected_key = "key" if table == "app_settings" else "id"
+                    if primary_key != [expected_key]:
+                        result["schema_errors"].append(f"{table}: expected primary key {expected_key}")
+                result["foreign_key_errors"] = [list(row) for row in con.execute("PRAGMA foreign_key_check")]
+                result["ok"] = bool(
+                    integrity_text.lower() == "ok"
+                    and not missing
+                    and not result["missing_columns"]
+                    and not result["schema_errors"]
+                    and not result["foreign_key_errors"]
+                )
+                if not result["ok"]:
+                    result["error"] = "Backup integrity, required schema, or foreign-key validation failed."
         except Exception as exc:
             result["error"] = str(exc)
         return result
@@ -2216,7 +2314,12 @@ class BotStorage:
         try:
             with tempfile.TemporaryDirectory(prefix="ibkr_bot_restore_validate_") as tmp:
                 candidate = Path(tmp) / "restore_candidate.sqlite"
-                shutil.copy2(backup, candidate)
+                # Include committed WAL contents in one consistent snapshot.
+                # Copying only the main file can omit recent broker state.
+                with sqlite3.connect(backup.resolve().as_uri() + "?mode=ro", uri=True, factory=_ClosingSqliteConnection) as source:
+                    with sqlite3.connect(candidate, factory=_ClosingSqliteConnection) as destination:
+                        source.backup(destination)
+                BotStorage(candidate)  # Exercise supported additive migrations only on the disposable copy.
                 copied = self._validate_sqlite_database_file(candidate)
                 result["restore_copy_validated"] = bool(copied.get("ok"))
                 if not copied.get("ok"):

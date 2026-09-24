@@ -1,7 +1,7 @@
 from app.models import ConnectionSettings, Stage, StrategySettings, utc_now_iso
 from app.storage import BotStorage
 from app.strategy import StrategyEngine
-from tests.test_controller_headless import _install_qt_stub
+from tests.test_controller_headless import RthFakeAdapter, _install_qt_stub
 
 
 def _controller(tmp_path, monkeypatch):
@@ -42,20 +42,35 @@ def _cycle(**overrides):
     return cycle
 
 
+def _fresh_quote(controller, bid, ask):
+    # The spread ceiling requires independent bid/ask evidence even when the
+    # separate stale-data guard is disabled.
+    controller._api_data_invalidated = False
+    controller.price_snapshot = {
+        "fields": {"bid": bid, "ask": ask},
+        "market_data_field_tracking": True,
+        "upstream_connected": True,
+        "market_data_update_sequence": 1,
+        "market_data_subscription_id": "AAPL|123|SIM",
+        "field_update_sequences": {"bid": 1, "ask": 1},
+        "field_update_age_seconds": {"bid": 0.0, "ask": 0.0},
+    }
+
+
 def test_risk_guard_blocks_wide_spread(tmp_path, monkeypatch):
     controller = _controller(tmp_path, monkeypatch)
-    controller.price_snapshot = {"fields": {"bid": 100.0, "ask": 102.0}}
+    _fresh_quote(controller, 100.0, 102.0)
     cycle = _cycle(max_spread_pct=1.0)
 
     message = controller._risk_guard_message_for_buy(cycle, {"sizing_price": 100.0})
 
     assert message is not None
-    assert "spread" in message.lower()
+    assert "spread 1.98% exceeds max 1.00%" in message.lower()
 
 
 def test_risk_guard_allows_spread_inside_limit(tmp_path, monkeypatch):
     controller = _controller(tmp_path, monkeypatch)
-    controller.price_snapshot = {"fields": {"bid": 100.0, "ask": 100.2}}
+    _fresh_quote(controller, 100.0, 100.2)
     cycle = _cycle(max_spread_pct=1.0)
 
     assert controller._risk_guard_message_for_buy(cycle, {"sizing_price": 100.0}) is None
@@ -94,12 +109,16 @@ def test_risk_guard_max_cycles_counts_total_not_only_today(tmp_path, monkeypatch
 
 def test_auto_repeat_stops_when_total_max_cycles_reached(tmp_path, monkeypatch):
     controller = _controller(tmp_path, monkeypatch)
+    controller.adapter = RthFakeAdapter(is_open=True)
+    controller.connection.account = "SIM"
+    controller.contract = controller.adapter.qualify_stock("AAPL", "SMART", "USD", con_id=123)
     settings = StrategySettings(
         ticker="AAPL",
         investment_amount=1000.0,
         hard_risk_limits_enabled=True,
         max_cycles_per_ticker_day=1,
         auto_repeat=True,
+        contract_con_id=123,
     )
     complete = StrategyEngine.start_cycle(settings, 1, "SIM", 100.0, 0.0)
     complete.stage = Stage.CYCLE_COMPLETE

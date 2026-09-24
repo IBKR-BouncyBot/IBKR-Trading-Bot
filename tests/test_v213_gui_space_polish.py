@@ -16,7 +16,8 @@ def test_v213_tables_use_shared_space_polish_helpers():
     assert "def _polish_table_widget" in GUI
     assert "def _fit_table_height_to_rows" in GUI
     assert "def _cap_table_columns_for_horizontal_scroll" in GUI
-    assert "_cap_table_columns_for_horizontal_scroll(self.history_table" in GUI
+    assert "self.history_table, minimum=72, maximum=220, last_maximum=220" in GUI
+    assert "horizontal_scroll=Qt.ScrollBarAlwaysOn" in GUI
     assert "_polish_table_widget(self.recovery_compare_table" in GUI
     assert "stretch_last=False" in GUI
     assert "_auto_size_table_columns(table" in GUI

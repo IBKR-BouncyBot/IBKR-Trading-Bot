@@ -38,7 +38,8 @@ def _waiting_controller(
     settings.max_selected_price_age_seconds = 3.0
     controller = make_controller(controller_module, db, broker, settings)
     controller.storage.backup_database = lambda *args, **kwargs: None
-    cycle = StrategyEngine.start_cycle(settings, 1, "", 100.0, 0.0)
+    cycle = StrategyEngine.start_cycle(settings, 1, "DU_TEST", 100.0, 0.0)
+    cycle.con_id = broker.contract.con_id
     controller.active_cycle = cycle
     controller.storage.upsert_cycle(cycle)
     publish_fresh_price(controller, broker, 100.0)

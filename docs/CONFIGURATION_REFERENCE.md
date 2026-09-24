@@ -1,6 +1,6 @@
 # Configuration reference
 
-This document describes the persisted connection and strategy settings in v4.0.0. Values shown as defaults are the dataclass defaults used for a new configuration. Saved SQLite settings override them after the first run.
+This document describes the persisted connection and strategy settings in v5.0.0. Values shown as defaults are the dataclass defaults used for a new configuration. Saved SQLite settings override them after the first run.
 
 ## Connection settings
 
@@ -11,7 +11,7 @@ This document describes the persisted connection and strategy settings in v4.0.0
 | Host | `127.0.0.1` | TWS/Gateway API host. |
 | Port | `4001` | Socket port. The profile selector supplies the standard defaults. |
 | Client ID | `11` | IBKR API client ID. It must not conflict with another connected client that uses the same session. |
-| Account | blank | Optional routing override. Blank leaves `Order.account` unset and lets IBKR select the account. |
+| Account | blank | Optional selection for a new cycle. Blank requires one unambiguous managed account; the resolved account is persisted and pinned to cycle orders. Multiple accounts require explicit selection. |
 | Platform executable path | blank | Optional path used only by the Start TWS/Gateway helper. It is not a credential store. |
 | Market-data type | `0` (auto) | `0` best available, `1` live, `2` frozen, `3` delayed, `4` delayed-frozen. |
 
@@ -37,12 +37,12 @@ The profile selector supplies platform, mode, host, and port. Host and port rema
 | Contract conId | blank | Read-only exact positive IBKR contract ID. Production Start/confirm requires selecting it from API search results. |
 | Currency | `USD` | Read-only contract currency populated by the exact selector. Supported values are USD and EUR. |
 | Security type | `STK` | Only ordinary stock contracts are supported. |
-| Time in force | `GTC` | Used for submitted strategy orders. |
+| Time in force | `GTC` | Normal strategy-order default; the adapter accepts `DAY` or `GTC`. Automatic pre-close liquidation uses `DAY`. |
 | RTH only | on | Strategy orders use `outsideRth=False`; new submissions also require an open/known regular session. |
 
-The application supports one confirmed long ordinary stock cycle at a time. The route is always `SMART`; the exact API-selected contract must be denominated in USD or EUR and have a positive `conId`. Options, funds, CFDs, futures, forex, shorting, direct-exchange routing, and currencies outside USD/EUR are not supported. Each portable SQLite database uses one contract currency. A draft may switch currency before the first cycle; the first persisted cycle locks the database.
+The application supports one confirmed long ordinary stock cycle at a time. The route is always `SMART`; the exact API-selected contract must be denominated in USD or EUR and have a positive `conId`. Options, `FUND` contracts, CFDs, futures, forex, shorting, direct-exchange routing, and currencies outside USD/EUR are not supported. Each portable SQLite database uses one contract currency. A draft may switch currency before the first cycle; the first persisted cycle locks the database.
 
-During qualification, BouncyBot rechecks the selected symbol, `conId`, currency, `STK` type, SMART route, and primary exchange. When supplied by IBKR, `ContractDetails.validExchanges` must include SMART and `orderTypes` must include `MKT` and `TRAIL`. Whole-share quantities are validated against the contract's advertised minimum size and size increment. A BUY may be rounded down to a valid whole-share step before intent is stored; a SELL is never rounded down because that could leave an untracked remainder.
+During qualification, BouncyBot rechecks the selected symbol, `conId`, currency, `STK` type, SMART route, and primary exchange. IBKR must supply nonempty `ContractDetails.validExchanges` containing SMART and `orderTypes` containing `MKT` and `TRAIL`. Missing or incompatible capability metadata blocks qualification. Whole-share quantities are validated against the contract's advertised minimum size and size increment. A BUY may be rounded down to a valid whole-share step before intent is stored; a SELL is never rounded down because that could leave an untracked remainder.
 
 A non-zero commission in the database currency is included in net P/L. A non-zero commission reported in another currency is preserved in raw broker facts but excluded from local net P/L, and Auto-repeat is disabled after the current cycle because no FX conversion model is available.
 
@@ -70,7 +70,7 @@ ATR is calculated from actual ticker-update events observed by this running appl
 | Adapt Minimum profit with ATR | on | Applies the minimum-profit multiplier. Off retains the manual minimum-profit value. |
 | Block new BUY until ATR has enough RTH data | on | Leaves Stage 1 without an armed initial-drop trigger during warmup. |
 | Adapt Protective SELL with ATR | off | Applies the protective multiplier only when both protective SELL and this option are enabled. |
-| ATR period | `14` | Number of true-range periods. Readiness requires at least `period + 1` observed bar buckets; the newest bucket may still be forming. |
+| ATR period | `14` | Number of true-range periods. A fresh calculation requires at least `period + 1` observed bar buckets and finite positive ATR; the newest bucket may still be forming. A validated saved estimate can seed readiness during warmup. |
 | ATR bar duration | `60 seconds` | Width of application-observed OHLC bars. |
 | Initial-drop multiplier | `1.50` | `ATR% × multiplier`, clamped to the configured range. |
 | BUY-rebound multiplier | `0.75` | `ATR% × multiplier`, clamped. Zero is allowed where configured. |
@@ -94,18 +94,18 @@ If the warmup blocker is off, the strategy can use the currently configured perc
 
 ### Saved RTH ATR starting estimate
 
-Starting in v4.0.0, a validated ready ATR estimate is checkpointed in the existing SQLite `app_settings` table for the exact confirmed contract, currency, venue, trading/data profile, ATR period, and bar duration. At a verified open RTH session, that estimate can supply the starting ATR/ATR% while current-session bars warm up. It does not insert synthetic observations or make a quote fresh. The first ready current-session calculation replaces it. The GUI identifies the saved session and today's observed bar count.
+A validated ready ATR estimate is checkpointed in the existing SQLite `app_settings` table for the exact confirmed contract, currency, venue, trading/data profile, ATR period, and bar duration. At a verified open RTH session, that estimate can supply the starting ATR/ATR% while current-session bars warm up. It does not insert synthetic observations or make a quote fresh. The first ready current-session calculation replaces it. The GUI identifies the saved session and today's observed bar count.
 
-The seed must be no more than seven calendar days old and must contain finite positive, internally consistent values observed inside its recorded RTH window. Weekends and short holidays can therefore reuse the most recent observed session; the application does not guess missing exchange sessions. First use, an expired/corrupt/mismatched checkpoint, or a changed ATR period/bar duration without a matching checkpoint retains normal warmup. v3.9.0 did not store these checkpoints, so the first v4.0.0 session needs enough observations once. A same-session application/watchdog restart can also reuse a valid checkpoint. Current market-data, opening-delay, RTH, gap, spread, two-observation SELL, and broker-reconciliation guards still apply. A saved estimate is not evidence that today's volatility is unchanged.
+The seed must be no more than seven calendar days old and must contain finite positive, internally consistent values observed inside its recorded RTH window. Weekends and short holidays can therefore reuse the most recent observed session; the application does not guess missing exchange sessions. First use, an expired/corrupt/mismatched checkpoint, or a changed ATR period/bar duration without a matching checkpoint retains normal warmup. A database from before checkpoint support also needs normal warmup until a valid estimate has been saved. A same-session application/watchdog restart can also reuse a valid checkpoint. Current market-data, opening-delay, RTH, gap, spread, two-observation SELL, and broker-reconciliation guards still apply. A saved estimate is not evidence that today's volatility is unchanged.
 
 ## Protective SELL
 
 | Setting | Default | Meaning |
 |---|---:|---|
-| Enable Protective SELL | off | Submit a native SELL trail after a positive BUY fill. |
+| Enable Protective SELL | off | Submit a native SELL trail for the acquired quantity after the BUY reaches a terminal status. |
 | Protective SELL trailing stop | `3.00%` | Manual trail unless protective ATR adaptation is enabled and ready. |
 
-The protective order is a loss-limiting mechanism, not a guaranteed stop. If the normal profit exit becomes eligible, the controller cancels the protective SELL and waits until it is no longer working before submitting the final SELL.
+The protective order is a loss-limiting mechanism, not a guaranteed stop. While a partially filled BUY remains nonterminal, the controller supervises its remainder before placing protection. If the normal profit exit becomes eligible, the controller first checks replacement feasibility, then cancels the protective SELL and waits until it is no longer working before revalidating and submitting the final SELL.
 
 ## Slippage planning
 
@@ -132,10 +132,10 @@ This cannot guarantee a fill within the assumed buffer.
 
 | Setting | Default | Meaning |
 |---|---:|---|
-| Reinvest profits | on | Adds positive completed application net P/L for the ticker to the base investment amount. Losses do not reduce the base. |
+| Reinvest profits | on | Adds positive completed application net P/L for the selected ticker/conId to the base investment amount. Losses do not reduce the base. |
 | Auto repeat | on | Starts another cycle after completion unless stop-after-current-cycle is active or the enabled maximum completed-cycle cap has been reached. |
 
-The reinvestment calculation uses completed cycles stored by this application, not account-wide IBKR P/L. Because one database contains only one contract currency, these local totals are not mixed across USD and EUR. BouncyBot does not perform FX conversion.
+The reinvestment calculation uses completed cycles stored by this application for the selected ticker/conId, including legacy same-ticker rows with no conId. Rows for a different positive conId are excluded. It is not account-wide IBKR P/L. Because one database contains only one contract currency, these local totals are not mixed across USD and EUR. BouncyBot does not perform FX conversion.
 
 ## Data-quality and timing guards
 
@@ -157,21 +157,21 @@ The reinvestment calculation uses completed cycles stored by this application, n
 | Cancel SELL trail and liquidate before close | off | Stage 3: at the cutoff, requires a complete independently fresh non-crossed quote within Maximum spread, then submits an RTH-only `DAY` market SELL only when the executable bid is strictly above average BUY price; commissions are ignored. A working protective SELL is cancelled and confirmed terminal first. Stage 4: cancels the final native SELL trail, waits for terminal status, then sells the remaining app-owned shares. Market execution can still realize a loss. |
 | Liquidate before close | `5 min` | Cutoff before the contract-specific RTH close. Valid range `1-240 min`. The field is active only when the optional policy is enabled. |
 
-The first/last-minute entry windows, BUY cancellation window, and optional Stage-3/Stage-4 liquidation cutoff use the exact contract's effective session boundaries. IBKR `liquidHours` and `timeZoneId` provide the date, holiday, late-open, and early-close facts. For `LSE` and `LSEETF`, BouncyBot additionally caps the window at the verified 08:00-16:30 `Europe/London` continuous session. The conservative New York fallback is used only for recognized U.S. equity primary exchanges. A non-U.S. contract with missing, invalid, or unparseable session metadata fails closed; BouncyBot does not guess U.S. hours for a European listing.
+The first/last-minute entry windows, BUY cancellation window, and optional Stage-3/Stage-4 liquidation cutoff use the exact contract's effective session boundaries. IBKR ContractDetails `liquidHours` and `timeZoneId` provide the date, holiday, late-open, and early-close facts; price ticks do not supply this schedule. For `LSE` and `LSEETF`, BouncyBot additionally caps the window at the verified 08:00-16:30 `Europe/London` continuous session. No fallback schedule or timezone is assigned. Missing, invalid or unparseable authoritative session metadata blocks RTH-restricted submissions for every contract. The GUI displays hours and countdowns only when a usable authoritative window is available.
 
 The data-type, what-if, stale-data, ATR, RTH, Stage-3 field-level quote gate, and controller-state checks are independent of the optional hard-risk master where implemented. Turning off hard limits does not turn off the normal broker/data safety checks. Local socket state, Gateway/TWS upstream IBKR connectivity, post-reconnect reconciliation, and the requirement for an actual post-connect/post-recovery ticker event are controller invariants rather than user-disableable settings.
 
 ## Hard risk limits
 
-The hard-risk master is off by default. When it is on, a zero value disables the corresponding individual limit.
+The hard-risk master is off by default. It controls the loss, cycle-count, minimum-price, and gap limits below; zero disables an individual limit. Maximum spread is enforced independently of this master and remains active at its nonzero default.
 
 | Setting | Default | Scope |
 |---|---:|---|
-| Enable hard risk limits | off | Master for the numeric loss/count/price/spread/gap checks below. |
-| Maximum daily loss for ticker | `0` | Completed application net P/L for the selected ticker during the UTC trading date used by storage queries. |
-| Maximum total daily loss | `0` | Completed application net P/L across stored tickers for the date. |
-| Maximum completed cycles | `0` | Total completed-cycle cap for the selected ticker. The persisted field retains the historical name `max_cycles_per_ticker_day`, but runtime behavior is not per-day. |
-| Maximum consecutive losses | `0` | Consecutive completed losing application cycles. |
+| Enable hard risk limits | off | Master for the numeric loss/count/minimum-price/gap checks below; Maximum spread is independent. |
+| Maximum daily loss for ticker | `0` | Completed application net P/L for the selected ticker/conId, using the UTC date of each cycle’s `updated_at` field. |
+| Maximum total daily loss | `0` | Completed application net P/L across stored tickers, using the UTC date of each cycle’s `updated_at` field. |
+| Maximum completed cycles | `0` | Total completed-cycle cap for the selected ticker/conId. The persisted field retains the historical name `max_cycles_per_ticker_day`, but runtime behavior is not per-day. |
+| Maximum consecutive losses | `0` | Consecutive completed losing application cycles for the selected ticker/conId; storage examines up to the latest 100 completed cycles. |
 | Maximum spread | `1.00%` | Fixed user-configured bid/ask spread limit at BUY preflight and at the normal Stage-3 final-SELL/Stage-3 close-before-RTH quote gate. Live bid/ask values are compared with it but never rewrite it. It changes only through explicit user edits or loading the persisted setting. Set zero to disable the percentage ceiling; Stage-3 quote completeness and per-side freshness remain required. |
 | Minimum trade price | `0` | Selected price floor. Set zero to disable. |
 | Maximum gap from previous close | `0` | Absolute percentage gap. Set zero to disable. |
@@ -190,7 +190,7 @@ The v3.9.0 audit coalescer has no GUI control and no persisted setting. It chang
 
 Condition state is in memory and resets on a complete process restart. The restart may therefore create a new condition-entry event for a still-active state.
 
-## Runtime-only cycle fields
+## Persisted operational cycle fields
 
 The active `CycleState` stores a snapshot of settings and operational state, including:
 
@@ -215,3 +215,7 @@ Reviewed guards can be edited during an active cycle. Edits are saved as explici
 | Optional close-before-RTH liquidation policy | Existing restrictions remain; Stage-4 changes that would change cancellation/liquidation of a working SELL stay locked. |
 
 A working Stage-2 BUY retains its original partial-fill, safety-cancellation, and cutoff policy. A working Stage-4 SELL also retains its submitted terms. Quote-guard changes clear any first Stage-3 confirmation, so the next SELL requires fresh confirmation under the revised policy. BUY-only edits cannot retrospectively alter an already purchased position. Previously saved edits survive an application restart; reverting an edit clears the pending override. No change is made to the default values or trading formulas.
+
+## v5.0.0 guard interpretation
+
+`max_spread_pct` is validated and applied independently of `hard_risk_limits_enabled`. A nonzero spread ceiling requires valid fresh book evidence even when `stale_data_guard_enabled` is false. Identity is pinned to an unresolved cycle, including error/recovery paths; an editable draft does not authorize changing the account/contract of its orders. No new strategy setting is introduced.

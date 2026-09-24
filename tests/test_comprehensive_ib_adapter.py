@@ -32,6 +32,7 @@ class FakeOrder:
     def __init__(self, **kwargs: Any) -> None:
         self.__dict__.update(kwargs)
         self.orderId = kwargs.get("orderId", 101)
+        self.clientId = kwargs.get("clientId", 7)
         self.permId = kwargs.get("permId", 202)
 
 
@@ -96,7 +97,7 @@ class FakeIB:
         self.execution_values: list[Any] = []
         self.position_values: list[Any] = []
         self.account_values: Any = []
-        self.wrapper = SimpleNamespace(accounts=[])
+        self.wrapper = SimpleNamespace(accounts=[], clientId=7)
         self.next_trade: Any = None
 
     def isConnected(self) -> bool:
@@ -551,7 +552,7 @@ def test_market_data_auto_annotation_no_data_and_public_upstream_block(live_adap
     assert adapter.price_snapshot(contract).price == 88.0
 
 
-def test_rth_status_uses_contract_hours_cache_and_fallback(live_adapter: tuple[IbAsyncTwsAdapter, FakeIB], monkeypatch: pytest.MonkeyPatch) -> None:
+def test_rth_status_uses_contract_hours_cache(live_adapter: tuple[IbAsyncTwsAdapter, FakeIB], monkeypatch: pytest.MonkeyPatch) -> None:
     adapter, ib = live_adapter
     contract = stock_contract()
     now = datetime(2026, 7, 10, 15, 0, tzinfo=timezone.utc)
@@ -559,7 +560,6 @@ def test_rth_status_uses_contract_hours_cache_and_fallback(live_adapter: tuple[I
     assert open_status is not None and open_status.is_open is True
     assert adapter._parse_liquid_hours_window("", "America/New_York", now) is None
     assert adapter._parse_liquid_hours_window("20260710:CLOSED", "America/New_York", now).is_open is False
-    assert adapter._fallback_us_equity_rth(now).source == "fallback_us_equity"
 
     ib.contract_details = [SimpleNamespace(liquidHours="20260710:0930-1600", timeZoneId="America/New_York")]
     monkeypatch.setattr("app.ib_adapter.datetime", SimpleNamespace(now=lambda tz: now, strptime=datetime.strptime))

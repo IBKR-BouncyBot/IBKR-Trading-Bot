@@ -33,19 +33,6 @@ from .models import (
 # RTH tests while keeping Ruff-safe module imports.
 datetime = dt.datetime
 
-_US_EQUITY_PRIMARY_EXCHANGES = frozenset(
-    {
-        "AMEX",
-        "ARCA",
-        "BATS",
-        "IEX",
-        "NASDAQ",
-        "NYSE",
-        "NYSEARCA",
-        "NYSEMKT",
-    }
-)
-
 # IBKR ``liquidHours`` can describe a broader SMART-routing/liquidity envelope
 # than the continuous session in which an ordinary market order can reliably
 # execute.  Keep venue overrides deliberately narrow and evidence-based.  The
@@ -61,6 +48,23 @@ class BrokerAdapterError(RuntimeError):
     """Raised for broker/API failures that should pause trading and reconnect."""
 
     pass
+
+
+class BrokerSubmissionUnknownError(BrokerAdapterError):
+    """A transmission was attempted; its absence must never be assumed."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        order_ref: str,
+        order_id: Optional[int] = None,
+        perm_id: Optional[int] = None,
+    ) -> None:
+        super().__init__(message)
+        self.order_ref = order_ref
+        self.order_id = order_id
+        self.perm_id = perm_id
 
 
 @dataclass(slots=True)
@@ -551,7 +555,7 @@ class BrokerAdapter:
     def drain_broker_events(self) -> list[dict[str, Any]]:
         return []
 
-    def position_size(self, contract: QualifiedContract, account: str = "") -> Optional[float]:
+    def position_size(self, contract: QualifiedContract, account: str = "", *, refresh: bool = False) -> Optional[float]:
         return None
 
     def regular_trading_hours_status(self, contract: QualifiedContract) -> RthStatus:
@@ -647,6 +651,7 @@ class IbAsyncTwsAdapter(BrokerAdapter):
         self._order_errors_by_ref: dict[str, deque[dict[str, Any]]] = {}
         self._pending_order_errors: dict[int, deque[tuple[float, dict[str, Any]]]] = {}
         self._tickers: dict[tuple[int, str, str, str], Any] = {}
+        self._ticker_request_contracts: dict[tuple[int, str, str, str], QualifiedContract] = {}
         self._trades_by_ref: dict[str, Any] = {}
         self._market_data_type = 0  # logical request: 0 means auto best available.
         self._active_market_data_type: Optional[int] = None  # actual TWS mode currently applied.
@@ -770,6 +775,7 @@ class IbAsyncTwsAdapter(BrokerAdapter):
             # fresh update.  Timestamps and sequences remain cleared, so each
             # field must actually change again before it becomes actionable.
             reset["field_values"] = dict(meta.get("field_values") or {})
+            reset["require_price_ticks"] = bool(meta.get("require_price_ticks"))
             self._ticker_update_meta[ticker_id] = reset
         self._awaiting_fresh_market_data = True
 
@@ -778,9 +784,25 @@ class IbAsyncTwsAdapter(BrokerAdapter):
 
         IBKR code 1101 states that market-data subscriptions were lost.  The old
         handles can still contain cached values, so the next read must issue new
-        reqMktData requests rather than reuse those objects.
+        reqMktData requests. ib_async may reuse the Ticker object, so detach the
+        retired request mappings before it can belong to a new generation.
         """
+        wrapper = getattr(self.ib, "wrapper", None)
+        reverse = getattr(wrapper, "ticker2ReqId", {})
+        by_ticker = reverse.get("mktData", {}) if isinstance(reverse, dict) else {}
+        request_tickers = getattr(wrapper, "reqId2Ticker", None)
+        request_contracts = getattr(wrapper, "_reqId2Contract", None)
+        owned_ticker_ids = {id(ticker) for ticker in self._tickers.values()}
+        for ticker, req_id in list(by_ticker.items()):
+            if id(ticker) not in owned_ticker_ids:
+                continue
+            by_ticker.pop(ticker, None)
+            if isinstance(request_tickers, dict) and request_tickers.get(req_id) is ticker:
+                request_tickers.pop(req_id, None)
+                if isinstance(request_contracts, dict):
+                    request_contracts.pop(req_id, None)
         self._tickers.clear()
+        self._ticker_request_contracts.clear()
         self._ticker_keys_by_id.clear()
         self._ticker_update_meta.clear()
         self._awaiting_fresh_market_data = True
@@ -1116,9 +1138,15 @@ class IbAsyncTwsAdapter(BrokerAdapter):
                     changed_fields.append(name)
 
             # A raw price tick proves an update even when the numeric value did
-            # not move. Value changes remain a compatibility fallback for test
-            # doubles and for any supported ib_async path that omits ``ticks``.
-            updated_fields = set(changed_fields).union(explicitly_updated_fields)
+            # not move. Live subscriptions require raw field evidence; value
+            # comparisons alone remain only for legacy, manually seeded test
+            # metadata, never for a production subscription generation.
+            require_price_ticks = bool(previous.get("require_price_ticks"))
+            updated_fields = (
+                set(explicitly_updated_fields)
+                if require_price_ticks
+                else set(changed_fields).union(explicitly_updated_fields)
+            )
             field_update_sequences = dict(previous.get("field_update_sequences") or {})
             field_update_received_at = dict(previous.get("field_update_received_at") or {})
             field_update_received_monotonic = dict(
@@ -1165,8 +1193,10 @@ class IbAsyncTwsAdapter(BrokerAdapter):
                 "received_at": received_at,
                 "received_monotonic": received_monotonic,
                 "ticker_update_time": self._ticker_time_text(ticker_obj),
+                "require_price_ticks": require_price_ticks,
                 "field_tracking_source": (
-                    "raw_tick_types+value_changes"
+                    "raw_tick_types"
+                    if require_price_ticks else "raw_tick_types+value_changes"
                     if tick_tracking_available
                     else "value_changes"
                 ),
@@ -1274,6 +1304,8 @@ class IbAsyncTwsAdapter(BrokerAdapter):
             "event_type": event_type,
             "created_at": utc_now_iso(),
             "order_ref": str(order_ref or ""),
+            "account": str(getattr(execution, "acctNumber", "") or getattr(order, "account", "") or ""),
+            "con_id": getattr(contract, "conId", None),
             "order_id": getattr(order, "orderId", None) or getattr(execution, "orderId", None),
             "perm_id": getattr(order, "permId", None) or getattr(order_status, "permId", None) or getattr(execution, "permId", None),
             "status": getattr(order_status, "status", None),
@@ -1353,8 +1385,15 @@ class IbAsyncTwsAdapter(BrokerAdapter):
     def disconnect(self) -> None:
         connected = bool(self.ib is not None and self.ib.isConnected())
         if connected:
-            self._reset_market_data_session_state(cancel_existing=True)
-            self.ib.disconnect()
+            try:
+                self._reset_market_data_session_state(cancel_existing=True)
+            except Exception:
+                # Closing the socket terminates subscriptions even if an
+                # individual cancellation could not be completed.
+                pass
+            finally:
+                self.ib.disconnect()
+                self._reset_market_data_session_state(cancel_existing=False)
         else:
             self._reset_market_data_session_state(cancel_existing=False)
         self._set_upstream_state(
@@ -1413,19 +1452,39 @@ class IbAsyncTwsAdapter(BrokerAdapter):
         self._auto_selected_market_data_type = None
         self._last_auto_rescan_monotonic = 0.0
 
+    def _cancel_market_data_ticker(self, ticker_obj: Any) -> None:
+        """Cancel before replacement and detach the retired request's ticks.
+
+        ib_async retains Tickers by conId and endTicker leaves reqId2Ticker
+        populated. Detaching that exact retired mapping prevents a late packet
+        from refreshing the reused Ticker in a new subscription generation.
+        """
+        contract = getattr(ticker_obj, "contract", None)
+        if contract is None:
+            raise BrokerAdapterError("Cannot identify the market-data subscription to cancel.")
+        wrapper = getattr(self.ib, "wrapper", None)
+        reverse = getattr(wrapper, "ticker2ReqId", {})
+        by_ticker = reverse.get("mktData", {}) if isinstance(reverse, dict) else {}
+        req_id = by_ticker.get(ticker_obj) if by_ticker else None
+        cancelled = self.ib.cancelMktData(contract)
+        if cancelled is False:
+            raise BrokerAdapterError("Market-data cancellation was not confirmed; replacement is blocked.")
+        request_tickers = getattr(wrapper, "reqId2Ticker", None)
+        if isinstance(request_tickers, dict) and req_id is not None and request_tickers.get(req_id) is ticker_obj:
+            request_tickers.pop(req_id, None)
+        for key, value in list(self._tickers.items()):
+            if value is ticker_obj:
+                self._tickers.pop(key, None)
+                self._ticker_request_contracts.pop(key, None)
+        self._ticker_keys_by_id.pop(id(ticker_obj), None)
+        self._ticker_update_meta.pop(id(ticker_obj), None)
+
     def _clear_market_data_subscriptions(self) -> None:
         if self.is_connected():
-            for ticker_obj in list(self._tickers.values()):
-                try:
-                    contract = getattr(ticker_obj, "contract", None)
-                    if contract is not None:
-                        self.ib.cancelMktData(contract)
-                except Exception:
-                    pass
-        self._tickers.clear()
-        self._ticker_keys_by_id.clear()
-        self._ticker_update_meta.clear()
-        self._awaiting_fresh_market_data = True
+            unique_tickers = {id(value): value for value in self._tickers.values()}
+            for ticker_obj in unique_tickers.values():
+                self._cancel_market_data_ticker(ticker_obj)
+        self._forget_market_data_subscriptions()
 
     def _apply_market_data_type_to_tws(self, market_data_type: int) -> None:
         """Apply a concrete TWS market-data mode. Auto mode uses this internally."""
@@ -2135,8 +2194,12 @@ class IbAsyncTwsAdapter(BrokerAdapter):
         """
         key = self._subscription_key(contract, generic_tick_list)
         if key not in self._tickers:
+            for old_key, old_ticker in list(self._tickers.items()):
+                if old_key[0] == key[0]:
+                    self._cancel_market_data_ticker(old_ticker)
             ticker_obj = self.ib.reqMktData(contract.raw, generic_tick_list, False, False)
             self._tickers[key] = ticker_obj
+            self._ticker_request_contracts[key] = contract
             self._market_data_subscription_generation += 1
             ticker_id = id(ticker_obj)
             self._ticker_keys_by_id[ticker_id] = key
@@ -2144,6 +2207,8 @@ class IbAsyncTwsAdapter(BrokerAdapter):
                 key,
                 f"{self._subscription_id(key)}|g{self._market_data_subscription_generation}",
             )
+            self._ticker_update_meta[ticker_id]["field_values"] = self._fields_from_ticker(ticker_obj)
+            self._ticker_update_meta[ticker_id]["require_price_ticks"] = True
             self._market_data_resubscribe_required = False
             self._awaiting_fresh_market_data = True
         ticker_obj = self._tickers[key]
@@ -2516,6 +2581,20 @@ class IbAsyncTwsAdapter(BrokerAdapter):
 
     def _price_snapshot_for_active_mode(self, contract: QualifiedContract, timeout: float = 1.0) -> MarketPriceSnapshot:
         wait_seconds = max(0.0, float(timeout))
+        con_id = int(contract.con_id or getattr(contract.raw, "conId", 0) or 0)
+        default_key = self._subscription_key(contract, "")
+        for key, ticker_obj in self._tickers.items():
+            if key[0] != con_id or key == default_key:
+                continue
+            request_contract = self._ticker_request_contracts.get(key, contract)
+            note = key[2] if key[2] != str(contract.exchange).upper() else ""
+            active = self._snapshot_from_ticker(ticker_obj, request_contract, note)
+            active.generic_ticks = "" if key[1] == "default" else key[1]
+            # Nonblocking polls must let a pending fallback receive its first
+            # update. Replacing it on every poll can cancel each request before
+            # the broker responds. Positive-budget probes may still try routes.
+            if self._snapshot_has_subscription_data(active) or wait_seconds <= 0:
+                return active
         snapshot = self._try_price_for_contract(contract, wait_seconds, "")
         if self._snapshot_has_subscription_data(snapshot):
             return snapshot
@@ -2677,32 +2756,6 @@ class IbAsyncTwsAdapter(BrokerAdapter):
         return self.price_snapshot(contract, timeout=timeout).price
 
     @staticmethod
-    def _fallback_us_equity_rth(now_utc: Optional[dt.datetime] = None) -> RthStatus:
-        now_utc = now_utc or datetime.now(dt.timezone.utc)
-        try:
-            eastern = ZoneInfo("America/New_York")
-            local = now_utc.astimezone(eastern)
-            open_time = dt.time(9, 30)
-            close_time = dt.time(16, 0)
-            is_trading_day = local.weekday() < 5
-            is_open = is_trading_day and open_time <= local.time() < close_time
-            session_open = local.replace(hour=9, minute=30, second=0, microsecond=0)
-            session_close = local.replace(hour=16, minute=0, second=0, microsecond=0)
-            detail = local.strftime("%Y-%m-%d %H:%M:%S %Z")
-            return RthStatus(
-                is_open=is_open,
-                source="fallback_us_equity",
-                message=("US equity RTH fallback open" if is_open else "US equity RTH fallback closed") + f" at {detail}",
-                checked_at=now_utc.isoformat(),
-                time_zone="America/New_York",
-                session_open=session_open.isoformat() if is_trading_day else "",
-                session_close=session_close.isoformat() if is_trading_day else "",
-                session_date=local.strftime("%Y%m%d"),
-            )
-        except Exception:
-            return RthStatus(False, "fallback_failed", "Could not determine regular trading hours; failing closed.", now_utc.isoformat())
-
-    @staticmethod
     def _parse_liquid_hours_window(
         liquid_hours: str,
         time_zone: str,
@@ -2712,7 +2765,7 @@ class IbAsyncTwsAdapter(BrokerAdapter):
             return None
         now_utc = now_utc or datetime.now(dt.timezone.utc)
         try:
-            tz = ZoneInfo(time_zone or "America/New_York")
+            tz = ZoneInfo(time_zone)
         except Exception:
             return RthStatus(
                 False,
@@ -2820,15 +2873,6 @@ class IbAsyncTwsAdapter(BrokerAdapter):
                 session_date=today,
             )
         return None
-
-    @staticmethod
-    def _may_use_us_equity_rth_fallback(contract: QualifiedContract) -> bool:
-        primary = str(
-            contract.primary_exchange
-            or getattr(contract.raw, "primaryExchange", "")
-            or ""
-        ).upper().strip()
-        return primary in _US_EQUITY_PRIMARY_EXCHANGES
 
     @staticmethod
     def _primary_exchange_for_contract(contract: QualifiedContract) -> str:
@@ -2942,7 +2986,7 @@ class IbAsyncTwsAdapter(BrokerAdapter):
         return RthStatus(
             False,
             "contract_rth_unavailable",
-            message + " Trading is blocked because a non-US contract cannot use US fallback hours.",
+            message + " Regular trading hours are unavailable; trading is blocked.",
             now_utc.isoformat(),
         )
 
@@ -3010,14 +3054,9 @@ class IbAsyncTwsAdapter(BrokerAdapter):
             details = list(self.ib.reqContractDetails(contract.raw) or [])
             self.ib.sleep(0.25)
         except Exception as exc:
-            if self._may_use_us_equity_rth_fallback(contract):
-                status = self._fallback_us_equity_rth()
-                status.source = "fallback_after_contract_details_error"
-                status.message = f"Could not request contract liquidHours ({exc}); {status.message}"
-            else:
-                status = self._missing_contract_rth_status(
-                    f"Could not request contract liquidHours ({exc})."
-                )
+            status = self._missing_contract_rth_status(
+                f"Could not request contract liquidHours ({exc})."
+            )
             self._rth_cache[cache_key] = (now_mono, status)
             return status
         for detail in details:
@@ -3026,14 +3065,11 @@ class IbAsyncTwsAdapter(BrokerAdapter):
             if not liquid:
                 continue
             if not tz_name:
-                if self._may_use_us_equity_rth_fallback(contract):
-                    tz_name = "America/New_York"
-                else:
-                    status = self._missing_contract_rth_status(
-                        "IBKR returned contract liquidHours without a timeZoneId."
-                    )
-                    self._rth_cache[cache_key] = (now_mono, status)
-                    return status
+                status = self._missing_contract_rth_status(
+                    "IBKR returned contract liquidHours without a timeZoneId."
+                )
+                self._rth_cache[cache_key] = (now_mono, status)
+                return status
             parsed = self._parse_liquid_hours_window(liquid, tz_name)
             if parsed is not None:
                 parsed = self._apply_primary_exchange_continuous_session(
@@ -3042,13 +3078,9 @@ class IbAsyncTwsAdapter(BrokerAdapter):
                 )
                 self._rth_cache[cache_key] = (now_mono, parsed)
                 return parsed
-        if self._may_use_us_equity_rth_fallback(contract):
-            status = self._fallback_us_equity_rth()
-            status.source = "fallback_no_contract_liquid_hours"
-        else:
-            status = self._missing_contract_rth_status(
-                "IBKR returned no usable contract liquidHours metadata."
-            )
+        status = self._missing_contract_rth_status(
+            "IBKR returned no usable contract liquidHours metadata."
+        )
         self._rth_cache[cache_key] = (now_mono, status)
         return status
 
@@ -3297,18 +3329,8 @@ class IbAsyncTwsAdapter(BrokerAdapter):
                 order.account = account
             except Exception:
                 pass
-        trade = self.ib.placeOrder(contract.raw, order)
-        self.ib.sleep(0.75)
-        self._trades_by_ref[order_ref] = trade
-        self._bind_pending_order_errors(trade)
-        status = getattr(getattr(trade, "orderStatus", None), "status", "Submitted") or "Submitted"
-        order_id = getattr(getattr(trade, "order", None), "orderId", None)
-        perm_id = getattr(getattr(trade, "order", None), "permId", None) or getattr(getattr(trade, "orderStatus", None), "permId", None)
-        return OrderHandle(
-            order_ref=order_ref,
-            order_id=int(order_id) if order_id is not None else None,
-            perm_id=int(perm_id) if perm_id else None,
-            status=str(status),
+        return self._submit_live_order(
+            contract, order, order_ref,
             raw={
                 "action": side,
                 "orderType": "TRAIL",
@@ -3363,18 +3385,8 @@ class IbAsyncTwsAdapter(BrokerAdapter):
                 order.account = account
             except Exception:
                 pass
-        trade = self.ib.placeOrder(contract.raw, order)
-        self.ib.sleep(0.75)
-        self._trades_by_ref[order_ref] = trade
-        self._bind_pending_order_errors(trade)
-        status = getattr(getattr(trade, "orderStatus", None), "status", "Submitted") or "Submitted"
-        order_id = getattr(getattr(trade, "order", None), "orderId", None)
-        perm_id = getattr(getattr(trade, "order", None), "permId", None) or getattr(getattr(trade, "orderStatus", None), "permId", None)
-        return OrderHandle(
-            order_ref=order_ref,
-            order_id=int(order_id) if order_id is not None else None,
-            perm_id=int(perm_id) if perm_id else None,
-            status=str(status),
+        return self._submit_live_order(
+            contract, order, order_ref,
             raw={
                 "action": side,
                 "orderType": "MKT",
@@ -3383,6 +3395,55 @@ class IbAsyncTwsAdapter(BrokerAdapter):
             },
         )
 
+    def _submit_live_order(
+        self,
+        contract: QualifiedContract,
+        order: Any,
+        order_ref: str,
+        *,
+        raw: dict[str, Any],
+    ) -> OrderHandle:
+        """Keep a possibly transmitted order owned across every later failure."""
+        trade = None
+        try:
+            trade = self.ib.placeOrder(contract.raw, order)
+            if trade is None:
+                raise RuntimeError("IBKR returned no Trade after the submission attempt.")
+            self._trades_by_ref[order_ref] = trade
+            self._bind_pending_order_errors(trade)
+            self.ib.sleep(0.75)
+            status = getattr(getattr(trade, "orderStatus", None), "status", "Submitted") or "Submitted"
+            submitted_order = getattr(trade, "order", order)
+            order_id = getattr(submitted_order, "orderId", None)
+            perm_id = getattr(submitted_order, "permId", None) or getattr(getattr(trade, "orderStatus", None), "permId", None)
+            return OrderHandle(
+                order_ref=order_ref,
+                order_id=int(order_id) if order_id is not None else None,
+                perm_id=int(perm_id) if perm_id else None,
+                status=str(status),
+                raw={
+                    **raw,
+                    "account": str(getattr(submitted_order, "account", "") or ""),
+                    "con_id": contract.con_id or getattr(contract.raw, "conId", None),
+                },
+            )
+        except Exception as exc:
+            submitted_order = getattr(trade, "order", order)
+            try:
+                order_id = int(getattr(submitted_order, "orderId", 0) or 0) or None
+            except (TypeError, ValueError, OverflowError):
+                order_id = None
+            try:
+                perm_id = int(getattr(submitted_order, "permId", 0) or 0) or None
+            except (TypeError, ValueError, OverflowError):
+                perm_id = None
+            raise BrokerSubmissionUnknownError(
+                f"Order submission outcome is unknown for {order_ref}: {exc}",
+                order_ref=order_ref,
+                order_id=order_id,
+                perm_id=perm_id,
+            ) from exc
+
     def cancel_order(self, order_ref: str, order_id: Optional[int] = None) -> None:
         if not self.is_connected():
             raise BrokerAdapterError("Not connected to TWS.")
@@ -3390,18 +3451,21 @@ class IbAsyncTwsAdapter(BrokerAdapter):
         if trade is None:
             self.refresh_open_trades_cache(force=True)
             trade = self._trades_by_ref.get(order_ref)
-        if trade is not None:
-            self.ib.cancelOrder(trade.order)
-            self.ib.sleep(0.25)
-            return
-        if order_id is not None:
-            self.refresh_open_trades_cache(force=True)
-            for cached_trade in self._trades_by_ref.values():
-                if getattr(cached_trade.order, "orderId", None) == order_id:
-                    self.ib.cancelOrder(cached_trade.order)
-                    self.ib.sleep(0.25)
-                    return
-        raise BrokerAdapterError(f"Could not find open order to cancel: {order_ref}")
+        if trade is None:
+            raise BrokerAdapterError(f"Could not find open order to cancel: {order_ref}")
+        order = getattr(trade, "order", None)
+        if order is None or str(getattr(order, "orderRef", "") or "") != order_ref:
+            raise BrokerAdapterError("Cancellation blocked: the broker order reference does not match.")
+        client_id = getattr(getattr(self.ib, "client", None), "clientId", None)
+        if client_id is None:
+            client_id = getattr(getattr(self.ib, "wrapper", None), "clientId", None)
+        order_client_id = getattr(order, "clientId", None)
+        if client_id is None or order_client_id is None or client_id != order_client_id or int(client_id) < 0:
+            raise BrokerAdapterError("Cancellation blocked: exact current-client ownership is not established.")
+        if order_id is not None and getattr(order, "orderId", None) != order_id:
+            raise BrokerAdapterError("Cancellation blocked: the broker order ID does not match.")
+        self.ib.cancelOrder(order)
+        self.ib.sleep(0.25)
 
     def refresh_open_trades_cache(
         self,
@@ -3507,6 +3571,8 @@ class IbAsyncTwsAdapter(BrokerAdapter):
             commission=total_commission,
             executions=executions,
             raw={
+                "account": str(getattr(order, "account", "") or ""),
+                "con_id": getattr(getattr(trade, "contract", None), "conId", None),
                 "action": getattr(order, "action", ""),
                 "orderType": getattr(order, "orderType", ""),
                 "totalQuantity": getattr(order, "totalQuantity", None),
@@ -3895,15 +3961,21 @@ class IbAsyncTwsAdapter(BrokerAdapter):
             result.append(item)
         return result
 
-    def position_size(self, contract: QualifiedContract, account: str = "") -> Optional[float]:
+    def position_size(self, contract: QualifiedContract, account: str = "", *, refresh: bool = False) -> Optional[float]:
         if not self.is_connected():
             return None
         wanted_con_id = int(contract.con_id or getattr(contract.raw, "conId", 0) or 0)
         wanted_symbol = str(contract.ticker or getattr(contract.raw, "symbol", "") or "").upper()
         account = account.strip()
+        if refresh and (wanted_con_id <= 0 or not account):
+            return None
         try:
-            positions = list(self.ib.positions() or [])
+            # reqPositions blocks until positionEnd in ib_async. A failed or
+            # unavailable refresh is unknown, never permission to use the cache.
+            positions = list(self.ib.reqPositions()) if refresh else list(self.ib.positions() or [])
         except Exception:
+            if refresh:
+                return None
             try:
                 positions = list(self.ib.reqPositions() or [])
                 self.ib.sleep(0.5)
@@ -3914,7 +3986,7 @@ class IbAsyncTwsAdapter(BrokerAdapter):
         for pos in positions:
             pos_contract = getattr(pos, "contract", None)
             pos_account = str(getattr(pos, "account", "") or "")
-            if account and pos_account and pos_account != account:
+            if account and pos_account != account:
                 continue
             pos_con_id = int(getattr(pos_contract, "conId", 0) or 0) if pos_contract is not None else 0
             pos_symbol = str(getattr(pos_contract, "symbol", "") or "").upper() if pos_contract is not None else ""
@@ -3928,5 +4000,5 @@ class IbAsyncTwsAdapter(BrokerAdapter):
                     found = True
                 except Exception:
                     pass
-        return total if found else None
-
+        # A completed authoritative empty snapshot proves a zero position.
+        return total if found or refresh else None

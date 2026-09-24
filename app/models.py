@@ -813,6 +813,14 @@ class StrategySettings:
             if atr_min_pct is None or atr_max_pct is None or atr_min_pct <= 0 or atr_max_pct <= 0 or atr_min_pct >= atr_max_pct:
                 errors.append("ATR min/max percentage bounds must be positive and min must be below max.")
 
+        max_spread_pct = _validation_float(self.max_spread_pct)
+        if max_spread_pct is None or max_spread_pct < 0:
+            errors.append("Maximum spread must be a finite number, zero or greater.")
+        if max_spread_pct is not None and max_spread_pct > 0:
+            quote_age = _validation_float(self.max_bid_ask_age_seconds)
+            if quote_age is None or quote_age <= 0:
+                errors.append("Spread guard bid/ask age must be greater than zero seconds.")
+
         if self.hard_risk_limits_enabled:
             max_daily_loss_ticker = _validation_float(self.max_daily_loss_ticker)
             max_daily_loss_total = _validation_float(self.max_daily_loss_total)
@@ -822,10 +830,9 @@ class StrategySettings:
             max_consecutive_losses = _validation_int(self.max_consecutive_losses)
             if max_cycles_per_ticker_day is None or max_consecutive_losses is None or max_cycles_per_ticker_day < 0 or max_consecutive_losses < 0:
                 errors.append("Cycle and consecutive-loss limits must be zero or greater.")
-            max_spread_pct = _validation_float(self.max_spread_pct)
             max_gap_from_prev_close_pct = _validation_float(self.max_gap_from_prev_close_pct)
-            if max_spread_pct is None or max_gap_from_prev_close_pct is None or max_spread_pct < 0 or max_gap_from_prev_close_pct < 0:
-                errors.append("Spread and gap limits must be zero or greater.")
+            if max_gap_from_prev_close_pct is None or max_gap_from_prev_close_pct < 0:
+                errors.append("Gap limit must be zero or greater.")
             min_trade_price = _validation_float(self.min_trade_price)
             if min_trade_price is None or min_trade_price < 0:
                 errors.append("Minimum trade price must be zero or greater.")

@@ -202,7 +202,7 @@ def test_non_us_contract_without_liquid_hours_fails_closed(
     status = adapter.regular_trading_hours_status(eur)
     assert status.is_open is False
     assert status.source == "contract_rth_unavailable"
-    assert "cannot use US fallback" in status.message
+    assert "Regular trading hours are unavailable" in status.message
 
     us_raw = FakeStock("AAPL", "SMART", "USD", primaryExchange="NASDAQ")
     us_raw.conId = 1002
@@ -216,7 +216,9 @@ def test_non_us_contract_without_liquid_hours_fails_closed(
     )
     adapter._rth_cache.clear()
     us_status = adapter.regular_trading_hours_status(us)
-    assert us_status.source == "fallback_no_contract_liquid_hours"
+    assert us_status.source == "contract_rth_unavailable"
+    assert us_status.is_open is False
+    assert us_status.session_open == us_status.session_close == ""
 
 
 def test_european_liquid_hours_use_contract_timezone(

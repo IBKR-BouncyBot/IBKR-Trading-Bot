@@ -89,6 +89,9 @@ def _controller(tmp_path: Path, monkeypatch, adapter):
 
 
 def _buy_action(cycle):
+    # These tests isolate intent durability/account ownership without a quote
+    # feed. The independent spread guard has dedicated quote-evidence tests.
+    cycle.max_spread_pct = 0.0
     cycle.buy_order_ref = "IBKRBOT|AAPL|CYCLE-000001|TEST|BUY_TRAIL"
     cycle.stage = Stage.BUY_TRAIL_ACTIVE
     return StrategyAction(
@@ -162,7 +165,10 @@ def test_live_strategy_start_allows_blank_connection_account(tmp_path, monkeypat
     controller._start_strategy(settings)
 
     assert controller.active_cycle is not None
-    assert controller.active_cycle.account == ""
+    # The GUI override remains optional, but execution pins the uniquely
+    # confirmed managed account rather than leaving broker routing ambiguous.
+    assert controller.connection.account == ""
+    assert controller.active_cycle.account == "SIM"
     assert controller.active_cycle.stage == Stage.WAIT_INITIAL_DROP
 
 
@@ -188,10 +194,12 @@ def test_explicit_live_account_override_is_still_validated(tmp_path, monkeypatch
 
     assert adapter.place_calls == 0
     assert controller.active_cycle is not None
-    assert "not in the IBKR managed-account list" in (controller.active_cycle.error_message or "")
+    assert controller.active_cycle.stage == Stage.MANUAL_REVIEW
+    assert "DU_NOT_MANAGED" in (controller.active_cycle.error_message or "")
+    assert "not confirmed in the broker managed accounts" in (controller.active_cycle.error_message or "")
 
 
-def test_live_buy_allows_blank_account_and_delegates_routing_to_ibkr(tmp_path, monkeypatch):
+def test_live_buy_binds_unique_managed_account_when_override_is_blank(tmp_path, monkeypatch):
     adapter = _BaseSubmitAdapter()
     controller = _controller(tmp_path, monkeypatch, adapter)
     controller.connection = ConnectionSettings(account="", trading_mode="live")
@@ -208,13 +216,17 @@ def test_live_buy_allows_blank_account_and_delegates_routing_to_ibkr(tmp_path, m
     cycle = StrategyEngine.start_cycle(settings, 1, "", 100.0, 0.0)
     cycle.con_id = 123
     controller.storage.upsert_cycle(cycle)
+    # Match normal Start: resolve the new cycle before creating an order ref.
+    # An already exposed legacy cycle requires exact-order account evidence.
+    assert controller._bind_cycle_account(cycle) is None
 
     controller._place_trailing_order(cycle, _buy_action(cycle), "BUY")
 
     assert adapter.place_calls == 1
     assert adapter.position_calls == 0
     assert adapter.last_place_kwargs is not None
-    assert adapter.last_place_kwargs["account"] == ""
+    assert controller.connection.account == ""
+    assert adapter.last_place_kwargs["account"] == "SIM"
     assert controller.active_cycle is not None
     assert controller.active_cycle.buy_status == "Submitted"
 
@@ -242,6 +254,7 @@ def test_buy_preflight_blocks_unsold_app_owned_position(tmp_path, monkeypatch):
     settings = StrategySettings(ticker="AAPL", what_if_check_enabled=False, block_delayed_data_in_live=False, stale_data_guard_enabled=False, volatility_filter_enabled=False, session_timing_guard_enabled=False, atr_adaptive_enabled=False, atr_block_new_buy_until_ready=False)
 
     prior = StrategyEngine.start_cycle(settings, 1, "SIM", 100.0, 0.0)
+    prior.con_id = 123
     prior.stage = Stage.STOPPED
     prior.buy_filled_qty = 3
     prior.avg_buy_price = 99.0
@@ -251,13 +264,18 @@ def test_buy_preflight_blocks_unsold_app_owned_position(tmp_path, monkeypatch):
     cycle.con_id = 123
     controller.storage.upsert_cycle(cycle)
 
+    # Preserve the detailed app-owned quantity assertion; the new global
+    # unresolved-cycle gate now stops submission even before BUY preflight.
+    blocker = controller._app_owned_position_blocker_for_buy(cycle)
+    assert blocker is not None
+    assert "3 unsold app-owned AAPL shares" in blocker["message"]
+    assert "Manual or externally acquired broker holdings are not counted" in blocker["message"]
     controller._place_trailing_order(cycle, _buy_action(cycle), "BUY")
 
     assert adapter.place_calls == 0
     assert controller.active_cycle is not None
-    assert controller.active_cycle.stage == Stage.WAIT_INITIAL_DROP
-    assert "3 unsold app-owned AAPL shares" in (controller.active_cycle.error_message or "")
-    assert "Manual or externally acquired broker holdings are not counted" in (controller.active_cycle.error_message or "")
+    assert controller.active_cycle.stage == Stage.MANUAL_REVIEW
+    assert "Multiple unresolved cycles" in (controller.active_cycle.error_message or "")
 
 
 def test_manually_resolved_app_position_does_not_block_new_buy(tmp_path, monkeypatch):
@@ -266,6 +284,7 @@ def test_manually_resolved_app_position_does_not_block_new_buy(tmp_path, monkeyp
     settings = StrategySettings(ticker="AAPL", what_if_check_enabled=False, block_delayed_data_in_live=False, stale_data_guard_enabled=False, volatility_filter_enabled=False, session_timing_guard_enabled=False, atr_adaptive_enabled=False, atr_block_new_buy_until_ready=False)
 
     prior = StrategyEngine.start_cycle(settings, 1, "SIM", 100.0, 0.0)
+    prior.con_id = 123
     prior.stage = Stage.STOPPED
     prior.buy_filled_qty = 3
     prior.avg_buy_price = 99.0

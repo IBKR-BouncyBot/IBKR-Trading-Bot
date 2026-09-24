@@ -68,13 +68,17 @@ class DeterministicBrokerAdapter(BrokerAdapter):
         self.process_event_calls = 0
         self.next_order_id = 1000
         self.fail_operations: set[str] = set()
-        self.accounts = ["DU_TEST"]
+        # Historical fixtures explicitly use both synthetic account names.
+        # Tests that exercise automatic selection must select one account.
+        self.accounts = ["DU_TEST", "SIM"]
 
     @property
     def subscription_id(self) -> str:
         return f"{self.contract.ticker}:{self.contract.con_id}:g{self.subscription_generation}"
 
     def _make_snapshot(self, *, price: float, sequence: int) -> MarketPriceSnapshot:
+        received_at = utc_now_iso() if sequence > 0 else ""
+        names = ("bid", "ask", "last", "close")
         return MarketPriceSnapshot(
             price=float(price),
             source="last",
@@ -97,6 +101,22 @@ class DeterministicBrokerAdapter(BrokerAdapter):
             market_data_update_age_seconds=0.0 if sequence > 0 else None,
             market_data_event_tracking=True,
             market_data_event_tracking_available=True,
+            market_data_field_tracking=True,
+            market_data_field_tracking_source="deterministic_price_event",
+            market_data_tick_types=[1, 2, 4, 9] if sequence > 0 else [],
+            field_update_sequences={name: sequence for name in names},
+            field_update_received_at={name: received_at for name in names},
+            field_update_age_seconds={name: 0.0 if sequence > 0 else None for name in names},
+            fields_updated_in_event=list(names) if sequence > 0 else [],
+            quote_update_sequence=sequence,
+            quote_update_received_at=received_at,
+            quote_update_age_seconds=0.0 if sequence > 0 else None,
+            selected_price_basis="last",
+            selected_price_basis_fields=["last"],
+            selected_price_basis_update_sequence=sequence,
+            selected_price_basis_received_at=received_at,
+            selected_price_basis_age_seconds=0.0 if sequence > 0 else None,
+            selected_price_basis_updated_in_event=sequence > 0,
             upstream_connected=self.upstream_connected,
             upstream_state=self.upstream_state,
             upstream_message=self.upstream_message,
@@ -215,6 +235,9 @@ class DeterministicBrokerAdapter(BrokerAdapter):
         snapshot.timestamp = timestamp or utc_now_iso()
         snapshot.ticker_update_time = snapshot.timestamp
         snapshot.market_data_update_received_at = snapshot.timestamp
+        snapshot.field_update_received_at = {name: snapshot.timestamp for name in snapshot.fields}
+        snapshot.quote_update_received_at = snapshot.timestamp
+        snapshot.selected_price_basis_received_at = snapshot.timestamp
         self._snapshot = snapshot
         self.awaiting_fresh_market_data = False
         return deepcopy(snapshot)
@@ -270,6 +293,9 @@ class DeterministicBrokerAdapter(BrokerAdapter):
         order_id = self.next_order_id
         perm_id = order_id + 100_000
         raw = {"order_type": order_type, **deepcopy(kwargs)}
+        contract = kwargs.get("contract", self.contract)
+        raw["con_id"] = contract.con_id
+        raw["account"] = str(kwargs.get("account") or self.accounts[0])
         state = PolledOrderState(
             order_ref=order_ref,
             order_id=order_id,
@@ -293,6 +319,8 @@ class DeterministicBrokerAdapter(BrokerAdapter):
                 "perm_id": perm_id,
                 "status": "Submitted",
                 "ticker": self.contract.ticker,
+                "account": raw["account"],
+                "con_id": raw["con_id"],
             }
         )
         return OrderHandle(order_ref, order_id, perm_id, "Submitted", raw)
@@ -320,6 +348,8 @@ class DeterministicBrokerAdapter(BrokerAdapter):
                 "perm_id": state.perm_id,
                 "status": "Cancelled",
                 "ticker": self.contract.ticker,
+                "account": state.raw.get("account", ""),
+                "con_id": state.raw.get("con_id", self.contract.con_id),
             }
         )
 
@@ -356,7 +386,8 @@ class DeterministicBrokerAdapter(BrokerAdapter):
             "execution_id": exec_id,
             "execId": exec_id,
             "time": utc_now_iso(),
-            "account": "",
+            "account": state.raw.get("account", ""),
+            "con_id": state.raw.get("con_id", self.contract.con_id),
         }
         executions = [*state.executions, execution]
         new_state = replace(
@@ -389,6 +420,8 @@ class DeterministicBrokerAdapter(BrokerAdapter):
                     "filled": cumulative,
                     "remaining": remaining,
                     "ticker": self.contract.ticker,
+                    "account": state.raw.get("account", ""),
+                    "con_id": state.raw.get("con_id", self.contract.con_id),
                 },
             ]
         )
@@ -403,6 +436,8 @@ class DeterministicBrokerAdapter(BrokerAdapter):
                     "execution_id": exec_id,
                     "commission": float(commission),
                     "ticker": self.contract.ticker,
+                    "account": state.raw.get("account", ""),
+                    "con_id": state.raw.get("con_id", self.contract.con_id),
                 }
             )
         return deepcopy(new_state)
@@ -432,8 +467,8 @@ class DeterministicBrokerAdapter(BrokerAdapter):
         self.events.clear()
         return deepcopy(result)
 
-    def position_size(self, contract: QualifiedContract, account: str = "") -> Optional[float]:
-        del contract, account
+    def position_size(self, contract: QualifiedContract, account: str = "", *, refresh: bool = False) -> Optional[float]:
+        del contract, account, refresh
         return float(self.external_position)
 
     def recover_order_fill(

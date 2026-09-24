@@ -65,8 +65,8 @@ assert trail.update(99.0) is True
     Mutation(
         name="initial drop triggers at configured boundary",
         relative_path="app/strategy.py",
-        original="if last_price <= next_cycle.drop_trigger_price:",
-        replacement="if last_price < next_cycle.drop_trigger_price:",
+        original='if last_price <= nextafter(drop_trigger, float("inf")):',
+        replacement="if last_price < drop_trigger:",
         probe="""
 from app.models import StrategySettings
 from app.strategy import StrategyEngine

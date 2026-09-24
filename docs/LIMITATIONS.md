@@ -1,6 +1,6 @@
 # Limitations and non-goals
 
-This document states the boundaries of v4.0.0. Treat each limitation as an operational constraint, not as a future guarantee.
+This document states the boundaries of v5.0.0. Treat each limitation as an operational constraint, not as a future guarantee.
 
 ## Strategy scope
 
@@ -16,7 +16,7 @@ This document states the boundaries of v4.0.0. Treat each limitation as an opera
 - The Stage-2 partial-BUY grace, introduced in v3.8.0, is fixed at 3.0 seconds. It is not a persisted setting and cannot guarantee that a cancellation reaches IBKR before additional or complete fills occur.
 - A configured minimum-profit percentage is a pre-submission stop-level condition. It does not guarantee net profit after slippage, gaps, partial fills, commissions, fees, or broker adjustments.
 - The optional slippage buffer changes planning math only. It is not a limit order and does not cap slippage.
-- The protective SELL cannot guarantee protection during gaps, market closures, halts, disconnections, rejection, or insufficient liquidity.
+- The protective SELL is placed only after the BUY is terminal with a positive filled quantity; nonterminal partial fills remain under remainder supervision first. It cannot guarantee protection during gaps, market closures, halts, disconnections, rejection, or insufficient liquidity.
 - The application cannot override IBKR risk checks, exchange rules, account restrictions, or order simulations.
 - The optional Stage-3/Stage-4 close-before-RTH policy is not guaranteed to finish before the close. Cancellation acknowledgement, partial fills, order rejection, halts, connectivity, and limited remaining time can leave shares unsold and require manual review. Its market replacement can realize a loss.
 - In Stage 3, the close-before-RTH policy acts only from a complete, independently fresh, non-crossed quote whose spread is within the configured maximum and whose executable bid is strictly above the weighted average BUY price, ignoring commissions. The market fill can still be below that bid or realize a loss. The policy does not create an extended-hours or overnight protective order.
@@ -43,13 +43,13 @@ Use separate accounts or deliberate operating procedures when strict position se
 - The live adapter tracks update and numerical-change identity separately for bid, ask, Last, close, mark, and the selected-price basis. A fresh callback can still contain unchanged cached fields, but those fields do not become fresh merely because another field, a size, or a timestamp updated. These are application callback timestamps, not guaranteed exchange-origin timestamps.
 - ATR uses prices observed while this application is running and RTH is open, and only when the raw field or quote basis underlying the selected price updated in that event. An unchanged cached Last exposed by another ticker update is excluded. Observation/bar collection continues when adaptation is disabled, but the buffer is not persisted. It resets on restart, is not exchange-native historical ATR, and does not warm up while the application is closed.
 - The recent-volatility filter uses the application’s observed sample range, not a broker historical-volatility product.
-- Normal RTH and session-timing guards use date-specific IBKR contract `liquidHours`, including early closes. `LSE` and `LSEETF` additionally use a verified 08:00-16:30 `Europe/London` continuous-session cap. The cap is not an independently maintained LSE holiday or special early-close calendar: an IBKR late open, earlier close, or closed day remains authoritative. This release does not provide an independent continuous-session calendar for every SMART-routable venue. The 09:30-16:00 New York fallback is permitted only for recognized U.S. primary exchanges and may not represent holidays, halts, or special sessions perfectly. Non-U.S. or unknown contracts with missing/unusable session metadata fail closed.
+- Normal RTH and session-timing guards use date-specific IBKR ContractDetails `liquidHours` and `timeZoneId`, including early closes; the schedule is not inferred from price ticks. `LSE` and `LSEETF` additionally use a verified 08:00-16:30 `Europe/London` continuous-session cap. The cap is not an independently maintained LSE holiday or special early-close calendar: an IBKR late open, earlier close, or closed day remains authoritative. This release does not provide an independent continuous-session calendar for every SMART-routable venue. BouncyBot does not guess a weekday schedule or substitute a timezone when the contract timezone is missing or invalid. Missing/unusable authoritative session metadata blocks RTH-restricted submissions for every contract. Without a usable authoritative window, the GUI has no session hours or countdown to display. A published schedule does not establish whether an instrument is currently halted.
 
 ## Contract, route, currency, and quantity limits
 
-- v4.0.0 supports only USD and EUR ordinary `STK` contracts selected from an exact IBKR API result. Other currencies and security types remain unsupported.
+- v5.0.0 supports only USD and EUR ordinary `STK` contracts selected from an exact IBKR API result. Other currencies and security types remain unsupported.
 - Order routing is `SMART` only. The primary exchange identifies the selected native listing; direct-routing workflows are not implemented.
-- “SMART supported” is capability-driven, not a guarantee for every listing or venue. BouncyBot requires the selected contract to advertise or accept SMART, `MKT`, `TRAIL`, market-rule pricing, whole-share quantity rules, and usable regular-session metadata. A missing capability blocks the contract.
+- “SMART supported” is capability-driven, not a guarantee for every listing or venue. BouncyBot requires nonempty broker route/order-type metadata advertising SMART, `MKT`, and `TRAIL`, plus usable regular-session metadata. When a market rule is advertised it must be resolved; otherwise contract `minTick` is used. Missing size metadata uses the one-share default. Missing required route/order-type metadata or an incompatible capability blocks qualification.
 - Each portable SQLite database is single-currency. A zero-cycle draft can switch between USD and EUR, but the first persisted cycle locks the database. Mixed USD/EUR history and automatic FX conversion are not supported.
 - Quantity handling is whole-share only. BUY quantity may round down to a compatible `minSize`/`sizeIncrement`; SELL quantity is not rounded down because that could leave an untracked remainder. Broker lot-size metadata can still be incomplete or change.
 - A commission reported in another currency is preserved for audit but excluded from local net P/L, and Auto-repeat is disabled. This is not a substitute for statement-level FX accounting.
@@ -83,13 +83,13 @@ Use separate accounts or deliberate operating procedures when strict position se
 
 - P/L is based on recorded application fills and commissions that IBKR reports to this client. It is not a complete account statement.
 - The application does not calculate tax, regulatory reporting, wash sales, FX conversion, corporate actions, dividends, financing, borrow fees, or portfolio margin.
-- Daily and historical guard calculations are local SQLite calculations and do not replace broker account-level risk limits.
+- Daily and historical guard calculations are local SQLite calculations and do not replace broker account-level risk limits. Daily P/L uses the UTC date of completed cycles’ `updated_at` fields. The consecutive-loss query examines at most the latest 100 completed cycles for the selected ticker/conId, including legacy same-ticker rows without a conId.
 - The project does not provide legal, tax, or investment advice.
 
 ## Platform limits
 
 - Windows is the supported GUI and packaging target.
-- Python 3.11 or newer is required when running from source.
+- standard GIL-enabled CPython 3.14.x is required when running from source.
 - TWS or IB Gateway must be installed, logged in, authenticated, and configured for API access.
 - The application retries a lost local API socket every 10 seconds indefinitely, but it does not automate credentials, two-factor authentication, platform login, Gateway/TWS startup after a complete platform exit, operating-system restart/login, or daily IBKR maintenance windows. Manual Disconnect and application shutdown stop the retries.
 
@@ -104,12 +104,16 @@ Use separate accounts or deliberate operating procedures when strict position se
 
 ## Multi-instance ownership boundary
 
-Multiple BouncyBot copies can share a Master API feed. v4.0.0 rejects attribution of any order or callback whose complete `OrderRef` is not already persisted locally. This prevents one installation from acting on another installation's app-prefixed order, but it also means a lost or replaced local database can require manual recovery instead of broad prefix-based discovery.
+Multiple BouncyBot copies can share a Master API feed. v5.0.0 rejects attribution of any order or callback whose complete `OrderRef` is not already persisted locally. This prevents one installation from acting on another installation's app-prefixed order, but it also means a lost or replaced local database can require manual recovery instead of broad prefix-based discovery. Cancellation additionally requires exact current API-client ownership; using another client ID does not grant cancellation authority over the original client’s order.
 
 ## Prior-session volatility estimates
 
-Starting in v4.0.0, a validated ready ATR estimate is checkpointed in the existing SQLite `app_settings` table for the exact confirmed contract, currency, venue, trading/data profile, ATR period, and bar duration. At a verified open RTH session, that estimate can supply the starting ATR/ATR% while current-session bars warm up. It does not insert synthetic observations or make a quote fresh. The first ready current-session calculation replaces it. The GUI identifies the saved session and today's observed bar count.
+A validated ready ATR estimate is checkpointed in the existing SQLite `app_settings` table for the exact confirmed contract, currency, venue, trading/data profile, ATR period, and bar duration. At a verified open RTH session, that estimate can supply the starting ATR/ATR% while current-session bars warm up. It does not insert synthetic observations or make a quote fresh. The first ready current-session calculation replaces it. The GUI identifies the saved session and today's observed bar count.
 
-The seed must be no more than seven calendar days old and must contain finite positive, internally consistent values observed inside its recorded RTH window. Weekends and short holidays can therefore reuse the most recent observed session; the application does not guess missing exchange sessions. First use, an expired/corrupt/mismatched checkpoint, or a changed ATR period/bar duration without a matching checkpoint retains normal warmup. v3.9.0 did not store these checkpoints, so the first v4.0.0 session needs enough observations once. A same-session application/watchdog restart can also reuse a valid checkpoint. Current market-data, opening-delay, RTH, gap, spread, two-observation SELL, and broker-reconciliation guards still apply. A saved estimate is not evidence that today's volatility is unchanged.
+The seed must be no more than seven calendar days old and must contain finite positive, internally consistent values observed inside its recorded RTH window. Weekends and short holidays can therefore reuse the most recent observed session; the application does not guess missing exchange sessions. First use, an expired/corrupt/mismatched checkpoint, or a changed ATR period/bar duration without a matching checkpoint retains normal warmup. A database from before checkpoint support also needs normal warmup until a valid estimate has been saved. A same-session application/watchdog restart can also reuse a valid checkpoint. Current market-data, opening-delay, RTH, gap, spread, two-observation SELL, and broker-reconciliation guards still apply. A saved estimate is not evidence that today's volatility is unchanged.
 
 ATR memory does not detect every corporate action or guarantee suitability of the previous estimate after an overnight event. Retain gap and quote guards and inspect the saved/current source indicator. Only observed sessions can be reused; no historical data request is added.
+
+## v5.0.0 validation limits
+
+The source/build target is standard CPython 3.14.x. The implementation host had Python 3.12 only and its normal 3.14 download failed with HTTP 403. Offline regressions and limited fallback test execution do not certify native 3.14, Windows Qt/DPI, PyInstaller output, actual IBKR behavior or the full pytest/coverage/quality gates. Use the implementation report and qualify those gates before live deployment. A manual-review pause retains uncertainty; it does not guarantee continuous protection or eliminate exchange/broker execution risk.

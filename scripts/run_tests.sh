@@ -10,6 +10,7 @@ export QT_QPA_PLATFORM=offscreen
 export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
 export IBKR_BOT_HEADLESS_SIGNALS=1
 
+python3 scripts/check_python_runtime.py
 python3 -m compileall -q app tests scripts main.py
 python3 -m coverage erase
 python3 -X utf8 -W error::ResourceWarning -m coverage run --branch --source=app,main -m pytest -q --tb=short -ra --disable-warnings -m "not soak"

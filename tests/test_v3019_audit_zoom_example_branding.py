@@ -99,7 +99,7 @@ def test_timeline_transition_labels_are_hover_only_and_not_drawn_below_graph(
     )
     hover_texts: list[str] = []
 
-    def capture_hover(_painter, _plot, targets, _minimum, _maximum) -> None:
+    def capture_hover(_painter, _plot, targets, _low, _high) -> None:
         hover_texts.extend(str(target[2]) for target in targets)
 
     timeline._draw_hover_overlay = capture_hover
@@ -196,7 +196,7 @@ def test_default_example_models_a_consistent_realistic_trade(gui_module) -> None
 
     log_text = gui_module.CycleAuditDialog._example_text(row, details)
     assert "BUILT-IN EXAMPLE CYCLE" in log_text
-    assert "synthetic v4.0.0 paper-trading example data" in log_text
+    assert "synthetic v5.0.0 paper-trading example data" in log_text
     assert "AAPL" in log_text
     assert "PROTECTIVE_SELL_SUBMITTED" in log_text
     assert "SELL_FILL" in log_text
@@ -210,10 +210,10 @@ def test_current_product_brand_is_consistent_and_internal_executable_name_is_sta
     build = Path("scripts/build_windows.ps1").read_text(encoding="utf-8")
     pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
 
-    assert f'{product_name} v4.0.0' in gui
+    assert f'{product_name} v5.0.0' in gui
     assert f'{product_name} already running' in main
     assert readme.startswith("# BouncyBot - an IBKR Portable Trading Bot \n")
-    assert "**Current release: v4.0.0**" in readme
+    assert "**Current release: v5.0.0**" in readme
     assert f"{product_name} $version" in build
     assert 'name = "bouncybot-ibkr-portable-trading-bot"' in pyproject
 

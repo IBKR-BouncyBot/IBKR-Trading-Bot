@@ -38,22 +38,7 @@ function Restore-ProcessEnvironment {
     }
 }
 
-function Resolve-PythonLauncher {
-    if (Get-Command py -ErrorAction SilentlyContinue) {
-        try {
-            & py -3.11 --version > $null 2>&1
-            if ($LASTEXITCODE -eq 0) { return @("py", "-3.11") }
-        } catch {}
-        try {
-            & py -3 --version > $null 2>&1
-            if ($LASTEXITCODE -eq 0) { return @("py", "-3") }
-        } catch {}
-    }
-    if (Get-Command python -ErrorAction SilentlyContinue) {
-        return @("python")
-    }
-    throw "Python was not found. Install Python 3.11+ and retry."
-}
+. (Join-Path $PSScriptRoot "python_runtime.ps1")
 
 try {
     # Development launch must use the interactive Windows Qt platform. Clear
@@ -82,7 +67,10 @@ try {
     Set-Location $root
 
     if (!(Test-Path ".venv\Scripts\python.exe")) {
-        $launcher = Resolve-PythonLauncher
+        if (Test-Path ".venv") {
+            throw "The existing .venv is incomplete. Close BouncyBot, rename .venv to .venv_previous, and retry. Keep the database and other application files in place."
+        }
+        $launcher = @(Resolve-PythonLauncher)
         Write-Host "Creating Python virtual environment with: $($launcher -join ' ')"
         if ($launcher.Length -gt 1) {
             & $launcher[0] $launcher[1] -m venv .venv
@@ -95,6 +83,7 @@ try {
     }
 
     $python = Join-Path $root ".venv\Scripts\python.exe"
+    Assert-IbkrPythonRuntime -Python $python
     & $python -m pip install --upgrade pip
     if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed with exit code $LASTEXITCODE" }
 

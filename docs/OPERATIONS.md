@@ -1,6 +1,6 @@
 # Operations guide
 
-This guide describes the normal operator workflow for v4.0.0. It does not replace the broker’s API documentation or account controls.
+This guide describes the normal operator workflow for v5.0.0. It does not replace the broker’s API documentation or account controls.
 
 ## Before starting
 
@@ -13,7 +13,9 @@ This guide describes the normal operator workflow for v4.0.0. It does not replac
 
 ## Launch
 
-From source, run `run_dev.bat` or `python main.py` inside the prepared virtual environment. From a packaged build, run `IBKRTradingBot.exe` inside its complete onedir folder.
+From the project root, run `run_dev.bat`. Both that wrapper and `scripts/run_dev.bat` invoke `scripts/run_dev.ps1`, which creates or validates a standard GIL-enabled CPython 3.14.x `.venv`, installs `requirements.txt`, and starts the GUI. An older or free-threaded environment is rejected before package changes. For an already prepared environment, run `.\.venv\Scripts\python.exe main.py` from the project root.
+
+From a packaged build, run `IBKRTradingBot.exe` inside its complete onedir folder. The package includes its Python runtime; replacing source files does not upgrade an existing executable.
 
 A single-instance lock is created beside the application. If the application reports that another instance is running, verify that no valid process is active before deleting a stale lock manually.
 
@@ -21,7 +23,7 @@ A single-instance lock is created beside the application. If the application rep
 
 1. Select the correct TWS/Gateway live or paper profile.
 2. Enter a custom host/port only when the platform is not using the standard local endpoint.
-3. Keep Account blank to let IBKR apply the connected session’s default account, or enter an explicit managed-account override.
+3. Keep Account blank only when one managed account is unambiguous, or select a managed account explicitly. The resolved cycle account is persisted and cannot be changed by later draft edits.
 4. Click **1. Connect**.
 5. Enter the symbol and click **2. Search/select ticker**.
 6. Select the intended exact API result. It must be an ordinary `STK` contract in USD or EUR with a positive conId. BouncyBot keeps routing on `SMART` and copies the result's primary exchange, currency, and conId into the read-only contract fields.
@@ -30,7 +32,7 @@ A single-instance lock is created beside the application. If the application rep
 
 Contract `minTick` is not treated as universally valid when IBKR advertises a market rule. Before a priced order is transmitted, BouncyBot loads the rule for the selected route and normalizes the proposed price to the applicable band. If that broker metadata cannot be resolved, the order is blocked rather than guessed.
 
-Do not infer contract identity from the symbol alone. Search again after manually editing the ticker or primary exchange; manual edits clear the exact conId selection. The live adapter verifies that qualification returns the selected conId, currency, ordinary STK type, SMART capability, required order types, and usable session metadata.
+Do not infer contract identity from the symbol alone. Search again after manually editing the ticker or primary exchange; manual edits clear the exact conId selection. The live adapter verifies that qualification returns the selected conId, currency, ordinary STK type, SMART capability, and required order types. It reads contract session metadata for the separate RTH check; missing or unusable metadata leaves RTH unavailable and blocks RTH-restricted submissions.
 
 
 ### Portable database currency
@@ -59,25 +61,31 @@ Changing a draft setting saves it to SQLite. During an active cycle, only settin
 
 Click **4. Start strategy**. A saved active cycle is not silently resumed merely because the application connected; the Start action is the operator’s explicit request to enter/resume the controller path.
 
+Connecting with a saved cycle first restores quote monitoring for its exact stored contract. Quotes and RTH can therefore appear before Start; this does not resume order monitoring, reconciliation or strategy execution. Missing or mismatched contract identity leaves the quote unavailable and reports the reason. A new installation without a saved cycle still uses Search/select and Confirm.
+
+Permitted settings edits can be saved while that startup pause remains active, but they cannot evaluate a BUY or SELL until Start. A restored Stage 1 cycle with an empty legacy account binds its confirmed account before generating its first BUY reference; a planned reference is not evidence of an already submitted order.
+
+Once a cycle is running in stages 2–4, an old submission guard message does not make the Start card red. Current BUY/SELL restrictions remain in Trading, Price data monitor and the event history. A fresh Start rejected for an ambiguous or unavailable account creates no cycle: select a confirmed managed account and retry. An existing cycle with unresolved account ownership still requires recovery.
+
 Monitor:
 
 - **Trading** status and tooltip for current BUY/SELL blockers;
 - current stage and trigger values;
 - API actual-update age, update count/sequence, cached-only state, and source;
 - local API socket and Gateway/TWS upstream IBKR state;
-- contract-specific RTH status; a non-U.S. contract without usable `liquidHours` and `timeZoneId` is blocked rather than assigned U.S. fallback hours;
+- contract-specific RTH status; every contract requires usable IBKR `liquidHours` and `timeZoneId`. Missing metadata blocks RTH-restricted submissions, with no guessed session hours or timezone;
 - app-owned order status and fill quantities;
 - warning/error events;
 - Reconciliation state after any disconnect.
 
 The top lock button is an accidental-edit guard. When engaged, editable settings and all five workflow buttons are disabled. It does not stop the worker or cancel an order.
 
-Simple, Advanced, and Debug modes all show **Recovery / audit log** across the full dashboard width. The removed duplicate Controls panel is not needed because the fixed five-button command bar remains visible.
+Advanced and Debug modes show **Recovery / audit log** across the full dashboard width. Simple hides this log panel; the Reconciliation tab and audit recording remain available. The removed duplicate Controls panel is not needed because the fixed five-button command bar remains visible.
 
 
 ## Audit-condition summaries
 
-v4.0.0 keeps persistent routine conditions visible without writing one SQLite row for every controller cadence. Stage-3 quote evidence is shown continuously in the Price Data Monitor. Reconnect, BUY-preflight, close-before-RTH, and native trailing-order waits use a condition-entry event, bounded persistence summaries, and one recovery event.
+BouncyBot keeps persistent routine conditions visible without writing one SQLite row for every controller cadence. Stage-3 quote evidence is shown continuously in the Price Data Monitor. Reconnect, BUY-preflight, close-before-RTH, and native trailing-order waits use a condition-entry event, bounded persistence summaries, and one recovery event.
 
 Operational cadence is intentionally different by condition:
 
@@ -97,7 +105,7 @@ Red is reserved for actual or suspected broker/local inconsistency, an uncertain
 
 ## Contract and commission validation failures
 
-Start or recovery is blocked when the selected exact conId no longer resolves to the same USD/EUR ordinary stock, when SMART or the required market/trailing order types are unavailable, or when IBKR supplies no safe non-U.S. regular-session schedule. Verify the selected API result and contract details instead of typing a replacement symbol manually.
+Start or recovery is blocked when the selected exact conId no longer resolves to the same USD/EUR ordinary stock, or when SMART or the required market/trailing order types are unavailable. Missing or unusable IBKR regular-session metadata blocks RTH-restricted submissions for every contract, including U.S. listings. Verify the selected API result and contract details instead of typing a replacement symbol manually.
 
 If IBKR reports a commission in a currency different from the database/cycle currency, the execution remains recorded but that commission is excluded from local net P/L. BouncyBot records a `COMMISSION_CURRENCY_MISMATCH` decision event and disables Auto-repeat for the current cycle because it performs no FX conversion.
 
@@ -204,11 +212,11 @@ After any outage or restart:
 4. Open Reconciliation and press **Refresh from IBKR/TWS**.
 5. Confirm the status says **Current**, then compare the local cycle, order references, fills, position, and executions.
 6. Use **Reconcile and resume** only when the comparison is understood. Broker-dependent resolution actions disable again when the probe becomes stale.
-7. Use **Mark manually handled** when the position/order was resolved outside the application and the local cycle should no longer block a new entry.
+7. Use **Mark manually handled** only for the current recovery cycle when its position/order was resolved outside the application. Use the separate **Review historical blockers** action for a completed/stopped historical cycle, after verifying its exact IBKR orders, executions and remaining shares. The historical acknowledgement preserves the active cycle and requires a separate explicit Start afterward; it does not cancel orders, sell shares or repair missing fills.
 
 Raw ATR observation history starts empty after an application or Windows restart. A compatible, validated saved RTH ATR estimate can supply the starting value while new bars are collected; it cannot replace fresh quote evidence or broker reconciliation. A stale active cycle is intentionally held for explicit reconciliation. The recovery probe itself is point-in-time: normal terminal order polls can retire an older matching probe row; after any TWS-side change, use **Refresh from IBKR/TWS** to obtain a newer authoritative probe.
 
-## v4.0.0 paper-account validation
+## Paper-account validation
 
 Before unattended live use, reproduce the Stage-2 partial-BUY and field-level Stage-3 gates in paper mode with a liquid and a thinly traded instrument:
 
@@ -243,9 +251,19 @@ Keep together:
 
 Do not publish audit bundles or databases without reviewing them for account identifiers and trading data.
 
-Starting in v4.0.0, a validated ready ATR estimate is checkpointed in the existing SQLite `app_settings` table for the exact confirmed contract, currency, venue, trading/data profile, ATR period, and bar duration. At a verified open RTH session, that estimate can supply the starting ATR/ATR% while current-session bars warm up. It does not insert synthetic observations or make a quote fresh. The first ready current-session calculation replaces it. The GUI identifies the saved session and today's observed bar count.
+## ATR session memory
 
-The seed must be no more than seven calendar days old and must contain finite positive, internally consistent values observed inside its recorded RTH window. Weekends and short holidays can therefore reuse the most recent observed session; the application does not guess missing exchange sessions. First use, an expired/corrupt/mismatched checkpoint, or a changed ATR period/bar duration without a matching checkpoint retains normal warmup. v3.9.0 did not store these checkpoints, so the first v4.0.0 session needs enough observations once. A same-session application/watchdog restart can also reuse a valid checkpoint. Current market-data, opening-delay, RTH, gap, spread, two-observation SELL, and broker-reconciliation guards still apply. A saved estimate is not evidence that today's volatility is unchanged.
+A validated ready ATR estimate is checkpointed in the existing SQLite `app_settings` table for the exact confirmed contract, currency, venue, trading/data profile, ATR period, and bar duration. At a verified open RTH session, that estimate can supply the starting ATR/ATR% while current-session bars warm up. It does not insert synthetic observations or make a quote fresh. The first ready current-session calculation replaces it. The GUI identifies the saved session and today's observed bar count.
+
+The seed must be no more than seven calendar days old and must contain finite positive, internally consistent values observed inside its recorded RTH window. Weekends and short holidays can therefore reuse the most recent observed session; the application does not guess missing exchange sessions. First use, an expired/corrupt/mismatched checkpoint, or a changed ATR period/bar duration without a matching checkpoint retains normal warmup. Upgrading from a version without ATR checkpoints also requires ordinary warmup until a valid estimate has been saved. A same-session application/watchdog restart can reuse a valid checkpoint. Current market-data, opening-delay, RTH, gap, spread, two-observation SELL, and broker-reconciliation guards still apply. A saved estimate is not evidence that today's volatility is unchanged.
+
+## Cycle audit and market context
+
+Open a cycle from Trade history to inspect its stored settings, orders, executions, decisions, and broker events. Opening the dialog starts one read-only background worker that prepares decision display rows and reads the cycle's capture ZIPs. Timeline and Market capture share that result; Decision cells and wrapped row heights are populated in bounded GUI batches. An early tab selection waits for the same load. Closing the dialog cancels pending work and discards late results. Other record tabs are built on first selection.
+
+Timeline shows only transitions with two recorded, different stages. Repeated decisions within a stage remain available in **Decision events**. Each Timeline plot has its own cursor.
+
+A completed per-fill capture contains up to 15 minutes before and after the fill. After a SELL, Auto-repeat can assign later prices to the next cycle while the original capture continues. The audit display includes that same-instrument market context only when the archive's fill identity and time window are verified; it does not add the next cycle's orders or decisions. Older archives without that evidence retain strict cycle filtering. The capture ZIP is written after the post-fill window finishes; closing the application early loses the incomplete in-memory capture.
 
 ## Risk and Timing edits before the next order
 
@@ -265,3 +283,9 @@ A working Stage-2 BUY retains its original partial-fill, safety-cancellation, an
 The top Profile card uses amber for LIVE mode; red remains available for errors. The redundant green minimum-profit text banner is removed from Live Strategy. The profit guard calculations, bounds, separate profit-guard graph, and controller checks remain enabled.
 
 In the Stop strategy dialog, non-selling choices and their explanations precede the optional **Sell app-bought unsold position** action. **Exit app and resume/recover later** is bold. **Cancel** is the default/focused action, closes the dialog, and leaves the app running. Market selling is not the default and still requires its separate explicit confirmation. Exiting does not liquidate the position: existing native orders can remain at IBKR and locally monitored conditions are not evaluated while the app is closed. Reconciliation on the next start is unchanged.
+
+## v5.0.0 upgrade and recovery changes
+
+Close the app, retain the working executable/database/backups, and create a separate standard CPython 3.14 environment. The launcher rejects an older `.venv` before installing packages; rename it before creating the new one. Follow the release note and complete the Windows test/build and paper-recovery checks before live deployment.
+
+An uncertain submission now pauses visibly with its reference preserved. Do not submit a replacement simply because an open-order list is empty. Resolve exact order, execution and position facts first. Protection shows On only for a confirmed working status with a reconciled broker connection; Missing/Unconfirmed requires attention. Both Connect buttons obey the same workflow and input lock. The five stage indicators are shorter with unchanged text size.

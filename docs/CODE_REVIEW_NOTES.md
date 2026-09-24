@@ -1,6 +1,6 @@
 # Maintainer review notes
 
-This file records the current review boundaries for v4.0.0. It is not a release changelog and should not be used instead of the behavioral guides.
+This file records the current review boundaries for v5.0.0. It is not a release changelog and should not be used instead of the behavioral guides.
 
 ## Source-of-truth order
 
@@ -32,7 +32,9 @@ Changes in these areas require focused strategy, recovery, and failure-path revi
 
 - `StrategyEngine` remains pure: no Qt, SQLite, or live broker calls.
 - The controller remains the single broker-side-effect coordinator.
-- The GUI remains a command/display layer and does not duplicate strategy decisions.
+- The GUI remains a command/display layer and does not duplicate strategy decisions. Its read-only audit reader receives detached data and returns plain results; only the main Qt thread creates or updates widgets. Closing or destroying the dialog cancels pending work.
+- Cross-cycle audit context requires validated fill metadata, a bounded time window and matching instrument identity. It must never change cycle/order ownership or stored records.
+- RTH-restricted actions require authoritative contract hours/timezone metadata; neither the adapter nor the GUI may invent a schedule when that evidence is missing.
 - Storage migrations remain additive and idempotent; one portable database remains single-currency and never mixes USD/EUR totals.
 - Broker cancellation and execution facts are not inferred from local intent alone.
 - Expected guard pauses remain visually distinct from reconciliation errors and do not expose recovery-changing actions without an independent mismatch.
@@ -78,7 +80,7 @@ A behavior change should include the smallest relevant combination of:
 - deterministic CSV simulation;
 - Windows script regression.
 
-Run the complete Windows gate (`run_all_tests.bat`) before distribution. A successful pytest run is insufficient when Ruff or Pyright fails.
+Run the complete Windows gate (`run_all_tests.bat`) under standard GIL-enabled CPython 3.14.x before distribution. A successful pytest run is insufficient when Ruff or Pyright fails.
 
 ## Documentation maintenance
 
@@ -97,7 +99,7 @@ When behavior changes:
 
 The public-repository documentation set:
 
-- keeps the application and package version at v4.0.0 for documentation-only revisions within this release;
+- keeps the application, package and current documentation version aligned at v5.0.0;
 - keeps current operational material in `docs/` and superseded release notes in `docs/legacy/`;
 - treats SQLite files, backups, audit bundles, reports, captures, screenshots, and broker/account data as private unless deliberately sanitized;
 - uses the unmodified PolyForm Noncommercial License 1.0.0 text in the repository root;
@@ -112,3 +114,19 @@ Documentation-only maintenance must not alter application runtime source, strate
 `atr_memory.py` validates and checkpoints only volatility estimates. It cannot generate a price event or broker action. The controller keeps the established live ATR formula, excludes preceding-window bars from a fresh RTH calculation, and retains same-contract raw history for the separate recent-volatility guard. `order_edit_policy.py` defines a strict reviewed field allowlist and exact-cycle edit intent. Stage-2 and Stage-4 working-order policy is unchanged. Existing market-data selection, partial fills, order construction, ownership, reconciliation, and watchdog replacement code are retained.
 
 The optional ATR record falls back to ordinary warmup on validation/read failure. Write failures keep the live calculation available and produce non-throwing emergency diagnostics with bounded retry frequency. GUI changes do not remove the real minimum-profit guard. Native Windows appearance and a two-session paper-account test remain required outside this Linux/headless validation environment.
+
+
+## v4.1.0 GUI-only review
+
+Only `app/gui.py` changes at runtime. All other `app` modules and `main.py` are checked byte-for-byte against the corrected v4.0.0 source. No new settings, database schema, order action, broker request or accounting ledger value is written. Invested is a read-only BUY-fill/commission calculation; Position allocates that cost to existing app-owned unsold inventory and never adopts external account holdings. Existing history row identity and numeric sorting are preserved. The history table no longer grows its minimum height with row count. Decision events releases compact-table maximum dimensions and stretches its Message column. That release introduced linked Timeline cursors; this behavior is superseded by v5.0.0 independent cursors. The tests explicitly distinguish Qt contract doubles from native rendering validation.
+
+
+## Retained v4.2.0 GUI-only review
+
+Review is relative to the supplied v4.1.0 Status Order Linked Crosshairs source. Runtime edits in `app/gui.py` cover status header layout/font, removal of Timeline cursor synchronization, responsive Reconciliation/Summary table sizing, shared compact-table fitting, and current version text. Existing data loading, price scaling, timeline mapping, zoom/scroll, Timeline tables and local hover behavior remain. No non-GUI application module, broker action, persisted setting or database schema change is required. The prior note/report are archived byte-for-byte; current measured verification and platform limits belong in the root implementation/test report.
+
+`ContentFitTable` queues a guarded refit after row/column geometry, model data, resize, font or style changes. Reconciliation uses uncapped full-row fitting inside a scrollable page; its eight comparison rows have no table scrollbar. The guided actions use a two-by-two grid and the advanced action box has no fixed maximum height. Audit Summary keeps its existing height cap and enables vertical scrolling for overflow. Shared fit helpers reserve horizontal-scrollbar height where relevant and do not hide capped overflow. These source-level layout policies do not establish native rendering correctness; real Qt and Windows DPI checks remain unperformed on this host.
+
+## v5.0.0 trading-safety review
+
+The runtime patch is limited to adapter/controller/strategy/model/storage boundaries and the requested GUI behavior. It does not consolidate the architecture or alter unrelated ATR/capture/watchdog modules. Each fault correction has a focused regression and adjacent valid-path coverage, with independent review of submission uncertainty, identity, recovery, protection and market subscriptions. The original callback-GC allegation and several audit-only suggestions were excluded from this patch. Current measured results and unavailable native/runtime gates belong in the root implementation report; the preceding GUI-only scope is historical.

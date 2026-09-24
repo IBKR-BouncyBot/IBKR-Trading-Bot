@@ -360,6 +360,16 @@ def test_stale_market_data_cancels_partial_remainder_before_timeout(
     controller.active_cycle = cycle
     controller.storage.upsert_cycle(cycle)
     controller._api_last_data_monotonic = time.monotonic() - 5.0
+    # The guard now validates each actionable field independently; an old
+    # unrelated global event clock does not invalidate a freshly stamped quote.
+    stale_at = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=5)).isoformat()
+    controller.price_snapshot["field_update_received_at"].update({
+        "bid": stale_at,
+        "ask": stale_at,
+        "last": dt.datetime.now(dt.timezone.utc).isoformat(),
+    })
+    assert controller.price_snapshot["selected_price_basis_fields"] == ["last"]
+    assert controller._snapshot_field_age_now(controller.price_snapshot, "last") < 1.0
     state = _partial(broker, cycle)
 
     controller._handle_buy_order_poll(cycle, state)
@@ -487,10 +497,9 @@ def test_unverifiable_spread_cancels_partial_remainder_before_timeout(
         for row in events
         if row["event_type"] == "BUY_REMAINDER_CANCEL_REQUESTED"
     )
-    assert (
-        _decision_raw(requested)["partial_fill_policy"]["code"]
-        == "spread_unverified"
-    )
+    decision = _decision_raw(requested)["partial_fill_policy"]
+    assert decision["code"] == "spread"
+    assert "complete positive non-crossed bid/ask pair is required" in decision["detail"]
 
 
 def test_minimum_trade_price_cancels_partial_remainder_before_timeout(

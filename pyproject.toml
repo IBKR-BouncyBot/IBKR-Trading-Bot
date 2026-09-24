@@ -1,20 +1,20 @@
 [project]
 name = "bouncybot-ibkr-portable-trading-bot"
-version = "4.0.0"
+version = "5.0.0"
 description = "BouncyBot portable Windows GUI trading bot for the IBKR TWS/IB Gateway API"
-requires-python = ">=3.11"
+requires-python = ">=3.14,<3.15"
 dependencies = [
-    "PySide6>=6.7,<7",
+    "PySide6>=6.10.1,<7",
     "ib_async>=2.1.0,<3",
     "tzdata>=2025.2",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8,<9",
-    "coverage>=7.6,<8",
-    "ruff>=0.8,<1",
-    "pyright[nodejs]>=1.1,<2",
+    "pytest>=8.4.2,<9",
+    "coverage>=7.10.7,<8",
+    "ruff>=0.14,<1",
+    "pyright[nodejs]>=1.1.407,<2",
 ]
 
 [tool.pytest.ini_options]
@@ -25,7 +25,7 @@ markers = [
 ]
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py314"
 line-length = 160
 extend-exclude = ["build", "dist", ".venv", "__pycache__"]
 
@@ -37,7 +37,7 @@ select = ["E9", "F", "B006", "B007", "B018", "B904", "I001", "SIM101", "SIM103"]
 ignore = []
 
 [tool.pyright]
-pythonVersion = "3.11"
+pythonVersion = "3.14"
 typeCheckingMode = "basic"
 include = ["app/models.py", "app/strategy.py", "app/storage.py"]
 exclude = ["build", "dist", ".venv", "tests"]

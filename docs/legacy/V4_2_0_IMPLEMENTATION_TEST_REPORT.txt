@@ -1,0 +1,179 @@
+BouncyBot v4.2.0 - implementation and verification report
+Date: 2026-09-24
+Baseline: supplied IBKR_Trading_Bot_4.1.0_Status_Order_Linked_Crosshairs_Source.zip
+
+STATUS
+The requested GUI source changes are implemented and independently reviewed.
+The available focused offline checks passed. The complete release gate is NOT
+verified: this host lacks pytest, coverage, Ruff, Pyright, PySide6 and ib_async.
+Dependency installation was attempted; the package registry returned HTTP 403.
+There is no native Windows executable or completed real Qt/DPI validation in
+this release package. No broker connection or order was made for these checks.
+
+IMPLEMENTED CHANGES
+1. Trading and Position detail labels moved into the upper title row, aligned
+   top/right, with the exact same font styling as their upper-left titles.
+   Main status and position quantity remain below, using the full box width.
+2. Removed only the Cycle Timeline linked-hover overlay and its calls. Each
+   graph retains its local cursor, price/readout, data and existing time mapping.
+3. Reconciliation now fits all eight wrapped comparison rows without internal
+   table scrollbars. Columns stretch with the viewport, and row fitting responds
+   to width, content, font and style changes. A page scroll area keeps controls
+   reachable when the window is too short. Guided actions use two columns;
+   advanced actions no longer have a fixed height cap.
+4. The audit Summary details table refits on the same changes; content beyond
+   its existing height cap remains reachable with vertical scrolling. Shared
+   table sizing includes style-derived horizontal scrollbar height, and capped
+   all-row tables no longer hide overflow.
+5. Deferred fitting uses a single-shot timer owned by its table, coalesces
+   updates, suppresses recursive section signals, and cancels pending work on
+   direct fitting. Ownership also ties the timer lifetime to the widget.
+6. Application/package/build metadata, current documentation and affected
+   regression expectations updated to 4.2.0. Prior note/report retained intact.
+
+SCOPE AND REVIEW
+Only app/gui.py changes in the runtime application. Non-GUI app modules,
+main.py, requirements.txt and all images are byte-identical to the supplied
+baseline. No strategy, order handling, broker interface, database schema,
+recovery action/permission, ATR or watchdog changes were made. Existing
+Reconciliation action handlers and signal targets are preserved.
+
+An independent review of the complete GUI diff found no blocking defect.
+The timer lifetime refinement received a separate review. Native layout/event
+behavior remains an explicitly unverified part of this change.
+
+MEASURED VERIFICATION
+- 12 unittest tests passed: six table-height/content-reachability checks and six
+  scheduling/ownership/cancellation checks. The tests use existing Qt doubles,
+  measured row/scrollbar inputs and deterministic event scheduling.
+  Command: python -m unittest tests.test_v420_table_fitting tests.test_v420_content_fit_table -v
+- Eight direct header cases passed using Qt doubles: top-row placement,
+  top/right alignment, common title stylesheet, USD/EUR values, light/dark
+  style refresh, missing data and unchanged input snapshots.
+- 23 direct Timeline behavior cases passed using Qt doubles, including local
+  hover, both graph directions, multiple widths/themes, full-paint checks,
+  unchanged chart data, gap/leave cleanup and hover help. This was not pytest.
+- 29 existing fixture-free release/metadata checks and 13 existing layout
+  checks passed by direct invocation. These counts are not a full-suite run.
+- All Python source files compiled successfully; exact count is below.
+- All 58 deterministic CSV simulation contracts passed across 54 price paths.
+  Command: python scripts/run_all_simulations.py
+- Patch application, complete patched/source archive byte identity and ZIP CRC
+  checks are reported separately in RELEASE_VALIDATION.
+
+UNAVAILABLE / NOT PASSED GATES
+- python -m pytest -q -W error::ResourceWarning: no pytest installed.
+- Full branch/callable coverage and mutation gate: not run.
+- python scripts/run_quality_checks.py --require-tools: failed because Ruff
+  and Pyright are not installed. This is not a passing quality gate.
+- python scripts/check_v410_gui_real_qt.py: exited 1 because PySide6 and ib_async
+  are absent. The updated script includes header, independent cursor and
+  Reconciliation/Summary resizing/font checks, but these were not rendered here.
+- Native Windows build, Windows 100/150/200% DPI, moving between monitors,
+  actual user-database replay and paper/live IBKR integration: not performed.
+
+Before treating the source as fully validated, run run_all_tests.bat and the
+real-Qt smoke on the supported Windows environment, then inspect the layouts
+at the relevant display scaling. Historical v4.1.0 pass counts are not evidence
+that these gates passed for 4.2.0.
+
+RECORDED OUTPUTS
+
+--- compile.txt ---
+PASS: all 172 Python source files compile.
+
+--- header.txt ---
+PASS: 8 header cases; Trading/Position title-row placement, top/right alignment, shared title font CSS, USD/EUR values, light/dark style refresh, missing data and input immutability.
+Repository Qt doubles only; no native widget geometry or pixel rendering verified.
+
+--- unittest.txt ---
+test_capped_all_rows_keep_overflow_reachable (tests.test_v420_table_fitting.TableFittingTests.test_capped_all_rows_keep_overflow_reachable) ... ok
+test_disabled_horizontal_scrollbar_does_not_reserve_space (tests.test_v420_table_fitting.TableFittingTests.test_disabled_horizontal_scrollbar_does_not_reserve_space) ... ok
+test_hidden_horizontal_scrollbar_space_preserves_last_row (tests.test_v420_table_fitting.TableFittingTests.test_hidden_horizontal_scrollbar_space_preserves_last_row) ... ok
+test_refit_after_rows_shrink_removes_unneeded_vertical_scrolling (tests.test_v420_table_fitting.TableFittingTests.test_refit_after_rows_shrink_removes_unneeded_vertical_scrolling) ... ok
+test_scrollbar_reservation_counts_toward_capped_content (tests.test_v420_table_fitting.TableFittingTests.test_scrollbar_reservation_counts_toward_capped_content) ... ok
+test_uncapped_all_rows_remain_visible_with_tall_wrapped_content (tests.test_v420_table_fitting.TableFittingTests.test_uncapped_all_rows_remain_visible_with_tall_wrapped_content) ... ok
+test_direct_fit_cancels_the_queued_owned_timer (tests.test_v420_content_fit_table.ContentFitTableTests.test_direct_fit_cancels_the_queued_owned_timer) ... ok
+test_early_resize_before_initialization_does_not_queue_a_fit (tests.test_v420_content_fit_table.ContentFitTableTests.test_early_resize_before_initialization_does_not_queue_a_fit) ... ok
+test_failed_fit_releases_guard_for_the_next_change (tests.test_v420_content_fit_table.ContentFitTableTests.test_failed_fit_releases_guard_for_the_next_change) ... ok
+test_fit_signals_do_not_queue_an_endless_refit (tests.test_v420_content_fit_table.ContentFitTableTests.test_fit_signals_do_not_queue_an_endless_refit) ... ok
+test_headers_and_content_changes_coalesce_until_the_deferred_fit (tests.test_v420_content_fit_table.ContentFitTableTests.test_headers_and_content_changes_coalesce_until_the_deferred_fit) ... ok
+test_width_font_and_style_changes_request_a_refit (tests.test_v420_content_fit_table.ContentFitTableTests.test_width_font_and_style_changes_request_a_refit) ... ok
+
+----------------------------------------------------------------------
+Ran 12 tests in 0.535s
+
+OK
+
+--- release_metadata.txt ---
+PASS: test_v310_release.py::test_current_release_metadata_is_consistent_and_v310_note_is_archived
+PASS: test_v310_release.py::test_v310_live_strategy_dashboard_scrolls_horizontally_only_when_needed
+PASS: test_v310_release.py::test_v310_gui_exposes_default_off_preclose_liquidation_controls_and_tooltips
+PASS: test_v310_release.py::test_v310_controller_keeps_cancel_confirm_replace_and_rth_only_market_boundaries
+PASS: test_v310_release.py::test_v310_archived_documentation_preserves_scope_and_failure_behavior
+PASS: test_v312_release.py::test_v312_release_metadata_is_consistent
+PASS: test_v312_release.py::test_v312_current_and_archived_release_notes_are_in_the_correct_locations
+PASS: test_v312_release.py::test_v312_gui_documents_stage3_and_stage4_preclose_behavior
+PASS: test_v312_release.py::test_v312_source_keeps_terminal_buy_and_exact_order_ownership_contracts
+PASS: test_v312_release.py::test_v312_release_note_documents_safety_and_compatibility
+PASS: test_v320_release.py::test_v320_release_metadata_is_consistent
+PASS: test_v320_release.py::test_v320_release_note_is_archived_and_v322_is_current
+PASS: test_v320_release.py::test_v320_source_contains_exact_contract_currency_and_reconnect_boundaries
+PASS: test_v320_release.py::test_v320_release_note_documents_scope_and_external_validation
+PASS: test_v320_release.py::test_v320_current_verification_documents_match_the_release
+PASS: test_v330_release.py::test_v330_release_metadata_is_consistent
+PASS: test_v330_release.py::test_v330_release_note_is_current_and_v322_is_archived
+PASS: test_v330_release.py::test_v321_incident_gap_corrections_remain_present
+PASS: test_v330_release.py::test_v330_release_note_documents_scope_and_compatibility
+PASS: test_v330_release.py::test_v330_theme_integration_is_present_without_trading_layer_changes
+PASS: test_v400_release.py::test_current_metadata_and_windows_build_version
+PASS: test_v400_release.py::test_current_note_and_archived_v390_material
+PASS: test_v400_release.py::test_scope_and_upgrade_are_explicit
+PASS: test_v400_release.py::test_existing_order_and_worker_guards_remain_explicit
+PASS: test_v410_release.py::test_metadata_agrees_with_gui_about_windows_and_package
+PASS: test_v410_release.py::test_current_note_and_corrected_v400_history_are_retained
+PASS: test_v410_release.py::test_readonly_metrics_and_scope_are_documented
+PASS: test_v410_release.py::test_cost_helper_has_no_controller_storage_or_broker_dependency
+PASS: test_v410_release.py::test_release_preserves_native_order_and_atr_safety_boundaries
+29 existing fixture-free release checks executed directly; not pytest.
+
+--- layout_static.txt ---
+PASS: test_v215_gui_final_polish::test_v215_version_metadata_and_package_folder_name_are_current
+PASS: test_v215_gui_final_polish::test_v215_simple_mode_does_not_limit_full_strategy_flowchart_to_three_cards
+PASS: test_v215_gui_final_polish::test_v215_lock_button_is_icon_only_and_still_checkable
+PASS: test_v215_gui_final_polish::test_v215_recovery_details_expand_and_advanced_actions_stay_at_bottom
+PASS: test_v215_gui_final_polish::test_v215_recovery_uses_yellow_for_configured_guard_pauses_not_red
+PASS: test_v216_recovery_layout_regression::test_v216_version_metadata_and_package_docs_are_current
+PASS: test_v216_recovery_layout_regression::test_v216_recovery_advanced_actions_do_not_overlay_audit_log
+PASS: test_v216_recovery_layout_regression::test_v216_recovery_layout_fits_wrapped_rows_and_scrolls_the_page
+PASS: test_v219_graph_recovery_tables::test_v219_version_package_metadata_are_current
+PASS: test_v219_graph_recovery_tables::test_idle_and_stopped_graph_only_show_current_price_level
+PASS: test_v219_graph_recovery_tables::test_recovery_action_buttons_disable_when_snapshot_is_safe
+PASS: test_v219_graph_recovery_tables::test_recovery_advanced_buttons_use_current_refresh_gating_without_duplicate_cancel
+PASS: test_v219_graph_recovery_tables::test_general_tables_use_content_based_column_sizing_without_forced_stretch
+13 existing fixture-free layout checks executed directly; not pytest.
+
+--- simulations.txt ---
+58 validated CSV simulation scenarios passed across 54 price-path files
+Scenario coverage: anchor-entry=8, buy-execution=6, endurance=3, lifecycle=3, numeric=4, protective-exit=7, rth=5, sell-execution=7, sizing-slippage=15
+
+--- source_scope.txt ---
+19 non-GUI runtime/entry/dependency files byte-identical to supplied 4.1.0 baseline.
+22 image assets byte-identical.
+Preserved byte-identically: docs/legacy/V4_1_0_GUI_METRICS_AND_AUDIT_LAYOUT.md
+Preserved byte-identically: docs/legacy/V4_1_0_STATUS_ORDER_LINKED_CROSSHAIRS_IMPLEMENTATION_TEST_REPORT.txt
+Input release SHA256: bc01abcba57346fce03bb93d5be858572291b9ef082760c3c853f2b5d118b3f8
+
+--- pytest.txt ---
+/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python: No module named pytest
+
+--- quality.txt ---
+QUALITY CHECK FAILED: ruff is not installed in the active Python environment.
+Run: python -m pip install -r requirements.txt
+QUALITY CHECK FAILED: pyright is not installed in the active Python environment.
+Run: python -m pip install -r requirements.txt
+
+--- native_gui.txt ---
+REAL-QT CHECK NOT RUN: missing PySide6, ib_async
+
+Host Python: 3.12.14 (main, Aug 25 2026, 14:00:49) [Clang 22.1.3 ]

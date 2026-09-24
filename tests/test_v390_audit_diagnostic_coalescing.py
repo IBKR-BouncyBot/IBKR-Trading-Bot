@@ -1,4 +1,4 @@
-"""v4.0.0 audit-diagnostic coalescing and operator-status regressions."""
+"""v4.1.0 audit-diagnostic coalescing and operator-status regressions."""
 
 from __future__ import annotations
 

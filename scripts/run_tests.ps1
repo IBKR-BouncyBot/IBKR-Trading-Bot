@@ -12,6 +12,7 @@ trap {
 }
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "python_runtime.ps1")
 $__IbkrTestEnvNames = @(
     "PYTHONUTF8",
     "PYTHONIOENCODING",
@@ -72,13 +73,29 @@ try {
         }
     }
 
-    if (!(Test-Path ".venv")) {
-        py -3.11 -m venv .venv
+    if (!(Test-Path ".venv\Scripts\python.exe")) {
+        if (Test-Path ".venv") {
+            throw "The existing .venv is incomplete. Close BouncyBot, rename .venv to .venv_previous, and retry. Keep the database and other application files in place."
+        }
+        $launcher = @(Resolve-PythonLauncher)
+        Write-Host "Creating Python virtual environment with: $($launcher -join ' ')"
+        if ($launcher.Length -gt 1) {
+            & $launcher[0] $launcher[1] -m venv .venv
+        } else {
+            & $launcher[0] -m venv .venv
+        }
+        if ($LASTEXITCODE -ne 0 -or !(Test-Path ".venv\Scripts\python.exe")) {
+            throw "Virtual environment was not created. Check Python installation."
+        }
     }
     $python = Join-Path $root ".venv\Scripts\python.exe"
+    Assert-IbkrPythonRuntime -Python $python
     & $python -m pip install --upgrade pip
+    if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed with exit code $LASTEXITCODE" }
     & $python -m pip install -r requirements.txt
+    if ($LASTEXITCODE -ne 0) { throw "requirements install failed with exit code $LASTEXITCODE" }
     & $python -m compileall -q app tests scripts main.py
+    if ($LASTEXITCODE -ne 0) { throw "Source compilation failed with exit code $LASTEXITCODE" }
 
     & $python -m coverage erase
     if ($LASTEXITCODE -ne 0) {

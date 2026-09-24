@@ -1,0 +1,148 @@
+BouncyBot v4.1.0 - GUI Metrics and Audit Layout
+================================================
+Source release; no native Windows executable is included.
+
+BASELINE
+IBKR_Trading_Bot_4.0.0_ATR_Close_Window_Save_Corrected_Source.zip
+SHA-256: d2ea65657e8c0823523cdcac8e3c7afe99a1a075221a45ffafdf19aab2364f57
+The exact corrected v4.0.0 baseline independently passed 1,310/1,310 tests
+in 107.87 seconds in this environment before the GUI changes.
+
+SCOPE AND COMPATIBILITY
+Only app/gui.py changes among runtime application sources. All other app/*.py
+files and main.py are byte-identical to that baseline. There is no strategy,
+broker, order, controller, storage, watchdog, ATR or database-schema change.
+The last-five-minutes/session-close/orderly-app-close ATR saving policy is
+retained. Keep the existing v4.0.0 database. Dependencies and CSV schemas are
+unchanged. Version, Windows build metadata, tests and documentation are updated.
+The previous v4.0.0 release note and corrected report are in docs/legacy/.
+
+IMPLEMENTED REQUESTS
+1. Trading status pill retains its existing status and color and adds a
+   right-aligned current display price / minimum-profit trigger. Unavailable
+   data shows dashes. Tooltips retain four-decimal detail and explain that the
+   displayed pair is not proof of fresh executable quotes or SELL eligibility.
+2. Position adds cost of the remaining app-owned shares, not account-wide
+   holdings or mark-to-market value. Mirrored protective/final SELL quantities
+   are not subtracted twice. No holdings are adopted or sized by this display.
+3. Price monitor contains five aligned cards: Selected price, Source, Data mode
+   with actual update age, Bid / Ask / Spread, and RTH status with UTC/system
+   time. RTH/time spans two cells in the lower row. Freshness and quote checks
+   themselves are unchanged. Raw API fields remain independently expandable.
+4. The redundant Stage metric is removed from Market and strategy state only.
+5. Current stage and Why not moving? are behind Show/Hide stage details. The
+   panels still update while collapsed; the top Stage pill and stage ribbon
+   remain. The toggle is not a controller or trading command.
+6. The explanatory text beside Show raw API fields is removed.
+7. Total BUY cost is placed between Buy filled qty and Sell filled qty.
+8. OrderRef uses a read-only, wrap-anywhere text field. Copying preserves the
+   full exact identifier. Very long content scrolls within the field rather
+   than clipping or expanding the complete order column. Unchanged snapshots
+   do not reset its selection.
+9. Simple hides the Live Strategy Recovery / audit log panel. Advanced/Debug,
+   audit recording and the separate Reconciliation tab remain available.
+10. Completed trade summary has 12 cards in three columns and four rows. The
+    added Average net P/L equals existing summary net P/L / completed cycles;
+    it includes losing cycles and recorded costs and is unavailable for zero
+    completed cycles. Existing summary scope is retained.
+11. History adds Invested after Budget with raw numeric sorting. The amount is
+    calculated from actual BUY fills and recorded BUY commission, not Budget.
+    Existing row identity, filters and audit opening remain unchanged. The
+    GUI-only derived column does not modify history rows or CSV export schema.
+12. History no longer grows its minimum height with row count. It has a bounded
+    viewport, vertical row scrolling, and a reserved horizontal scrollbar at
+    the visible bottom. Row-count-driven height fitting was the problematic
+    layout policy; tests cover zero, one, 19 and 500 rows and later clearing.
+13. Hovering either audit Timeline plot shows a shared time guide in both. The
+    other plot uses its nearest visible real record on its own price scale,
+    with actual record time separate from cursor time. Empty counterparts get
+    a time guide only. Moving outside/away clears the guides. Offscreen records
+    cannot replace the linked guide's visible record tooltip.
+14. Timeline transition/risk tables have equal 210-pixel heights with aligned
+    upper/lower edges, independent scrolling, retained 3:2 widths and stretching
+    Message columns.
+15. Decision events fills its available lazy-loaded tab in both dimensions and
+    stretches Message. Orders and Executions retain compact top-aligned tables.
+
+COST DEFINITIONS
+Total BUY cost and history Invested:
+  actual buy_filled_qty * avg_buy_price + recorded buy_commission
+Top Position cost:
+  Total BUY cost * app-owned unsold quantity / actual BUY-filled quantity
+Signed recorded fee rebates are retained. Missing/invalid fill facts are not
+replaced by a budget or stale market price. An unfilled BUY has zero filled
+cost; a fully exited position has zero remaining cost, but history retains
+its full entry cost. Late commission updates can change the displayed amount.
+These metrics are not tax-lot accounting, new order-sizing inputs, or broker
+account-wide valuations. Existing USD/EUR database display currency is used.
+
+MEASURED AUTOMATED VERIFICATION
+Environment: Linux, Python 3.13.5, pytest 9.0.2, coverage.py 7.13.3.
+The project still declares Python >=3.11 and pytest >=8,<9; dependencies were
+not changed to match the preinstalled test host. Native Python 3.11/pytest 8
+Windows verification remains part of run_all_tests.bat.
+
+- Final complete pytest run: 1,360/1,360 passed in 89.27 seconds under coverage.
+- 132 test modules; no skipped, xfailed or xpassed cases in the full run.
+- ResourceWarning promoted to an error.
+- New focused v4.1.0 tests: 50/50 passed (45 GUI, 5 release cases).
+- Combined statement/branch coverage: 79.2% (minimum required: 75%).
+- Statement coverage: 82.7%; branch coverage: 68.8%.
+- Executable application callables entered: 1,042/1,042; GUI: 377/377.
+- 17/17 targeted safety mutants killed in temporary copies.
+- 58/58 deterministic simulation contracts passed across 54 CSV price paths.
+- Compilation and Python 3.11 grammar parsing passed.
+- Git whitespace validation passed.
+- Non-GUI application and main.py byte comparison against the baseline passed.
+- Existing release/layout assertions were updated only for the intentionally
+  changed GUI contracts and current version. No tests were skipped or removed.
+- Per-module separate-process reruns are not claimed for this release.
+
+GUI TEST BOUNDARY
+Tests use observable Qt doubles, deterministic broker doubles and temporary
+SQLite databases. They assert values, field identities, sorting, layout and
+scroll policies, visibility, read-only behavior, painter coordinates and linked
+record selection. They do not prove native font metrics or Windows pixel layout.
+No live broker connection or order was used for the tests. See docs/TEST_PLAN.md
+for native Windows resizing/DPI, light/dark, scrollbar, OrderRef and hover checks.
+
+REPRODUCIBLE COMMANDS
+Set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1, IBKR_BOT_HEADLESS_SIGNALS=1,
+QT_QPA_PLATFORM=offscreen and PYTHONDONTWRITEBYTECODE=1 for the headless gate.
+
+python -W error::ResourceWarning -m coverage run --branch --source=app,main -m pytest -q --tb=short -ra
+python -m coverage report --fail-under=75
+python -m coverage json -o coverage.json
+python -m coverage xml -o coverage.xml
+python scripts/check_callable_coverage.py --coverage-json coverage.json --source app --source main.py
+python scripts/run_mutation_smoke.py
+python scripts/run_all_simulations.py
+python -W error::ResourceWarning -m pytest -q tests/test_v410_gui_metrics_and_layout.py tests/test_v410_release.py
+python -m compileall -q app tests scripts main.py
+git diff --check
+python scripts/run_quality_checks.py --require-tools
+
+OUTSTANDING REQUIRED QUALITY/PLATFORM GATES
+Ruff and Pyright are unavailable. Package-installation attempts did not obtain
+them. The required quality command returned exit code 1 for missing tools;
+neither check is reported as passing or silently skipped. The configured
+Pyright core application scope is unchanged.
+
+Real PySide6, native Windows/PyInstaller builds, Windows display/DPI behavior,
+and paper/live IB Gateway integration were not run. No EXE is included. On
+Windows run run_all_tests.bat before build_windows.bat, then perform the visual
+checks in docs/TEST_PLAN.md before unattended live use. The existing build
+script now names the portable archive IBKRTradingBot_4.1.0_Windows.zip and
+retains the existing GUI bundle, runtime branding assets and root shortcut.
+
+RELEASE INTEGRITY
+The source archive is generated from Git-tracked files with root folder
+IBKR-Trading-Bot-main/. Runtime databases/logs/captures, bytecode/caches,
+virtual environments, coverage output, build output and Git metadata are
+excluded. The correction patch is based on the exact corrected v4.0.0 baseline
+listed above. Original source image assets are retained unchanged.
+
+The accompanying external release report records the clean-extraction test,
+patch/ZIP byte comparisons, final file counts, commit and checksums after the
+release archive is assembled. Those packaging results are not inferred solely
+from this working-tree test run.

@@ -111,7 +111,7 @@ def test_capture_cycle_token_matching_does_not_confuse_cycle_1_and_cycle_10(gui_
     ) is False
 
 
-def test_dialog_constructor_defers_capture_zip_loading_until_requested(
+def test_dialog_constructor_defers_capture_zip_loading_to_one_background_job(
     gui_module,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -119,7 +119,19 @@ def test_dialog_constructor_defers_capture_zip_loading_until_requested(
     details = _audit_details(row)
     calls: list[str] = []
 
-    def fake_loader(cls, selected_row, selected_details):
+    jobs = []
+
+    class DeferredThread:
+        def __init__(self, *, target, args, **kwargs):
+            self.target, self.args = target, args
+            jobs.append(self)
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(gui_module.threading, "Thread", DeferredThread)
+
+    def fake_loader(cls, selected_row, selected_details, *, should_cancel=None):
         del cls, selected_details
         calls.append(str(selected_row.get("id")))
         return ([{"captured_at_utc": "2026-07-19T12:00:00+00:00", "price": 100.0}], ["capture.zip"])
@@ -135,12 +147,17 @@ def test_dialog_constructor_defers_capture_zip_loading_until_requested(
     dialog._queue_materialize_tab(dialog._orders_tab_index)
     dialog._build_orders_tab()
     dialog._build_executions_tab()
-    dialog._build_decision_events_tab()
     dialog._build_raw_log_tab()
 
     dialog._materialize_tab(dialog._timeline_tab_index)
+    dialog._materialize_tab(dialog._market_capture_tab_index)
+    assert calls == []
+    assert len(jobs) == 1
+    jobs[0].target(*jobs[0].args)
+    dialog._poll_audit_loading()
     assert calls == ["cycle-1"]
     assert dialog._market_capture_loaded is True
 
     dialog._materialize_tab(dialog._market_capture_tab_index)
     assert calls == ["cycle-1"]
+    dialog._close_audit_loading()
