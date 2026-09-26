@@ -83,7 +83,7 @@ Entry-specific hard risk limits do not intentionally block risk-reducing SELLs f
 - Expected guard pauses use caution presentation.
 - Red can indicate a broker/local inconsistency or manual review. The Start card also retains its existing red Blocked state for Stage 1 BUY guards; that card alone does not establish a recovery fault. Running stages 2–4 do not inherit this classification from old guard messages.
 - A routine guard pause or ordinary strategy wait disables recovery-changing buttons; read-only broker refresh and audit export remain available.
-- The fixed workflow command bar is the only dashboard control surface; Recovery / audit log uses the full dashboard width in Advanced/Debug and is hidden only in Simple; recovery actions remain available.
+- The fixed workflow command bar is the only dashboard workflow surface and is hidden while the GUI lock is engaged; Recovery / audit log uses the full dashboard width in Advanced/Debug and is hidden only in Simple; recovery actions remain available.
 - Stop, exit, and Reconciliation market-close quantities come from the persisted app-owned fill ledger, not the account-wide broker position.
 
 ## Market-data invariants

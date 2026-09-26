@@ -77,11 +77,11 @@ class BotStorage:
     closes its own connection.
     """
 
-    def __init__(self, db_path: Path):
+    def __init__(self, db_path: Path, *, _backup_before_schema: bool = True):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._history_summary_cache: dict[str, tuple[int, str, dict[str, Any]]] = {}
-        self._ensure_schema()
+        self._ensure_schema(_backup_before_schema=_backup_before_schema)
 
     def connect(self) -> sqlite3.Connection:
         """Open a configured SQLite connection.
@@ -128,15 +128,16 @@ class BotStorage:
         finally:
             con.close()
 
-    def _ensure_schema(self) -> None:
+    def _ensure_schema(self, *, _backup_before_schema: bool = True) -> None:
         """Create or migrate the SQLite schema in place.
 
         The app ships as a portable folder, so an existing bot_state.sqlite
         can be opened by a later build. Schema updates must be additive
         and idempotent. A best-effort backup is made before migrations touch an
-        existing database file.
+        existing database file. Only an internally created disposable restore
+        candidate skips that redundant backup; its migrations still run.
         """
-        if self.db_path.exists():
+        if _backup_before_schema and self.db_path.exists():
             try:
                 backup_dir = self.db_path.parent / "backups"
                 backup_dir.mkdir(parents=True, exist_ok=True)
@@ -293,6 +294,8 @@ class BotStorage:
                 CREATE INDEX IF NOT EXISTS idx_decision_events_cycle ON decision_events(cycle_id);
                 CREATE INDEX IF NOT EXISTS idx_decision_events_created_at ON decision_events(created_at);
                 CREATE INDEX IF NOT EXISTS idx_decision_events_cycle_created ON decision_events(cycle_id, created_at, id);
+                CREATE INDEX IF NOT EXISTS idx_decision_events_manually_handled_cycle
+                    ON decision_events(cycle_id) WHERE event_type = 'MANUALLY_HANDLED';
 
                 CREATE TABLE IF NOT EXISTS broker_events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -371,8 +374,16 @@ class BotStorage:
                 "protective_avg_sell_price": "REAL",
                 "protective_sell_commission": "REAL NOT NULL DEFAULT 0",
                 "protective_sell_filled_at": "TEXT",
+                "completed_at": "TEXT",
             }.items():
                 self._add_column_if_missing(con, "cycles", column, definition)
+            # Existing databases did not record the final completion instant.
+            # Freeze their current accounting date once; sell_filled_at can be
+            # the first partial fill and cannot reconstruct the completion day.
+            con.execute(
+                "UPDATE cycles SET completed_at=updated_at WHERE stage=? AND completed_at IS NULL",
+                (Stage.CYCLE_COMPLETE.value,),
+            )
 
     @staticmethod
     def _add_column_if_missing(con: sqlite3.Connection, table: str, column: str, definition: str) -> None:
@@ -749,6 +760,7 @@ class BotStorage:
         *,
         reason: str,
         checkpoint_id: str,
+        preserve_persisted_cycle: bool = False,
     ) -> dict[str, Any]:
         """Atomically persist the state needed for a later operator resume.
 
@@ -757,30 +769,14 @@ class BotStorage:
         settings, the current in-memory cycle, a durable checkpoint marker, and
         its audit event together. Reusing ``checkpoint_id`` is idempotent so a
         timeout fallback and the worker command cannot record the same shutdown
-        twice if they race.
+        twice if they race. The GUI timeout fallback preserves an existing
+        committed cycle row rather than overwriting a newer worker transition.
         """
         normalized_reason = str(reason or "application_shutdown").strip() or "application_shutdown"
         normalized_checkpoint_id = str(checkpoint_id or "").strip()
         if not normalized_checkpoint_id:
             raise ValueError("Resume checkpoint ID is required.")
 
-        stage = cycle.stage.value if cycle is not None else ""
-        resume_required = bool(cycle is not None and cycle.stage not in {Stage.IDLE, Stage.CYCLE_COMPLETE, Stage.STOPPED})
-        checkpoint = {
-            "checkpoint_id": normalized_checkpoint_id,
-            "created_at": utc_now_iso(),
-            "reason": normalized_reason,
-            "active_cycle_id": cycle.id if cycle is not None else None,
-            "active_cycle_stage": stage or None,
-            "ticker": cycle.ticker if cycle is not None else None,
-            "resume_required": resume_required,
-        }
-        event_message = (
-            f"Resume checkpoint saved before {normalized_reason.replace('_', ' ')}; "
-            "the active cycle stage and app-owned broker orders were preserved for recovery on next start."
-            if resume_required
-            else f"Application state checkpoint saved before {normalized_reason.replace('_', ' ')}."
-        )
         created = False
         with self.connect() as con:
             # Serialize the idempotence check with the writes. This prevents a
@@ -797,6 +793,30 @@ class BotStorage:
                     existing = None
                 if isinstance(existing, dict) and existing.get("checkpoint_id") == normalized_checkpoint_id:
                     return existing
+
+            write_cycle = cycle is not None
+            if preserve_persisted_cycle and cycle is not None:
+                row = con.execute("SELECT * FROM cycles WHERE id=?", (cycle.id,)).fetchone()
+                if row is not None:
+                    cycle = self._row_to_cycle(row)
+                    write_cycle = False
+            stage = cycle.stage.value if cycle is not None else ""
+            resume_required = bool(cycle is not None and cycle.stage not in {Stage.IDLE, Stage.CYCLE_COMPLETE, Stage.STOPPED})
+            checkpoint = {
+                "checkpoint_id": normalized_checkpoint_id,
+                "created_at": utc_now_iso(),
+                "reason": normalized_reason,
+                "active_cycle_id": cycle.id if cycle is not None else None,
+                "active_cycle_stage": stage or None,
+                "ticker": cycle.ticker if cycle is not None else None,
+                "resume_required": resume_required,
+            }
+            event_message = (
+                f"Resume checkpoint saved before {normalized_reason.replace('_', ' ')}; "
+                "the active cycle stage and app-owned broker orders were preserved for recovery on next start."
+                if resume_required
+                else f"Application state checkpoint saved before {normalized_reason.replace('_', ' ')}."
+            )
 
             try:
                 exact_con_id = int(getattr(strategy, "contract_con_id", 0) or 0)
@@ -824,7 +844,7 @@ class BotStorage:
                     """,
                     (key, json.dumps(value, default=self._json_default), checkpoint["created_at"]),
                 )
-            if cycle is not None:
+            if write_cycle and cycle is not None:
                 self._upsert_cycle_in_connection(con, cycle)
             con.execute(
                 """
@@ -858,6 +878,9 @@ class BotStorage:
 
     def _cycle_upsert_statement(self, cycle: CycleState) -> tuple[str, list[str], dict[str, Any]]:
         data = cycle.to_dict()
+        # Storage owns this immutable timestamp so callback touch()/commission
+        # corrections and older CycleState objects cannot move realized P/L.
+        data["completed_at"] = cycle.updated_at if cycle.stage == Stage.CYCLE_COMPLETE else None
         data["reinvest_profits"] = int(bool(cycle.reinvest_profits))
         data["rth_only"] = int(bool(getattr(cycle, "rth_only", True)))
         data["protective_sell_enabled"] = int(bool(getattr(cycle, "protective_sell_enabled", False)))
@@ -885,7 +908,11 @@ class BotStorage:
         data["stop_after_current_cycle"] = int(bool(cycle.stop_after_current_cycle))
         columns = list(data.keys())
         placeholders = ",".join("?" for _ in columns)
-        update_set = ",".join(f"{col}=excluded.{col}" for col in columns if col != "id")
+        update_set = ",".join(
+            "completed_at=COALESCE(cycles.completed_at, excluded.completed_at)"
+            if col == "completed_at" else f"{col}=excluded.{col}"
+            for col in columns if col != "id"
+        )
         sql = f"""
             INSERT INTO cycles({','.join(columns)}) VALUES({placeholders})
             ON CONFLICT(id) DO UPDATE SET {update_set}
@@ -987,14 +1014,20 @@ class BotStorage:
                 ).fetchone()
         return self._row_to_cycle(row) if row else None
 
-    def get_order_for_cycle_ref(self, cycle_id: str, order_ref: str) -> Optional[dict[str, Any]]:
+    def get_order_for_cycle_ref(
+        self, cycle_id: str, order_ref: str, *, perm_id: Optional[int] = None,
+    ) -> Optional[dict[str, Any]]:
         """Read an exact persisted order/intent, including superseded cycle refs."""
         if not cycle_id or not order_ref:
             return None
+        query = "SELECT * FROM orders WHERE cycle_id=? AND order_ref=?"
+        params: list[Any] = [str(cycle_id), str(order_ref)]
+        if perm_id is not None:
+            query += " AND perm_id=?"
+            params.append(int(perm_id))
         with self.connect() as con:
             row = con.execute(
-                "SELECT * FROM orders WHERE cycle_id=? AND order_ref=? ORDER BY id DESC LIMIT 1",
-                (str(cycle_id), str(order_ref)),
+                query + " ORDER BY id DESC LIMIT 1", tuple(params),
             ).fetchone()
         return dict(row) if row is not None else None
 
@@ -1212,6 +1245,7 @@ class BotStorage:
         ``day_utc`` is YYYY-MM-DD. When omitted, today's UTC date is used.
         This feeds optional hard risk limits and is intentionally based on
         completed cycles recorded by this app, not the whole IBKR account.
+        Late fee/fill reconciliation updates the amount, never its completion date.
         """
         day = day_utc or utc_now_iso()[:10]
         contract_sql, contract_params = self._exact_contract_filter(con_id)
@@ -1220,7 +1254,7 @@ class BotStorage:
                 f"""
                 SELECT COALESCE(SUM(net_pnl), 0) AS pnl
                 FROM cycles
-                WHERE ticker=? AND stage=? AND substr(updated_at, 1, 10)=?
+                WHERE ticker=? AND stage=? AND substr(completed_at, 1, 10)=?
                 {contract_sql}
                 """,
                 (ticker.upper(), Stage.CYCLE_COMPLETE.value, day, *contract_params),
@@ -1234,7 +1268,7 @@ class BotStorage:
                 """
                 SELECT COALESCE(SUM(net_pnl), 0) AS pnl
                 FROM cycles
-                WHERE stage=? AND substr(updated_at, 1, 10)=?
+                WHERE stage=? AND substr(completed_at, 1, 10)=?
                 """,
                 (Stage.CYCLE_COMPLETE.value, day),
             ).fetchone()
@@ -1254,7 +1288,7 @@ class BotStorage:
                 f"""
                 SELECT COUNT(*) AS n
                 FROM cycles
-                WHERE ticker=? AND stage=? AND substr(updated_at, 1, 10)=?
+                WHERE ticker=? AND stage=? AND substr(completed_at, 1, 10)=?
                 {contract_sql}
                 """,
                 (ticker.upper(), Stage.CYCLE_COMPLETE.value, day, *contract_params),
@@ -1296,7 +1330,7 @@ class BotStorage:
                 FROM cycles
                 WHERE ticker=? AND stage=?
                 {contract_sql}
-                ORDER BY updated_at DESC
+                ORDER BY completed_at DESC, cycle_number DESC, id DESC
                 LIMIT 100
                 """,
                 (ticker.upper(), Stage.CYCLE_COMPLETE.value, *contract_params),
@@ -1550,6 +1584,7 @@ class BotStorage:
         price: float,
         avg_price: Optional[float] = None,
         commission: Optional[float] = None,
+        commission_authoritative: bool = False,
         currency: str = "USD",
         order_ref: Optional[str] = None,
         order_id: Optional[int] = None,
@@ -1567,6 +1602,8 @@ class BotStorage:
         """
         execution_key = str(execution_id or "").strip()
         incoming_raw = dict(raw or {})
+        if commission_authoritative:
+            incoming_raw["commission_authoritative"] = True
         ticker_value = str(ticker or "").strip().upper()
         side_value = str(side or "").strip().upper()
         currency_value = str(currency or "USD").strip().upper() or "USD"
@@ -1619,6 +1656,7 @@ class BotStorage:
                     merged_raw = {"previous_raw": merged_raw}
             except Exception:
                 merged_raw = {"previous_raw": current.get("raw_json")}
+            previous_commission_authoritative = bool(merged_raw.get("commission_authoritative"))
             merged_raw.update(incoming_raw)
             values = {
                 "cycle_id": current.get("cycle_id") or (cycle.id if cycle else None),
@@ -1633,7 +1671,8 @@ class BotStorage:
                 "commission": (
                     float(current.get("commission") or 0.0)
                     if commission_value is None
-                    or (commission_value == 0.0 and float(current.get("commission") or 0.0) != 0.0)
+                    or (previous_commission_authoritative and not commission_authoritative)
+                    or (not commission_authoritative and commission_value == 0.0 and float(current.get("commission") or 0.0) != 0.0)
                     else commission_value
                 ),
                 "currency": currency_value or str(current.get("currency") or "USD"),
@@ -1705,13 +1744,10 @@ class BotStorage:
         placeholder_id = self.cumulative_execution_id(ref, side_value)
         target_shares = max(0.0, float(cumulative_shares or 0.0))
         target_avg = max(0.0, float(cumulative_avg_price or 0.0))
-        # Broker cumulative commissions are clamped non-negative on purpose:
-        # the monotonic merge below assumes growth and would misbehave with
-        # signed rebate values. Rebated (negative) commissions still reach
-        # P/L through the real per-execution rows, which keep signed amounts;
-        # only this transient residual placeholder excludes them.
+        # Commission corrections and rebates are signed, unlike cumulative
+        # shares. A zero/default aggregate cannot cancel an actual rebate.
         target_commission = (
-            max(0.0, float(cumulative_commission))
+            float(cumulative_commission)
             if cumulative_commission not in (None, "")
             else 0.0
         )
@@ -1729,6 +1765,7 @@ class BotStorage:
             real_shares = 0.0
             real_notional = 0.0
             real_commission = 0.0
+            real_fees_known = True
             previous_targets: dict[str, Any] = {}
             for row in rows:
                 if str(row["execution_id"] or "") == placeholder_id:
@@ -1745,6 +1782,14 @@ class BotStorage:
                 real_shares += shares
                 real_notional += shares * price
                 real_commission += float(row["commission"] or 0.0)
+                try:
+                    row_raw = json.loads(row["raw_json"] or "{}")
+                except (TypeError, ValueError):
+                    row_raw = {}
+                if not float(row["commission"] or 0.0) and not (
+                    isinstance(row_raw, dict) and row_raw.get("commission_authoritative")
+                ):
+                    real_fees_known = False
 
             target_shares = max(
                 target_shares,
@@ -1753,11 +1798,8 @@ class BotStorage:
             )
             if target_avg <= 0:
                 target_avg = float(previous_targets.get("broker_cumulative_avg_price") or 0.0)
-            target_commission = max(
-                target_commission,
-                real_commission,
-                float(previous_targets.get("broker_cumulative_commission") or 0.0),
-            )
+            if not target_commission and not incoming_raw.get("commission_currency_excluded"):
+                target_commission = float(previous_targets.get("broker_cumulative_commission") or 0.0)
             residual_shares = max(0.0, target_shares - real_shares)
             target_notional = target_shares * target_avg if target_avg > 0 else real_notional
             residual_notional = target_notional - real_notional
@@ -1771,7 +1813,11 @@ class BotStorage:
                     residual_price = float(placeholder["price"] or 0.0) if placeholder is not None else 0.0
             else:
                 residual_price = float(placeholder["price"] or target_avg or 0.0) if placeholder is not None else target_avg
-            residual_commission = max(0.0, target_commission - real_commission)
+            residual_commission = (
+                0.0
+                if (residual_shares <= 0 and real_fees_known) or not target_commission
+                else target_commission - real_commission
+            )
             placeholder_raw = {
                 **previous_targets,
                 **incoming_raw,
@@ -1783,7 +1829,7 @@ class BotStorage:
                 "represented_real_commission": real_commission,
             }
 
-            if residual_shares <= 0 and residual_commission <= 0:
+            if residual_shares <= 0 and residual_commission == 0:
                 if placeholder is not None:
                     con.execute("DELETE FROM executions WHERE id=?", (placeholder["id"],))
                 return
@@ -2319,7 +2365,9 @@ class BotStorage:
                 with sqlite3.connect(backup.resolve().as_uri() + "?mode=ro", uri=True, factory=_ClosingSqliteConnection) as source:
                     with sqlite3.connect(candidate, factory=_ClosingSqliteConnection) as destination:
                         source.backup(destination)
-                BotStorage(candidate)  # Exercise supported additive migrations only on the disposable copy.
+                # Exercise migrations on the disposable copy without backing it
+                # up again. Normal database opens retain their pre-schema backup.
+                BotStorage(candidate, _backup_before_schema=False)
                 copied = self._validate_sqlite_database_file(candidate)
                 result["restore_copy_validated"] = bool(copied.get("ok"))
                 if not copied.get("ok"):

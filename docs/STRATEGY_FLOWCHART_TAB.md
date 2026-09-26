@@ -14,7 +14,7 @@ The full view contains all five business stages:
 4. SELL trail/market exit;
 5. cycle complete/repeat.
 
-Cards show configured percentages, current cycle values, projected prices/quantity when calculable, order summaries, and active-stage highlighting.
+Cards show configured percentages, current cycle values, projected prices/quantity when calculable, order summaries, and active-stage highlighting. In v5.3.0, every stage card uses the same compact height, calculated from the largest text requirement across the five stages at the current width and font. Text size is retained, and narrower layouts or longer content can increase the shared height to keep the text readable.
 
 Optional behavior appears inside the relevant stage rather than adding a sixth business stage. For example, a protective SELL is described in the post-BUY/Stage-3 context.
 

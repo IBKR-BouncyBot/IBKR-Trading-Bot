@@ -1,0 +1,699 @@
+BouncyBot v5.0.0 — implementation and verification report
+Release date: 24 September 2026
+Release type: source release; no Windows executable supplied
+
+STATUS
+
+The selected trading-safety fixes, Python 3.14 source/tooling migration,
+stage-indicator height reduction, background audit loading, post-SELL display
+context and authoritative RTH handling are implemented and reviewed.
+Available offline checks passed. Native Python 3.14, full pytest/coverage,
+Ruff/Pyright, Windows/Qt and IBKR integration qualification remain outstanding.
+This report does not certify the release for live deployment.
+
+BASELINE AND SCOPE
+
+Baseline: corrected BouncyBot 4.2.0 source, local tag baseline-4.2.0.
+Initial safety-verification snapshot:
+008dbb4bda3c9225504a1e07334d4511229cdd4b
+The initial results below refer to that snapshot. The audit/RTH production
+snapshot is 367bcc08e9903f73d87d0a6ce86ec4b4298e5c7d; its audit/RTH results and
+the restore-test connection cleanup are documented in separate sections below.
+The documentation cleanup at 345fcf0 changed no application, test, build or
+dependency files. The pending-subscription correction is documented below;
+the release validation record identifies the final source commit. The full
+original-4.1.0 comparison is recorded in the final section of this report.
+
+Runtime edits are confined to app/controller.py, app/ib_adapter.py,
+app/strategy.py, app/models.py, app/storage.py and app/gui.py. The existing
+five-stage strategy, native-order model and database architecture remain.
+No database tables, columns or indexes were added for these safeguards.
+The remaining runtime modules, main.py and existing image assets are unchanged
+from 4.2.0. Release metadata, dependency/runtime scripts, documentation and
+tests were updated as required. Unrelated audit/UI refactors were deferred.
+
+IMPLEMENTED FINDINGS
+
+H-02 / H-03: A possibly transmitted order retains its exact OrderRef and known
+broker IDs as SUBMISSION_UNKNOWN. The cycle persists MANUAL_REVIEW and stops
+the current action batch, without automatic duplicate submission. Reconnect
+alone does not clear this uncertainty. Definite pre-transmit failures retain
+ordinary rollback. Cancellation requires exact reference and client identity.
+
+H-04 / H-11 and related M-02 / M-05 paths: New subscriptions do not inherit
+freshness from cached values or size-only updates. BUY decisions, settings
+edits and partial-BUY supervision check independent price/bid/ask evidence.
+Same-contract subscription replacement and lost-stream cleanup retire the
+exact owned ticker/request mappings without disturbing unrelated streams.
+
+H-05 / H-06 / H-07 / M-06: Recovered ordinary SELLs use live exact-quantity
+handling. Fresh exact-account/contract holdings must cover reconciled app-owned
+unsold quantity; unrelated extra holdings are allowed. Historical replaced-order
+executions and commissions resolve through persisted identity and remain
+idempotent. Working replacements are checked against remaining exposure.
+Substantive partial-BUY rejection stops repeat while acquired shares continue
+to be managed. Benign broker warnings do not stop a successful completed BUY.
+
+H-08 / H-09 / M-04 / M-16: Protective preflight rollback uses the correct role.
+Missing or uncertain configured protection becomes visible recovery state.
+Replacement price/quantity and guards are checked before cancelling protection
+and checked again before submission. Cancellation failure is reconciled and
+made actionable. Repeated confirmed-cancellation polls are idempotent across
+reloads and preserve the existing two-quote replacement confirmation. The GUI
+distinguishes confirmed, missing, cancelling and unconfirmed protection.
+Separate cancellation/submission cannot guarantee continuous protection.
+
+H-10 / M-03: The configured spread ceiling applies independently of the
+hard-risk master, including partial-BUY checks, and requires fresh valid book
+evidence. Approximate weekday session hours cannot authorize an RTH-restricted
+new order when authoritative session evidence is unavailable.
+
+H-12: Entry and profit comparisons retain unrounded configured thresholds.
+One representable floating-point step accommodates arithmetic boundary noise;
+two-step shortfalls and tiny configured movements remain rejected. Display
+rounding is unchanged. Normal-price simulation boundaries remain covered.
+
+H-13 / H-14 / H-15 / M-18: Orders use the confirmed cycle account and contract.
+Blank accounts require one unambiguous managed account for a new cycle;
+exposed historical cycles require unambiguous owned broker evidence. A new
+cycle cannot displace unresolved exposure. Recovery connections and exact
+owned cancellation remain possible. Advanced Connect shares workflow gating.
+
+Restore companion safeguard: Required original columns, primary keys and
+declared foreign-key integrity are checked. Supported additive migrations are
+exercised on a disposable consistent SQLite backup, leaving the candidate and
+active database untouched. This is not validation of every stored value or
+substitute for broker reconciliation.
+
+GUI REQUESTS
+
+The five stage indicator boxes now use a 60-logical-pixel minimum height
+instead of 76, and vertical padding of 4 instead of 10. Their 14-pixel font
+size is unchanged. Content wrapping can still require additional height.
+
+The 4.2.0 title-aligned Trading/Position details, independent Timeline cursors,
+eight-row Reconciliation sizing and responsive layout fixes are retained.
+Native visual/DPI verification is not available on this host.
+
+PYTHON 3.14 MIGRATION
+
+Project metadata and source launch/test/build helpers require standard
+GIL-enabled CPython 3.14.x. Windows helpers prefer py -3.14 and verify the
+actual interpreter before installing packages. Stale/incomplete environments
+and the free-threaded build are rejected with explicit guidance. Ruff/Pyright
+targets and dependency floors were updated. No unrelated runtime rewrite was
+performed for the Python migration.
+
+An existing virtual environment does not change Python version when the system
+Python is upgraded. Keep the existing executable and database/backups; close
+the app, rename the old environment, and create a new 3.14 environment. See
+docs/V5_0_0_TRADING_SAFETY_AND_PYTHON314.md for exact commands and behavior
+changes. Most dependency ranges have upper bounds; tzdata has a minimum only.
+The requirements are not a tested deployment lockfile.
+
+REVIEW AND REGRESSION FINDINGS
+
+Separate reviewers examined the broker, protection, recovery, identity/guard
+and migration changes. Concrete issues found during review were corrected and
+covered before the final integrated run:
+- Benign warning on a fully filled BUY incorrectly stopping automatic repeat.
+- Historical late oversell leaving a newer same-account/contract order working.
+- Lost-market-data cleanup retaining a stale owned request mapping.
+- Repeated expected cancellation polling interrupting protection handoff.
+- A one-ULP normal-price equality regression after removing display rounding.
+
+Legacy fixture updates supply explicit account/contract identity and independent
+quote freshness required by the new guards. Tests unrelated to spread gating
+explicitly disable that optional ceiling. Intentional changed-contract
+assertions now check pinned account routing and unresolved-cycle refusal.
+The strategy/safety guards were not weakened to satisfy old fixtures.
+
+MEASURED OFFLINE RESULTS
+
+Host: CPython 3.12.14 on Linux; these are not Python 3.14 results.
+
+1. Standard unittest discovery: 125 cases, 124 passed, 1 skipped.
+   Includes 12 existing 4.2.0 cases and 113 new 5.0.0 cases (112 pass, 1 skip).
+   The skip requires a real PowerShell interpreter, unavailable here.
+
+2. Limited fallback runner: 1,408 passed, 0 failed.
+   Directly executes top-level synchronous pytest-style functions with simple
+   parametrization and a subset of fixture/raises/approx/monkeypatch support.
+   It does not implement actual pytest collection, assertion rewriting,
+   plugins, arbitrary marks, async tests or full fixture lifecycle semantics.
+   Unittest classes are executed separately, not counted again here.
+   Total across these two runners: 1,532 passing offline cases and one skip.
+
+3. CSV simulation suite: 58 validated scenarios passed over 54 price-path files.
+4. Safety mutation smoke suite: 17 of 17 deliberately introduced faults detected.
+5. Header checks with repository Qt doubles: 8 passed, including title alignment,
+   unchanged title font, USD/EUR display, light/dark refresh and input immutability.
+6. Python compilation, shell syntax and git diff whitespace checks passed.
+7. Restore-readiness probes accepted all three historical database fixtures
+   (v3019, v311 and v312) through the supported additive-migration path.
+
+The corrected 4.2.0 fallback baseline was 1,407 pass / 1 failure, plus 12
+unittest passes. Its one failure expected the abbreviation CEST where this
+host's MET timezone data uses MEST. The narrow test now accepts either label
+while asserting the exact 2026-07-24T17:30:00+02:00 value.
+
+UNAVAILABLE GATES AND DEPLOYMENT QUALIFICATION
+
+The normal Python 3.14 download was blocked (HTTP 403), and dependencies could
+not be installed on this host. Actual pytest, coverage, Ruff, Pyright, PySide6,
+ib_async and PowerShell were unavailable. The required quality command fails
+explicitly for missing Ruff/Pyright; it is not reported as passed. The runtime
+checker correctly rejects this host's Python 3.12 interpreter.
+
+Not performed: actual CPython 3.14 execution; full pytest and line/branch/
+per-callable coverage gates; native Qt rendering or high-DPI/window-resize
+checks; PowerShell launcher/build execution; Windows executable build; IBKR
+paper or live integration. No Windows executable is included.
+
+Before live deployment, run run_all_tests.bat in the new standard Python 3.14
+environment, build with scripts/build_windows.ps1 -RunTests, and qualify the
+fault/recovery paths against an IBKR paper account. Verify native GUI resizing
+and DPI on the target Windows display setup. Preserve the working installation
+and database backup until that qualification is complete.
+
+The source release bundle includes this report, selected verification logs,
+release notes, a patch against corrected 4.2.0 and artifact checksums. Packaging
+verification is recorded separately in the bundle's RELEASE_VALIDATION file.
+
+WINDOWS RESTORE-TEST CONNECTION CLEANUP
+
+The supplied Windows Python 3.14 pytest log reports 1,529 passed and four
+failures, all during TemporaryDirectory cleanup in RestoreValidationTests.
+Five test-owned SQLite connections remained open (one test opens two). SQLite's
+connection context manager commits/rolls back but does not close its handle.
+Windows consequently refused to delete those temporary database files.
+
+The correction changes only tests/test_v500_restore_and_gui.py: contextlib.closing
+wraps each direct SQLite connection while its transaction context is retained.
+The schema/data assertions are unchanged. Production storage already closes
+its connections; no app code, dependency, build script, version or changelog
+changes were needed. A separate reviewer confirmed this scope and checked the
+adjacent 5.0.0 tests for the same connection-lifetime problem.
+
+Measured verification on the available Linux Python 3.12.14 host:
+- A probe retaining every SQLite handle found leaks in exactly the four
+  reported tests before the correction (five open handles in total).
+- After correction, all six restore tests pass with zero connections left open.
+- The complete 5.0.0 unittest group passes: 112 passed, one expected PowerShell
+  skip (113 cases), with ResourceWarning configured as an error.
+- Diff whitespace checks pass. App code and CHANGELOG.md match the original
+  5.0.0 release byte for byte.
+
+This verifies deterministic connection closure, not a native Windows rerun.
+Run run_all_tests.bat again on Windows to confirm the corrected full build/test
+pipeline. The earlier full offline results remain historical; they were not
+rerun or represented as native Python 3.14 results for this test-only update.
+
+AUDIT DISPLAY, BACKGROUND LOADING AND AUTHORITATIVE RTH
+
+Relative to the safety and test-cleanup snapshot (25a190a), the audit/RTH
+production changes are limited to app/gui.py and
+app/ib_adapter.py. The trading strategy, controller, persistence, market-data
+recorder, database schema, dependencies and build/runtime requirements are
+unchanged. Documentation and tests describe the new behavior.
+
+CHANGES AND REVIEW
+
+- Completed capture files may contribute same-instrument pre/post-fill
+  context even if auto-repeat assigns later ticks to the next cycle. This
+  exception requires matching manifest/event cycle and instrument identity,
+  fill metadata and valid time bounds. Unverified files retain strict cycle
+  filtering. Wrong-instrument and out-of-window context remains excluded.
+- Opening Cycle audit starts one read-only Python worker. It prepares decision
+  text and reads captures once for both Timeline and Market capture. Widgets
+  remain on the GUI thread; decisions are inserted/refitted in batches of up
+  to 40 rows with a 6 ms work budget. Column autosizing runs once with a bounded
+  sample. Closing cancels further work without waiting on the GUI thread.
+- Timeline shows only nonblank before/after stage changes; the complete
+  Decision events and raw audit records remain available.
+- The disconnected Account box displays N/A when no account is known.
+- Guessed U.S. RTH schedules and New York timezone substitutions are removed
+  from the adapter and display. RTH uses IBKR ContractDetails liquidHours and
+  timeZoneId, not price ticks. Missing/unusable evidence reports unavailable
+  and cannot declare the session open. Valid published sessions, holidays,
+  early closes, cached boundaries and the LSE continuous-session cap remain.
+
+Separate reviews checked capture identity/time bounds, RTH behavior and
+worker lifecycle. Review identified a queued-callback edge case following Qt
+parent destruction; cancellation checks now cover those callbacks, with
+regression tests. No additional blocking defect was found in the final review.
+
+MEASURED AUDIT/RTH VERIFICATION
+
+- All 1,408 pytest-style function cases pass under the limited dependency-free
+  fallback runner. This is not an actual pytest run or coverage measurement.
+- The 5.0.0 unittest group passes 158 cases, with one expected PowerShell skip
+  (159 cases). ResourceWarning is configured as an error. This includes 46
+  added tests: 15 capture/transition, 22 worker/label and 9 RTH regressions.
+- The project's own simulation runner passes all 58 validated scenarios;
+  its mutation runner kills all 17 safety mutants.
+- Python compilation, shell syntax and git diff whitespace checks pass.
+- An integrated, joined real Python worker reads the supplied cycle 37 files:
+  30,357 capture rows, including all 7,371 previously hidden next-cycle context
+  rows; the displayed data reaches 2026-08-14T20:10:05+00:00, 15 minutes after
+  SELL. All 969 decisions remain and Timeline contains 3 actual stage changes.
+  This host took 4.659 seconds for the worker; Qt doubles do not measure native
+  rendering or Windows responsiveness. SHA256 checks confirm that both ZIP
+  inputs and the read-only SQLite database were unchanged. Private inputs are
+  excluded from the release archives.
+
+TOOLCHAIN ALIGNMENT AND REMAINING GATES
+
+The requested target remains standard CPython 3.14 and the project's existing
+requirements and test/build scripts. Normal installation attempts were made
+for that interpreter and those tools. The Python 3.14.7 download returned
+HTTP 403, and the configured package source provided no PySide6 or pytest
+distribution. This host remains Linux CPython 3.12.14. No dependency versions,
+runtime guards or release gates were weakened to accommodate this host.
+
+The actual scripts/run_tests.sh gate was invoked and correctly rejected the
+3.12 interpreter. The required quality command was invoked and failed because
+Ruff/Pyright are unavailable. Actual pytest/coverage, native Qt rendering and
+DPI, PowerShell and Windows/PyInstaller build execution remain unverified.
+The successful simulations and mutation checks use the project's own scripts;
+unittest and the clearly labeled fallback supplement the unavailable gates.
+Broad unittest discovery also ran the class-based tests (170 passes and one
+skip), but could not import 50 pytest-dependent modules because pytest is
+absent; that discovery command is recorded as failed, not a passed full-suite
+gate. The fallback results above cover the pytest-style function cases.
+
+Before live use, run run_all_tests.bat and scripts/build_windows.ps1 -RunTests
+in the target Windows Python 3.14 environment, check audit open/close and
+resizing with native Qt, and confirm the changed RTH-unavailable behavior in
+paper trading. No Windows executable or live/paper broker run is claimed.
+The release bundle records exact archive/patch verification and current logs.
+
+DOCUMENTATION SYNCHRONIZATION
+
+All 25 active Markdown documents were reviewed against the current source.
+Corrections cover account/order ownership, uncertain submissions, protective
+SELL timing, ATR estimates, exact-contract accounting, authoritative RTH,
+background audit loading, GUI behavior and actual validation/build commands.
+The changelog now uses consolidated version entries without same-version or
+re-release wording. Historical notes remain unchanged under docs/legacy.
+
+Verification: all 161 local documentation links/anchors resolve; 124 targeted
+documentation, release, metadata and quality-gate cases pass under the limited
+fallback runner. Independent review and diff whitespace checks pass. At the
+documentation snapshot 345fcf0, all code, tests, scripts, dependency declarations
+and assets matched 367bcc08e9903f73d87d0a6ce86ec4b4298e5c7d byte for byte. The broader runtime
+results above were not rerun for documentation-only changes, and outstanding
+native platform/toolchain gates remain outstanding.
+
+PENDING MARKET-DATA SUBSCRIPTION CORRECTION
+
+Investigation of a reported connection/RTH symptom found a reproducible
+market-data liveness regression in the earlier 5.0.0 subscription changes.
+Nonblocking price polls replaced a pending fallback subscription before its
+first callback. A deterministic broker double with a 300 ms initial response
+and 100 ms polls reproduced 42 requests, 41 cancellations and zero delivered
+ticks over two seconds. The 4.2.0 comparison received its first tick at 300 ms.
+This establishes a source defect, not the cause of the user's current incident;
+no diagnostic report from the failing installation was available.
+
+The runtime fix is one condition in app/ib_adapter.py: a zero-wait poll retains
+the existing pending fallback. It adds no wait to the broker cadence. Positive-
+budget probes can still try other requests, and the single-active-subscription,
+retired-request detachment and field-freshness protections remain. Pending or
+cached data is not promoted to fresh evidence. Order and RTH paths are unchanged.
+
+The same reproduction after correction makes two requests, one cancellation,
+receives its first tick at 300 ms, and retains one live request. Three added
+regressions cover pending generic/direct requests, slower initial responses
+and positive-budget alternative probing. The new failure cases were exercised
+against the previous predicate before the fix; no production price-selection
+behavior was changed to satisfy their fixtures.
+
+Measured checks on Linux Python 3.12.14:
+- 5.0.0 unittest group: 161 passed, one expected PowerShell skip (162 cases),
+  with ResourceWarning configured as an error.
+- 111 adjacent adapter, connection, reconnect, outage, freshness and RTH cases
+  pass under the limited fallback runner; this is not actual pytest/coverage.
+- Current RTH parsing matches all 5,134 distinct historical RTH snapshots from
+  the 30,357 supplied capture rows, with zero open/close or session-boundary
+  mismatches. All use US/Eastern. The 10,268 short/full GUI formatter calls
+  produce zero errors under Qt doubles; native rendering is not established.
+- Python compilation, diff whitespace and independent code review pass.
+
+No socket-handshake or RTH regression was reproduced. Missing authoritative
+hours/timezone still blocks restricted trading; guessed schedules were not
+restored. Live IBKR, target Python 3.14, native Qt, actual pytest/coverage,
+quality tools and Windows build qualification remain unavailable here. The
+release contains the source fix, tests, current notes, checksums and logs.
+
+
+COMPLETE REVIEW AGAINST THE ORIGINAL SUPPLIED 4.1.0 SOURCE
+
+The original input was independently verified against the nested source archive
+in the uploaded 4.1.0 Status Order Linked Crosshairs release bundle. All 380
+original source members match the retained baseline byte-for-byte.
+Original release bundle SHA256:
+bc01abcba57346fce03bb93d5be858572291b9ef082760c3c853f2b5d118b3f8
+Original source ZIP SHA256:
+ef7f086bf57e32a1a845431b3f06ba65b1021a8f92ecf873a184c9bac647b6d3
+Local comparison ref: original-supplied-4.1.0
+
+The complete original-to-current comparison covers 115 changed paths (with the
+archived 4.1.0 release note counted as a rename). All six changed application
+modules were reviewed, together with launch/build scripts, dependencies, tests,
+fixtures and documentation. Other application modules and main.py remain
+byte-identical to the supplied original source. Reviewers inspected every
+changed controller, adapter, strategy/model, storage and GUI hunk. No additional
+introduced runtime defect was reproduced beyond the pending-subscription
+cancellation regression described above. This is a review result, not a claim
+that every possible trading failure has been excluded.
+
+Reviewed boundaries and differential evidence:
+- Adapter: 23 changed/added/removed methods; 15 core connection/qualification
+  methods are AST-identical to original. Four ordinary BUY/SELL market/trailing
+  order payloads and same-client exact-reference cancellations match original.
+  The subscription reproduction was also rerun against original 4.1.0: original
+  first tick at 0.3 seconds; prior 5.0.0 no tick; corrected 5.0.0 at 0.3 seconds.
+- Controller: all 53 prior diff hunks reviewed, covering submission uncertainty,
+  exact ownership, partial fills, historical fills, recovery, protection, quote
+  guards and repeat controls. Intentional manual-review pauses remain intact.
+- Strategy/models: 64 ordinary-path combinations and 480 stage/action/quantity
+  observations match original; separate tests cover intentionally corrected
+  precise thresholds and failure paths. Closed-RTH observations emit no orders.
+- Storage: all changes reviewed; no new tables/columns/indexes. Independent
+  probes preserve committed WAL-only data on restore, leave source DB/WAL bytes
+  unchanged, accept supported original-schema migration, check 51 unresolved-
+  cycle cases and five exact historical-order lookup cases.
+- GUI: all 47 prior diff hunks reviewed, including requested 4.2.0 presentation
+  changes, audit thread ownership/cancellation, bounded population, post-SELL
+  filtering and RTH rendering. GUI checks use Qt doubles, not native rendering.
+- Toolchain/tests: all 78 changed dependency/script/test paths inspected.
+  Removed expectations correspond to requested behavior changes; coverage and
+  safety gates are retained. Python 3.14/Windows execution remains outstanding.
+
+One stale controller docstring still claimed that missing RTH metadata supplied
+fallback boundaries. It now describes unavailable timing correctly. Executable
+AST equality, excluding function docstrings, was verified; no controller logic
+changed in this correction. The only behavioral correction in this connection
+investigation remains the one adapter predicate preserving pending streams.
+
+Fresh integrated offline verification:
+- 162 v5 unittest cases: 161 passed, one expected PowerShell skip.
+- 12 retained v4.2 table-fitting unittest cases: all passed.
+- 1,408 top-level cases passed under the limited fallback runner; zero failed.
+  This runner does not implement actual pytest or collect unittest classes.
+- 58 CSV simulation scenarios passed over 54 paths.
+- All 17 safety mutations were detected.
+- Compilation, diff whitespace and active documentation link checks passed.
+Independent reviewer runs overlap these cases and are not added to the totals.
+The earlier RTH replay remains valid: 5,134 distinct saved snapshots, zero
+session-state/boundary mismatches; 10,268 GUI formatter calls without exceptions.
+
+Python 3.14 dependency investigation:
+An upstream report describes old eventkit failing during import because it asks
+for a current asyncio loop. That report alone does not establish a defect in
+this release's supported dependency set. Current ib_async metadata specifies
+maintained aeventkit, whose June 2025 merged change removed that import-time
+global. Exact installed dependency bytes and native Python 3.14 could not be
+verified here. No speculative event-loop bootstrap or dependency change was
+made. An old/colliding package remains an environment hypothesis requiring the
+installation's actual traceback and package versions.
+Primary sources consulted:
+https://github.com/ib-api-reloaded/ib_async/issues/202
+https://github.com/ib-api-reloaded/ib_async/blob/main/pyproject.toml
+https://github.com/ib-api-reloaded/eventkit/pull/1/files
+https://pypi.org/project/ib_async/2.1.0/
+https://pypi.org/project/aeventkit/2.1.0/
+
+Release bundle evidence includes the complete original-source change inventory,
+independent review notes and relevant verification logs. It also includes a
+patch that reproduces the full current source from the original 4.1.0 ZIP, in
+addition to patches for the corrected 4.2.0 and preceding 5.0.0 baselines. Use
+the complete source ZIP or a single patch matching the exact starting source.
+
+Still unverified: actual Python 3.14, native PySide6/DPI, full pytest/coverage,
+Ruff/Pyright, PowerShell/Windows packaging and live/paper IBKR integration.
+No broker socket or order was opened during verification. The current live
+incident cannot be attributed conclusively without debug_reports/latest_state_report.txt
+and the connection error/traceback captured from the affected installation.
+
+Connection/start workflow investigation (24 September 2026)
+==========================================================
+Baseline: 753c85a73ea6277141df11d1a6bc4ecd1cc221f5 (import corrections).
+Runtime changes are limited to app/controller.py and app/gui.py. Version stays
+5.0.0; no database schema, broker adapter, RTH or strategy-rule change is made.
+
+The supplied installation's logs prove successful connections and a local
+multiple-unresolved-cycle Start block before the RTH check. A historical
+completed cycle retained a nonterminal order status; independent raw execution
+evidence revealed a genuine fill-ledger discrepancy. Completion alone cannot
+safely clear that blocker. Current backup quick/integrity/foreign-key checks
+pass; earlier storage faults do not establish the cause of later Start blocks.
+Private inputs remain unchanged and are not added to the source/release bundle.
+
+Corrections:
+- Show blocking cycle numbers/tickers/stages and provide a separate historical
+  acknowledgement in Reconciliation. This requires independent broker checking
+  and explicit operator confirmation, and records the existing MANUALLY_HANDLED
+  decision. The exact ID and confirmed cycle snapshot are rechecked in the
+  worker; changed state is rejected. Active-cycle state and all stored cycle,
+  order, execution and settings rows are preserved. No broker order or automatic
+  resume occurs. This is not an automatic ledger repair.
+- Read exact older Fill(...) evidence for legacy blank-account cycles. Only
+  literal identity fields from the direct Fill/contract/Execution structure are
+  inspected; no text is evaluated. Positive conId, nonblank exact execution and
+  order references, side, instrument, available order/perm IDs and managed/
+  configured account checks remain enforced. Conflicting evidence fails closed.
+  Four archived execution rows in the supplied active cycle independently pass
+  the identity checks and agree on one account. Fills/quantities are not changed.
+- Allow unchanged execution identity to be checkpointed despite unresolved
+  history; a worker rejection/failure cannot fall through to a direct write.
+  The unavailable-worker fallback performs identity validation before saving.
+
+Verification on Linux CPython 3.12.14:
+- 49 new regression tests: 7 checkpoint, 16 historical backend, 11 historical
+  GUI and 15 legacy-account cases. Red-before-fix evidence retained for the
+  checkpoint and legacy-account regressions.
+- Full v5 unittest discovery: 211 cases, 210 passed, one expected PowerShell
+  skip, with ResourceWarning treated as error.
+- 1,408 existing top-level function cases passed under the limited fallback
+  runner, zero failures. This is not actual pytest and excludes unittest cases.
+- An end-to-end synthetic recovery test confirms Start stays blocked until the
+  explicit historical acknowledgement, then independently Start resumes the
+  same legacy cycle with its original position and proven account.
+- Compile and whitespace checks pass. Changed documentation links resolve.
+- Independent review reproduced and corrected the historical confirmation
+  queue race and blank-reference legacy evidence gap; the final targeted tests
+  cover both. GUI review preserves the table sizing and current-cycle actions.
+- Bottom Connect/Start eligibility and relevant helpers match original 4.1.0
+  and corrected 4.2.0; Advanced Connect follows the same existing eligibility.
+
+Scope and remaining qualification:
+Only one of ten reported affected installations supplied diagnostic evidence.
+The legacy compatibility failure can affect other upgraded installations, but
+their actual causes are unproven. A previously persisted MANUAL_REVIEW state is
+not automatically cleared: its prior stage must not be guessed. The supplied
+historical execution discrepancy requires independent operator reconciliation;
+no input database was changed or safety guard automatically bypassed.
+
+Actual Ruff/Pyright, full pytest/coverage, CPython 3.14, native Windows/Qt/DPI,
+Windows packaging and IBKR integration could not be run on this host. Existing
+tool/runtime limitations remain; these offline results are not those gates.
+No broker socket was opened and no broker order was submitted or cancelled.
+The bundle contains source, matching-baseline patches and review/test evidence;
+it does not contain a newly built Windows executable.
+
+Freshness display and complete original-source recheck (24 September 2026)
+========================================================================
+Baseline: 15a251ed67658dad944b593509b1c37723beb1f3.
+Compared all 119 preceding changed paths against original-supplied-4.1.0:
+6 runtime files, 72 tests/support files, 8 scripts, 2 metadata files and 31
+documentation files. Independent reviewers covered all controller/GUI/adapter
+diff hunks, models/storage/strategy, runtime/build scripts, tests and guides.
+No further demonstrated runtime regression was found beyond the corrections
+below. Review and offline probes do not establish absence of every defect.
+
+Confirmed display regression: an otherwise recent selected price was labelled
+stale because its event had already been consumed or the latest event updated
+volume/size only. Exact-report replay showed selected/bid/ask ages below their
+configured limits. The display now checks independent field ages without using
+the per-read consumption flag. Real submissions, settings reevaluation, event
+deduplication, ATR, working-order supervision and Stage-3 rules are unchanged.
+Expired/missing fields, unknown upstream, invalidated data, absent subscription
+identity, crossed quotes and expired RTH evidence still block the display.
+
+Confirmed diagnostic omission: reused generic market-data subscriptions lost
+their generic_ticks value in returned snapshots. One adapter assignment now
+preserves the existing subscription key's value. It changes no request, stream,
+quote freshness, selected price or broker order behavior.
+
+Startup connection identity locking was compared to original 4.1.0 and corrected
+4.2.0: the relevant GUI methods are AST-identical. Restoring active stages 1-4
+locks account/client/endpoint identity even before connecting; Connect remains
+available when disconnected and the manual padlock is off. Empty/stopped/
+completed startup permits editing. Thirty comparative startup cases passed;
+no GUI unlock or recovery-identity relaxation was applied.
+
+The second supplied audit is a different stage and data condition: its holding
+stage records genuinely expired Last/bid evidence and a blocked Stage-3 SELL
+quote check despite the general Running summary. Exact replay confirms that
+this rejection remains after the display correction. Neither upload was
+modified. Private databases, account identities and raw reports are excluded
+from the release evidence.
+
+Fresh verification on Linux CPython 3.12.14:
+- 9 added regressions: 8 freshness display/safety separation cases and one
+  pending/established generic-subscription diagnostic case. Both defects were
+  reproduced with failing tests before correction.
+- Full v5 unittest discovery: 220 cases, 219 passed, one expected PowerShell
+  skip; ResourceWarning treated as error.
+- 1,408 existing function cases passed under the limited fallback runner,
+  zero failures. This runner is not actual pytest and excludes unittest cases.
+- Independent exact-report replay and 13 malformed/expired/freshness variants
+  preserve the required display and strict execution outcomes.
+- 69 adjacent GUI/audit/table cases passed; independent supporting runs overlap
+  the above totals and are not added to them.
+- Fresh compatibility probes preserved every stored row/setting/stage of an
+  original-generated synthetic database, validated an original backup without
+  altering it, confirmed unchanged schema initialization, and matched ordinary
+  strategy actions/quantities across six configurations.
+- Source compilation, whitespace checks and changed documentation links pass.
+  The current test-module table is synchronized with the added regression files.
+
+Only app/controller.py and app/ib_adapter.py change in the runtime application
+for this correction. Existing strategy/order/RTH/account guards and GUI locking
+remain intact. Native CPython 3.14, Windows/Qt/DPI, actual pytest/coverage,
+Ruff/Pyright, Windows packaging and IBKR integration remain unverified here.
+No broker socket or order was used. Source archives, matching-baseline patches,
+documentation and sanitized review/test evidence are provided; no executable.
+
+Startup, Start-card and ATR comparison (24 September 2026)
+========================================================
+Correction baseline: f554e12a10d44e0272844107cc64f2e95d35ef5b.
+Runtime edits for this correction are limited to app/controller.py and
+app/gui.py. No adapter, strategy, ATR memory, database schema, order algorithm
+or dependency change was made for these incident fixes.
+
+Findings and corrections:
+- Cold startup with a restored stage 1-4 leaves the qualified contract empty
+  until Start in both the supplied original 4.1.0 and preceding 5.0.0. Connect
+  now qualifies/verifies the exact stored identity once and starts nonblocking
+  quote monitoring. Explicit strategy Start remains required. Reconnect and
+  initially unavailable upstream restoration are covered. Missing/wrong
+  identity produces no subscription or polling qualification loop. Rejected
+  cached identities cannot leak into later reads. The existing quote recorder
+  may apply permitted adaptive settings; it cannot advance the stage or act
+  on an order before Start.
+- Both supplied holding-cycle instances had resumed, but retained older guard
+  errors made Start red and incorrectly labelled it BUY-blocked. One GUI
+  condition now limits that classification to Stage 1. Historical errors,
+  close intentions, current guards and recovery/input locks are preserved.
+- A successful resume could leave the earlier instruction to click Start.
+  Only that unchanged, recognized instruction is replaced after a healthy
+  stage 1-4 resume; newer status/fault text is preserved.
+- A new 5.0.0 account-validation failure could persist an unstarted, zero-
+  exposure MANUAL_REVIEW cycle and prevent account correction. It now rejects
+  Start without persisting that cycle. A verified account can be selected and
+  retried. Existing exposed/unresolved cycles retain strict recovery checks.
+- No ATR regression was found. ATR memory and the inspected calculation,
+  seed-validation and Stage 1 warmup functions are unchanged from 4.1/4.2.
+  The open-session instance used an accepted saved estimate while collecting
+  current-session bars. The closed-session instance also had a valid saved
+  estimate, but RTH prevented its activation and the drop trigger stayed
+  unarmed. No ATR, RTH or freshness guard was relaxed.
+
+Independent reviewers covered the full original-to-current runtime diffs,
+command/callback interactions, GUI and startup/ATR behavior. The account trap
+was found by an ordinary workflow comparison, not by the existing green test
+suite. Two omissions in the first quote-monitor draft were caught before
+release: a rejected cached contract and delayed upstream restoration. Both
+were corrected and received regression tests. Review results are bounded;
+they do not demonstrate absence of defects in every deployment.
+
+Fresh verification on Linux CPython 3.12.14:
+- 33 new unittest cases: 10 startup quote cases, 8 Start-card cases and 15
+  account/retry/resume-status cases. Prior failures were reproduced before
+  correction; adjacent guard/control paths remain covered.
+- Full v5 unittest discovery: 253 cases, 252 passed, one expected PowerShell
+  skip, ResourceWarning promoted to error.
+- Limited fallback runner: 1,408 existing function cases passed, zero failed.
+  This is not actual pytest and excludes unittest cases.
+- 66 ATR/warmup/order-edit checks passed separately against both original 4.1
+  and current 5.0; those checks overlap the function-suite count.
+- Independent strategy comparison: 64 scenarios, 480 stage/action/quantity
+  observations, zero mismatches. Fresh command-to-fill and restored-stage
+  workflows matched apart from the documented new safeguards and corrections.
+- Four independent full-controller protection lifecycle probes passed,
+  including uncertain cancellation and invalid post-cancel replacement.
+- Independent 92 existing safety cases and 33 new workflow cases passed;
+  these overlap the full unittest count and are not additional totals.
+- Source compilation, whitespace checks and modified documentation links pass.
+  Release archives and seven matching-baseline patches are byte-verified.
+- Uploaded audit archives/databases were inspected read-only and left intact;
+  private account data, databases and screenshots are excluded from release.
+
+Native CPython 3.14, Windows/Qt/DPI, actual pytest/coverage, Ruff/Pyright,
+Windows packaging and IBKR integration remain unverified on this host.
+No live broker socket, order or cancellation was used. Deliverables are
+source, tests, documentation, patches and sanitized evidence, not a Windows
+executable. No claim of live deployment readiness is made.
+
+Follow-up: legacy Stage 1 first BUY and explicit Start boundary
+=============================================================
+Correction baseline: f1f350868db32de93ffd8aeeecc8f390ad39dbec.
+Only app/controller.py changes at runtime for this follow-up.
+
+A later audit exposed a confirmed account-binding regression in 5.0.0. The
+restored Stage 1 cycle had a blank legacy account. Its first price trigger
+created a planned BUY reference before account binding, so the new ownership
+check treated that reference as historical exposure. It entered MANUAL_REVIEW
+before recording any order intent or submitting an order. The uploaded cycle
+has no order, execution or broker-event row. Account-wide holdings cannot be
+attributed to that cycle from an aggregate position total.
+
+The earlier restored-Stage-1 comparison stopped at resume and unchanged prices;
+it missed the first BUY transition. The expanded comparative probe reproduces
+that failure in the preceding source and matches the original successful
+first-BUY path after correction, with an explicitly pinned account.
+
+The controller now binds routing during waiting-cycle recovery and before any
+remaining blank-account Stage 1 entry can generate a BUY reference. Existing
+references, fills and uncertain submissions retain the same ownership checks.
+No MANUAL_REVIEW state or input database is automatically rewritten.
+
+The extended tests also exposed an interaction with the new quote preview:
+settings-edit reevaluation could use the now-available price before explicit
+Start. A narrow startup check preserves permitted settings saves but returns
+before price reevaluation. Both callers of waiting-stage advancement now obey
+the explicit startup gate. Normal running edits and ATR calculations remain.
+
+For an already-persisted, independently verified pre-submission failure, the
+existing Refresh -> Mark manually handled -> Start route was tested with a
+strict synthetic broker and real temporary SQLite storage. It preserves the
+old reference/history, sends/cancels no broker order, leaves unrelated holdings
+unchanged, and permits an explicitly started new cycle. It is not an automatic
+repair or permission to ignore uncertain broker orders. Operational steps are
+in docs/TROUBLESHOOTING.md.
+
+Final offline verification on Linux CPython 3.12.14:
+- Eight additional regression methods: six failed on the preceding controller
+  before correction. Cases include trailing and market BUY, a full BUY/SELL
+  lifecycle, ambiguous account refusal, persisted uncertainty, and Stage 1/3
+  settings edits before Start.
+- Full v5 unittest discovery: 261 cases, 260 passed, one expected PowerShell
+  skip, ResourceWarning promoted to error. The 41 incident regression cases
+  are included in these totals.
+- Limited fallback runner: 1,408 function cases passed, zero failures.
+  Two isolated legacy RTH/ATR fixtures were given an already-confirmed account
+  after the first integrated run reached the new account guard instead of their
+  intended guard. Their assertions and all production checks were retained.
+- Independent targeted final safety run: 84 passed, overlapping the full suite.
+- Compilation, whitespace and active-document links verified. All eight
+  matching-baseline patches reproduce the final committed source bytes.
+- The additional audit database was read only and matches its archive bytes.
+
+These tests supplement the earlier source-wide review; the latest incident
+shows why the earlier green suite was not proof of every workflow. Native
+Python 3.14, Windows/Qt/DPI, actual pytest/coverage, Ruff/Pyright, Windows build
+and IBKR integration remain unverified here. No broker was contacted, and no
+executable is included. The final source supersedes the intermediate package.

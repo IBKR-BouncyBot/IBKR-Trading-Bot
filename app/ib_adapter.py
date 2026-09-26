@@ -253,6 +253,8 @@ class MarketPriceSnapshot:
     selected_price_basis_age_seconds: Optional[float] = None
     selected_price_basis_updated_in_event: Optional[bool] = None
     selected_price_basis_changed_in_update: Optional[bool] = None
+    # Local observation clock for the ages above; never an exchange timestamp.
+    observation_monotonic: Optional[float] = None
     upstream_connected: Optional[bool] = None
     upstream_state: str = ""
     upstream_message: str = ""
@@ -2418,6 +2420,7 @@ class IbAsyncTwsAdapter(BrokerAdapter):
             selected_price_basis_age_seconds=basis_age,
             selected_price_basis_updated_in_event=basis_updated_in_event,
             selected_price_basis_changed_in_update=basis_changed_in_update,
+            observation_monotonic=now_monotonic,
             upstream_connected=self._upstream_connected,
             upstream_state=self._upstream_state,
             upstream_message=self._upstream_message,

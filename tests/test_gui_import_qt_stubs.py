@@ -111,7 +111,7 @@ qtcore.Qt = _Qt()
 qtcore.Signal = lambda *args, **kwargs: _Signal()
 
 qtgui = sys.modules["PySide6.QtGui"]
-for name in "QAction QColor QFont QIcon QPainter QPalette QPen QBrush QPixmap QTextOption".split():
+for name in "QAction QColor QFont QFontMetricsF QIcon QPainter QPalette QPen QBrush QPixmap QTextOption".split():
     setattr(qtgui, name, Dummy)
 
 qtwidgets = sys.modules["PySide6.QtWidgets"]

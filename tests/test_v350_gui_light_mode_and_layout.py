@@ -21,20 +21,24 @@ def gui_module():
         yield module
 
 
-def test_advanced_dashboard_places_price_monitor_before_configuration_sections() -> None:
+def test_advanced_dashboard_places_integrated_price_monitor_between_configuration_and_state() -> None:
     dashboard = GUI_SOURCE[
         GUI_SOURCE.index("def _build_dashboard(") : GUI_SOURCE.index(
             "def _connection_group(", GUI_SOURCE.index("def _build_dashboard(")
         )
     ]
 
+    graph_alias_position = dashboard.index("self.strategy_graph = self.price_panel.strategy_graph")
     price_position = dashboard.index("root.addWidget(self.price_panel)")
     connection_position = dashboard.index("self.connection_box = self._connection_group()")
     strategy_position = dashboard.index("self.strategy_box = self._strategy_group()")
     configuration_position = dashboard.index("root.addLayout(top)")
+    state_position = dashboard.index("root.addLayout(mid)")
 
-    assert price_position < connection_position < configuration_position
-    assert price_position < strategy_position < configuration_position
+    assert graph_alias_position < price_position
+    assert connection_position < configuration_position < price_position < state_position
+    assert strategy_position < configuration_position
+    assert "strategy_graph_box" not in dashboard
     assert 'self.view_mode_combo.addItems(["Simple", "Advanced", "Debug"])' in GUI_SOURCE
     assert 'DEFAULT_VIEW_MODE = "Advanced"' in GUI_SOURCE
 

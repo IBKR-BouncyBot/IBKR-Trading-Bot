@@ -1,0 +1,216 @@
+BouncyBot v5.2.0
+Targeted storage performance implementation and verification report
+25 September 2026
+
+DELIVERY AND SCOPE
+
+This source release implements only the two authorized runtime changes:
+  1. Add a partial index for manual-handling acknowledgement lookups.
+  2. Omit the redundant backup of the disposable restore-validation candidate.
+
+Baseline: delivered v5.1.0, local commit
+02d502369b532a7f40340e3ada330ee541959ee5.
+The baseline remains in a separate unchanged checkout. The 5.1 report and
+release note are retained under docs/legacy/.
+
+Only app/storage.py changes runtime behavior. app/gui.py changes three version
+labels. Other changes are version/build metadata, corresponding current-version
+test assertions, documentation and two new regression test modules.
+
+No controller, strategy, market-data adapter, order model, ATR, watchdog, timer,
+connection, order transmission or reconciliation logic was edited. Queries and
+their filtering/ordering remain byte-for-byte unchanged. Order/fill persistence,
+SQLite durability, backup triggers and default retention of 50 are unchanged.
+Duplicate-write suppression, warning coalescing, slower display refreshes and a
+minimum backup interval are NOT implemented in this release. Dependencies and
+the standard GIL-enabled CPython 3.14.x requirement are unchanged.
+
+This is a source release with Windows build scripts, not a prebuilt Windows
+executable. Native platform qualification is outstanding as detailed below.
+
+IMPLEMENTATION
+
+1. Manual-marker partial index
+
+The existing additive schema-opening path now contains:
+
+  CREATE INDEX IF NOT EXISTS idx_decision_events_manually_handled_cycle
+      ON decision_events(cycle_id) WHERE event_type = 'MANUALLY_HANDLED';
+
+Both affected safety/position subqueries already use that exact predicate.
+There is no query rewrite or cached authorization. Only matching marker rows
+belong to the index; ordinary decision events do not create index entries.
+Creation is a one-time table scan/index write when missing. No table or column
+is added. Existing earlier-version migrations still run as before.
+
+2. Disposable restore-candidate backup
+
+BotStorage's new private keyword-only _backup_before_schema option defaults to
+True. It is passed as False only when opening the internally created temporary
+restore_candidate.sqlite. Normal database opening retains the pre-schema backup.
+The option skips only the redundant backup, not schema/migration execution.
+
+A validated full backup now makes two full SQLite copies instead of three:
+  - real consistent backup;
+  - consistent temporary restore candidate.
+
+The candidate still includes committed WAL contents, exercises additive
+migrations, and passes the same integrity/schema/foreign-key validation. Failure
+reporting, cleanup, rotation and audit export remain. No live database or supplied
+backup is migrated by candidate validation. The optimization saves one full
+DB-sized temporary copy per backup; it is not a periodic-write reduction.
+
+FOCUSED REGRESSION COVERAGE
+
+68 new regression cases are provided:
+
+  tests/test_v520_manual_marker_index.py: 57 parameterized cases.
+  Fresh and legacy schemas; idempotence; all application-table preservation;
+  ordered complete unresolved/position query results; every cycle stage;
+  BUY/protective/final SELL roles; terminal, working, unknown, empty and null
+  statuses; missing references; partial/protective fills; exact/legacy contracts;
+  manual marker and legacy acknowledgement exclusions; insert/delete visibility;
+  rollback; duplicate/null-cycle markers; partial-index contents; actual SQL
+  query planner selection; queries issue no data-changing statements.
+
+  tests/test_v520_backup_validation.py: 11 unittest cases.
+  Actual SQLite copy counts; all table rows and persisted identities/timestamps;
+  ordinary startup pre-schema backup, including migration failure; legacy
+  migrations on the disposable copy only; committed WAL with a pinned reader;
+  source/candidate copy failures; migration and post-migration integrity failure;
+  invalid source rejection; temporary cleanup; previous recovery points; rotation;
+  audit export; literal filenames containing spaces and URI metacharacters.
+
+All 68 cases passed on both available real SQLite implementations:
+  Primary: CPython 3.12.14 / SQLite 3.53.1, Linux.
+  Secondary: CPython 3.12.3 / SQLite 3.45.1, Linux.
+
+The 11 backup cases ran through standard unittest with ResourceWarning treated
+as an error. The 57 function-style cases ran through the explicitly limited
+workspace minipytest fallback, NOT actual pytest. That runner is not shipped as
+an application dependency or a substitute for the Windows release gate.
+
+Regression sensitivity was also checked against unchanged 5.1 source:
+  - the index tests produced 53 passes and four expected missing-index/plan
+    failures, while all unchanged safety-semantic cases passed;
+  - the audit-export copy-count test failed as expected with 3 copies versus 2.
+These expected old-version failures demonstrate that the tests detect the changes.
+
+BROADER BEHAVIOR VALIDATION
+
+Existing v5 unittest suite:
+  372 tests recorded, OK (skipped=2), with ResourceWarning as error.
+  The output represents 371 successful methods, one skipped PowerShell method,
+  and a skipped native-Qt class setup outside unittest's testsRun count.
+  The 11 new backup cases were run separately and all passed.
+
+Function-style repository tests:
+  Final run: 1,465 passed, zero failed (including the 57 new index cases).
+  An initial run caught the still-old report version; after replacing the report,
+  the complete function-style suite passed. See validation/final_function_tests.log.
+  This is the limited fallback runner, not actual pytest or coverage execution.
+  Deliberate failing coverage-checker fixture diagnostics are expected assertions;
+  they do not measure actual application coverage.
+
+Deterministic CSV simulations:
+  58 validated scenarios passed across 54 price-path files, covering entry,
+  execution, endurance, lifecycle, numeric, protection, RTH, sizing and slippage.
+
+Safety mutation smoke:
+  17/17 mutants killed; baseline probes passed. Mutation targets were not edited.
+  This remains a bounded smoke check, not exhaustive mutation coverage.
+
+Static and source-scope checks:
+  All 201 Python files parsed and compiled on Python 3.12. All local links in
+  100 Markdown files resolved, and git diff --check passed. Byte comparisons
+  confirmed unchanged runtime modules and dependencies; GUI/build/runtime-guard
+  edits are version labels only. Existing tests differ only in current-release
+  labels and note paths. These checks do not replace Ruff or Pyright.
+
+SUPPLIED DATABASE AND BACKWARD COMPATIBILITY
+
+A fresh extraction of the supplied 25 September audit ZIP was used only in
+private test directories. No live database or original uploaded file was opened
+for mutation. The original ZIP hash was verified unchanged after the checks.
+
+The copy contained 42 cycles, 100,075 decision events, 55,667 events, 60 orders,
+84 executions, 5,333 broker events and six app-setting rows.
+
+Actual 5.1 schema opening followed by actual 5.2 opening verified:
+  - all seven application tables retained identical logical row contents;
+  - full ordered unresolved results and exact/legacy position payloads matched;
+  - the ordinary startup backup existed BEFORE the new index was added;
+  - integrity and foreign-key checks passed;
+  - actual validated backups preserved every application row;
+  - backup API instrumentation observed exactly 3 copies for 5.1 and 2 for 5.2;
+  - unchanged 5.1 storage reopened the indexed database and retained identical
+    application rows and query results.
+
+PERFORMANCE RECHECK OF THE IMPLEMENTED SOURCE
+
+The same isolated read-cache profiler was rerun against the actual 5.1 and 5.2
+source, using private consistent copies of the fresh database. Two warmups and
+11 measured calls; medians are process CPU milliseconds. Schema initialization,
+broker startup and native GUI were excluded from these read timings.
+
+Read path                                      5.1.0       5.2.0
+App-owned unsold-position lookup               33.085       0.262
+Unresolved-cycle lookup                         1.651       0.485
+Recorded Stage-3 display database refresh       2.798       1.313
+Constructed Stage-1 refresh, hard limits off    37.486       1.520
+
+The fresh recorded instance was in Stage 3. Its display refresh does NOT use the
+expensive Stage-1 position lookup. These measurements are not a whole-process
+CPU percentage, live Windows speedup, disk-flush count or SSD-wear measurement.
+Read profiling left both main database file hashes unchanged. SQL planner checks
+confirmed the new partial index is used. Copy-count savings are event-driven;
+no measured daily physical disk-write reduction is claimed.
+
+INDEPENDENT REVIEW
+
+A reviewer separately checked the storage diff and both new test modules.
+No concrete correctness issue was identified in the final runtime changes.
+Review confirmed exact predicate compatibility, unchanged query ordering,
+default-on real startup backups, copy-only migration, WAL consistency, unchanged
+validation/failure/rotation paths, and no conflicting internal constructor mocks
+or schema-method overrides. The suggested 5.1 reopen compatibility check was
+performed on the private supplied-data copy and passed.
+
+UNAVAILABLE TARGET GATES
+
+This environment has no standard CPython 3.14, actual pytest, Coverage.py, Ruff,
+Pyright, PySide6, ib_async or PyInstaller installation. The earlier package-source
+attempts returned HTTP 403, and the available toolchain/cache search found no
+usable distributions. Requirements and runtime guards were not weakened.
+
+The unchanged required quality command was actually attempted:
+  python scripts/run_quality_checks.py --require-tools
+It exited 1 because Ruff and Pyright were missing. This is NOT a passed gate.
+The unchanged runtime guard rejected Python 3.12 as intended.
+
+Outstanding checks:
+  - actual Python 3.14 pytest run, branch coverage and callable-entry gate;
+  - Ruff and Pyright;
+  - native Windows/PowerShell and PyInstaller build;
+  - native Qt, packaged application and live/paper IBKR validation.
+
+No broker connection or trading action was made. The automated behavior suite
+uses broker/GUI test doubles where appropriate. Passing the offline checks does
+not establish absence of every possible behavior or platform regression.
+
+RELEASE AND UPGRADE
+
+The source ZIP contains the complete tracked 5.2.0 tree. Updated_Files.zip contains
+replacement/additional files, the exact 5.1-to-5.2 patch, an explicit deletion
+list for the archived note, before/after hashes and validation evidence.
+
+Keep a consistent database backup and the working installation. Close each
+instance before replacing its files, and retain its own DB, client settings and
+captures. Source replacement does not update an existing executable. Run
+run_all_tests.bat on standard CPython 3.14 in Windows, then build from the new
+source. The build script's narrower -RunTests option does not replace the full
+run_all_tests.bat gate. Supply its test/quality/build logs to close the outstanding
+native checks before treating a Windows build as qualified for unattended use.
+
+Release note: docs/V5_2_0_STORAGE_PERFORMANCE.md
+Prior report: docs/legacy/V5_1_0_IMPLEMENTATION_TEST_REPORT.txt

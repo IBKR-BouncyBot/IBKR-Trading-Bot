@@ -119,7 +119,10 @@ def test_atr_warmup_ignores_pre_ready_drop_and_uses_fresh_ready_anchor(tmp_path,
         "atr_ready": True,
         "atr_bars_available": 15,
         "atr_bars_required": 15,
-        "atr": {"ready": True, "bars_available": 15, "bars_required": 15},
+        "atr": {
+            "ready": True, "bars_available": 15, "bars_required": 15,
+            "period": settings.atr_period, "bar_seconds": settings.atr_bar_seconds,
+        },
     }
     restarted, actions = controller._advance_waiting_cycle_from_price(
         paused,

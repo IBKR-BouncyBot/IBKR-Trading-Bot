@@ -2,7 +2,17 @@
 
 These files document superseded releases and implementation history. They are retained for traceability, but they may describe old labels, defaults, layouts, tests, or limitations.
 
-For current behavior, use the [project README](../../README.md), the [current documentation index](../README.md), the [changelog](../../CHANGELOG.md), and the current [`v5.0.0 release note`](../V5_0_0_TRADING_SAFETY_AND_PYTHON314.md).
+For current behavior, use the [project README](../../README.md), the [current documentation index](../README.md), the [changelog](../../CHANGELOG.md), and the current [`v5.3.0 release note`](../V5_3_0_GUI_LAYOUT.md).
+
+## Version 5 release notes
+
+- [`V5_2_0_STORAGE_PERFORMANCE.md`](V5_2_0_STORAGE_PERFORMANCE.md) - archived partial-index and redundant temporary backup-copy changes.
+- [`V5_2_0_IMPLEMENTATION_TEST_REPORT.txt`](V5_2_0_IMPLEMENTATION_TEST_REPORT.txt) - preserved 5.2.0 verification record.
+
+- [`V5_1_0_TARGETED_TRADING_FIXES.md`](V5_1_0_TARGETED_TRADING_FIXES.md) - archived fixes for the eleven reviewed trading defects, completion-date migration and lock-button sizing.
+- [`V5_1_0_IMPLEMENTATION_TEST_REPORT.txt`](V5_1_0_IMPLEMENTATION_TEST_REPORT.txt) - preserved 5.1.0 verification record.
+- [`V5_0_0_TRADING_SAFETY_AND_PYTHON314.md`](V5_0_0_TRADING_SAFETY_AND_PYTHON314.md) - archived trading safeguards, audit changes and Python 3.14 migration.
+- [`V5_0_0_IMPLEMENTATION_TEST_REPORT.txt`](V5_0_0_IMPLEMENTATION_TEST_REPORT.txt) - preserved verification record for the reviewed final 5.0.0 baseline.
 
 ## Version 4 release notes
 

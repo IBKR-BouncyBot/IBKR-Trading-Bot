@@ -23,8 +23,8 @@ Application, package and Windows build versions are 4.2.0. Dependencies are unch
 
 ## Verification
 
-Current measured results and any unavailable checks are recorded in [`../IMPLEMENTATION_TEST_REPORT.txt`](../IMPLEMENTATION_TEST_REPORT.txt). Previous-release pass counts are not evidence for this archive.
+Measured results and any unavailable checks for this release are recorded in [`V4_2_0_IMPLEMENTATION_TEST_REPORT.txt`](V4_2_0_IMPLEMENTATION_TEST_REPORT.txt). Previous-release pass counts are not evidence for this archive.
 
 The relevant GUI checks cover top-right Trading/Position placement and matching title styling, local Timeline hover in both directions, unchanged data/scaling, hover cleanup, all-eight-row Reconciliation sizing, refitting after layout/content changes, and reachable overflow in capped tables. The separate `scripts/check_v410_gui_real_qt.py` smoke script checks actual widgets when real GUI dependencies are available; its historical filename is retained.
 
-The behavior above is established by source inspection and the verification recorded in the root report, not by rendered Windows screenshots. Real Qt/native DPI tests are unavailable on this release host. Native Windows packaging and real Qt/DPI appearance still require the checks in [`TEST_PLAN.md`](TEST_PLAN.md); the changes do not constitute a claim that every screen is verified at every scaling factor. Headless Qt contract tests alone do not establish pixel geometry, Windows scaling or live IBKR integration.
+The behavior above is established by source inspection and the verification recorded in the archived report, not by rendered Windows screenshots. Real Qt/native DPI tests are unavailable on this release host. Native Windows packaging and real Qt/DPI appearance still require the checks in [`TEST_PLAN.md`](../TEST_PLAN.md); the changes do not constitute a claim that every screen is verified at every scaling factor. Headless Qt contract tests alone do not establish pixel geometry, Windows scaling or live IBKR integration.

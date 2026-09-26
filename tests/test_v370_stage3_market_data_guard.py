@@ -526,9 +526,9 @@ def test_stage3_requires_both_quote_sides_to_be_individually_fresh(tmp_path, mon
     assert snapshot.field_change_received_at is not None
     assert snapshot.field_change_age_seconds is not None
     snapshot.field_update_received_at["ask"] = old_time
-    snapshot.field_update_age_seconds["ask"] = 0.0
+    snapshot.field_update_age_seconds["ask"] = 10.0
     snapshot.field_change_received_at["ask"] = old_time
-    snapshot.field_change_age_seconds["ask"] = 0.0
+    snapshot.field_change_age_seconds["ask"] = 10.0
 
     controller._record_price_snapshot(snapshot, controller.contract)
     evidence, message = controller._stage3_sell_quote_evidence(cycle, require_latest_event=True)
@@ -656,7 +656,7 @@ def test_stage3_quote_age_advances_during_slow_pre_submit_work(tmp_path, monkeyp
         selected_price=102.05,
     )
     snapshot.quote_update_received_at = old_time
-    snapshot.quote_update_age_seconds = 0.0
+    snapshot.quote_update_age_seconds = 10.0
     controller._record_price_snapshot(snapshot, controller.contract)
     evidence, message = controller._stage3_sell_quote_evidence(cycle, require_latest_event=True)
     assert evidence is None

@@ -16,8 +16,8 @@ def test_v305_remaining_gui_imports_follow_ruff_order():
 
 
 def test_v305_version_and_patch_documentation_are_current():
-    assert "BouncyBot - IBKR Portable Trading Bot v5.0.0" in GUI
-    assert "# BouncyBot - an IBKR Portable Trading Bot " in README
-    assert 'version = "5.0.0"' in PYPROJECT
+    assert "BouncyBot - IBKR Portable Trading Bot v5.3.0" in GUI
+    assert "# BouncyBot - an IBKR Trading Bot" in README
+    assert 'version = "5.3.0"' in PYPROJECT
     assert "v3.0.5 final Ruff GUI import-order correction" in ARCHIVE
     assert "v3.0.5 final Ruff GUI import-order correction" in DOC

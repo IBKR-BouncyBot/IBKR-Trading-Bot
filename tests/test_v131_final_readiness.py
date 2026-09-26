@@ -45,8 +45,9 @@ def test_v131_suggested_hard_risk_caps_stay_disabled_with_market_data():
 def test_v131_flowchart_ui_source_is_compact_and_has_no_duplicate_selector_label():
     source = Path("app/gui.py").read_text(encoding="utf-8")
     assert source.count('selector_row.addWidget(QLabel("Flowchart data"))') == 1
-    assert "CANVAS_HEIGHT = 1580" in source
-    assert "CARD_HEIGHT = 272.0" in source
+    assert "def _card_layout" in source
+    assert "QFontMetricsF(font, self)" in source
+    assert "CARD_HEIGHT = 272.0" not in source
     assert "def _canvas_height" in source
     assert "self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)" in source
     assert "box_gap = 8" in source

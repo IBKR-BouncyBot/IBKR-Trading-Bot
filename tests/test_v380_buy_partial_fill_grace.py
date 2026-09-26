@@ -368,6 +368,7 @@ def test_stale_market_data_cancels_partial_remainder_before_timeout(
         "ask": stale_at,
         "last": dt.datetime.now(dt.timezone.utc).isoformat(),
     })
+    controller.price_snapshot["field_update_age_seconds"].update(bid=5.0, ask=5.0, last=0.0)
     assert controller.price_snapshot["selected_price_basis_fields"] == ["last"]
     assert controller._snapshot_field_age_now(controller.price_snapshot, "last") < 1.0
     state = _partial(broker, cycle)

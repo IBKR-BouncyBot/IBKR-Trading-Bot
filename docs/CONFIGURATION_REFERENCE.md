@@ -1,6 +1,6 @@
 # Configuration reference
 
-This document describes the persisted connection and strategy settings in v5.0.0. Values shown as defaults are the dataclass defaults used for a new configuration. Saved SQLite settings override them after the first run.
+This document describes the persisted connection and strategy settings in v5.3.0. Values shown as defaults are the dataclass defaults used for a new configuration. Saved SQLite settings override them after the first run.
 
 ## Connection settings
 
@@ -219,3 +219,9 @@ A working Stage-2 BUY retains its original partial-fill, safety-cancellation, an
 ## v5.0.0 guard interpretation
 
 `max_spread_pct` is validated and applied independently of `hard_risk_limits_enabled`. A nonzero spread ceiling requires valid fresh book evidence even when `stale_data_guard_enabled` is false. Identity is pinned to an unresolved cycle, including error/recovery paths; an editable draft does not authorize changing the account/contract of its orders. No new strategy setting is introduced.
+
+## v5.1.0 edit boundaries
+
+A connection draft does not change an already-established broker session. Changed idle host/port/client/profile settings require a matching re-established session before Start; use Connect to apply them while already connected. The existing automatic reconnect path can also establish the current draft after a disconnect. The status card retains the established identity until reconnection succeeds.
+
+Changing ATR period or interval invalidates the previous calculation's readiness before waiting-entry reevaluation. Block until ATR ready requires an exact match to the active period and bar duration; unchanged settings and validated matching saved estimates retain their existing behavior.

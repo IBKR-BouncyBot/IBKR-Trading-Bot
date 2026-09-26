@@ -1,6 +1,6 @@
 # Troubleshooting
 
-This guide describes v5.0.0. Keep the source, installed dependencies, and packaged executable version aligned when investigating an issue.
+This guide describes v5.3.0. Keep the source, installed dependencies, and packaged executable version aligned when investigating an issue.
 
 ## The application cannot connect
 
@@ -324,3 +324,15 @@ Timeline lists only actual stage changes. A decision whose recorded before/after
 The recorder continues for up to 15 minutes after a SELL, including when Auto-repeat starts the next cycle. The audit display accepts same-instrument prices from that next cycle only within a verified original fill-capture window. The next cycle's orders and decisions remain separate.
 
 Confirm that the post-fill window finished while the app remained open and that the completed ZIP is still in the portable installation's `debug_captures/` tree. An incomplete in-memory capture is lost on shutdown. Archives lacking the required cycle/contract identity or window metadata retain strict cycle filtering, so an older archive may not expose cross-cycle context.
+
+## Profile changed but Start requests reconnect
+
+The selected connection draft differs from the established session. In 5.1.0 the profile status intentionally keeps showing the established identity until a matching session is established. Use Connect to apply the changed draft while already connected; the automatic reconnect path can also establish the current draft after a disconnect. Saving Paper settings cannot convert an existing Live socket. Existing exposed-cycle identity locks still apply.
+
+## ATR waits again after a period/interval edit
+
+Readiness belonged to the previous calculation. The warmup guard now requires matching calculation identity; unchanged settings and valid matching saved estimates continue normally.
+
+## Daily history after upgrading
+
+5.1.0 fixes completion dates against later commission updates. Existing completed rows use their recorded update timestamp as a legacy fallback. If that timestamp was already moved by an older callback, provide the audit/broker completion evidence for investigation; the application does not guess the original date.

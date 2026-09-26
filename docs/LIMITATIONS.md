@@ -1,6 +1,6 @@
 # Limitations and non-goals
 
-This document states the boundaries of v5.0.0. Treat each limitation as an operational constraint, not as a future guarantee.
+This document states the boundaries of v5.3.0. Treat each limitation as an operational constraint, not as a future guarantee.
 
 ## Strategy scope
 
@@ -117,3 +117,9 @@ ATR memory does not detect every corporate action or guarantee suitability of th
 ## v5.0.0 validation limits
 
 The source/build target is standard CPython 3.14.x. The implementation host had Python 3.12 only and its normal 3.14 download failed with HTTP 403. Offline regressions and limited fallback test execution do not certify native 3.14, Windows Qt/DPI, PyInstaller output, actual IBKR behavior or the full pytest/coverage/quality gates. Use the implementation report and qualify those gates before live deployment. A manual-review pause retains uncertainty; it does not guarantee continuous protection or eliminate exchange/broker execution risk.
+
+## v5.1.0 qualification and historical data
+
+The development host could not obtain Python 3.14 or the declared test/build dependencies (HTTP 403). The current verification report distinguishes offline CPython 3.12 and limited-runner checks from unperformed Windows, real Qt/DPI, pytest/coverage, Ruff, Pyright, PyInstaller and IBKR checks.
+
+The additive completion-date migration freezes the existing recorded update date for old completed rows. It cannot reconstruct historical dates already moved by older callbacks. Separate cancellation and replacement still cannot guarantee an uninterrupted broker exit order.

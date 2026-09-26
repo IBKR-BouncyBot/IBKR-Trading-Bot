@@ -1,18 +1,22 @@
-# BouncyBot - an IBKR Portable Trading Bot 
+# BouncyBot - an IBKR Trading Bot
 
 <p align="center">
-  <img src="Images/BouncyBot_logo.png" alt="BouncyBot logo" width="640" />
+  <img src="Images/BouncyBot_logo_git.png" alt="BouncyBot logo" width="640" />
 </p>
 
-**Current release: v5.0.0**
+**Current release: v5.3.0**
 
-Version 5.0.0 adds targeted broker/recovery safeguards, authoritative RTH handling, background audit loading and complete post-SELL market context, and migrates source launch/build tooling to standard CPython 3.14.x. See the [release and upgrade notes](docs/V5_0_0_TRADING_SAFETY_AND_PYTHON314.md) and [measured verification report](IMPLEMENTATION_TEST_REPORT.txt), including the outstanding native Windows/Python 3.14 checks.
+Version 5.3.0 updates the GUI: the empty ticker display reads **N/A**, the market graph sits inside the Price data monitor below Strategy progress and above the five metric boxes in every view mode, locking hides the command bar, the flowchart uses compact equal-height cards, and Reconciliation opens from the right of the tab row.
+
+Trading, storage, timers and dependencies retain their 5.2.0 behavior. See the [release and upgrade notes](docs/V5_3_0_GUI_LAYOUT.md) and [implementation and test report](IMPLEMENTATION_TEST_REPORT.txt) for the changes, test results and remaining platform checks.
 
 ![Simple-view](Images/Trading-Simple-view.png)
 
-A Windows desktop application that automates one long-only Interactive Brokers stock-trading cycle at a time through Trader Workstation (TWS) or IB Gateway.
+BouncyBot is a Windows desktop application that automates one long-only stock-trading cycle at a time through Interactive Brokers Trader Workstation (TWS) or IB Gateway.
 
-The application watches a confirmed stock contract, waits for a configurable decline, enters on a rebound, and delays its normal profit-taking exit until the configured minimum-profit condition can be protected. An optional protective SELL may be submitted earlier after a BUY fill. The application uses IBKR-native trailing-stop or market orders, persists its state in a local SQLite database, and provides recovery, audit, and diagnostic tools for application-owned orders and fills.
+BouncyBot watches a confirmed stock contract, waits for a configured decline, enters on a rebound, and waits for its minimum-profit condition before submitting the normal exit. An optional protective SELL can be submitted earlier, after the BUY is terminal and its fills are reconciled.
+
+Orders use IBKR-native trailing stops or market orders. The app stores its state in a local SQLite database and provides recovery, audit and diagnostic tools for its own orders and fills.
 
 > [!CAUTION]
 > This software can transmit live orders. Native trailing stops trigger market-style execution and do not guarantee a stop price, fill price, or profit. Gaps, latency, insufficient liquidity, rejected orders, commissions, and broker behavior can produce results that differ from the application projections. Review the settings, broker permissions, market-data subscription, and recovery state before enabling live trading.
@@ -43,7 +47,9 @@ The application watches a confirmed stock contract, waits for a configurable dec
 
 ## What the bot does
 
-<img width="1920" height="510" alt="BouncyBot_five_stage_GitHub_style_with_graphs_compact" src="https://github.com/user-attachments/assets/2561c22d-dd2a-4598-9f0a-d0539203ace8" />
+<p align="center">
+  <img src="Images/5-stages-dark.png" alt="BouncyBot 5 stages" width="1920" />
+</p>
 
 The bot implements a five-stage strategy for one confirmed IBKR stock contract:
 
@@ -93,9 +99,11 @@ minimum initial SELL stop = average BUY fill × (1 + minimum profit % / 100)
 required rise-trigger price = minimum initial SELL stop / (1 - SELL trail % / 100)
 ```
 
-The final SELL is not submitted merely because a selected convenience price reaches the required level. The current bid and ask must each be independently fresh, complete, non-crossed, and within the configured maximum spread; the executable SELL-side bid must confirm the rise trigger on two consecutive distinct quote updates. The same quote identity is revalidated immediately before the durable order intent and again immediately before broker submission. A stale Last exposed by a different ticker-field update cannot arm the exit. This remains a gross planning threshold before commissions and actual market-order slippage; it is not a profit guarantee.
+The final SELL requires a complete, non-crossed bid/ask pair with each side independently fresh. A positive **Maximum spread %** also limits the spread; setting it to zero disables that ceiling, not the freshness checks. The executable SELL-side bid must confirm the rise trigger on two consecutive distinct quote updates. The quote identity is revalidated before recording the durable order intent and again before broker submission.
 
-When **Cancel SELL trail and liquidate before close** is enabled, Stage 3 also evaluates the configured cutoff. It submits an RTH-only `DAY` market SELL only when a fresh complete spread-checked quote is available and the current bid is strictly above the actual average BUY fill price; commissions are intentionally ignored for this comparison. If a protective SELL is still working, the app cancels it and waits for a terminal broker status before submitting the market order. The quote test occurs before submission and cannot guarantee that the eventual market fill remains profitable.
+An unchanged cached Last or a size-only update cannot supply a new SELL confirmation. A fresh bid/ask update can still confirm the exit when the displayed selected price comes from a cached Last. The trigger remains a gross planning threshold before commissions and actual market-order slippage; it is not a profit guarantee.
+
+When **Cancel SELL trail and liquidate before close** is enabled, Stage 3 also evaluates the configured cutoff. It requires a fresh complete quote, a bid strictly above the actual average BUY fill price, and compliance with any enabled spread ceiling. The resulting market SELL is RTH-only with `DAY` time in force; commissions are intentionally ignored for the above-BUY comparison. If a protective SELL is still working, the app cancels it and waits for a terminal broker status before submitting the market order. The quote test occurs before submission and cannot guarantee that the eventual market fill remains profitable.
 
 ### Stage 4 — manage the exit
 
@@ -109,11 +117,11 @@ An optional protective SELL trail can be submitted after the BUY becomes termina
 
 Before a trailing order is submitted, BouncyBot reads the selected contract's exchange-specific IBKR market rule when one is advertised. The app selects the increment for the proposed price, rounds BUY prices upward and SELL prices downward, and blocks submission if the advertised rule cannot be resolved. `ContractDetails.minTick` remains only a fallback for contracts that do not advertise a market rule.
 
-The optional IBKR what-if check now fails closed on missing or invalid order state, rejection warnings, unset values, or absent margin/equity output. App-owned broker error callbacks are retained in the audit trail. An unfilled BUY that becomes `Inactive` or `Rejected` stops in `ERROR` for manual review instead of automatically resetting and repeatedly resubmitting the same invalid order. A normal confirmed cancellation still returns Stage 2 to Stage 1.
+The optional IBKR what-if check fails closed on missing or invalid order state, rejection warnings, unset values, or absent margin/equity output. App-owned broker error callbacks are retained in the audit trail. An unfilled BUY that becomes `Inactive` or `Rejected` stops in `ERROR` for manual review instead of automatically resetting and repeatedly resubmitting the same invalid order. A normal confirmed cancellation still returns Stage 2 to Stage 1.
 
 ### Stage 5 — complete or repeat
 
-The application records fills, commissions received from IBKR, gross and net P/L, timing, order references, and audit events. With auto-repeat enabled, another cycle starts unless **Stop after current cycle** is active or the enabled hard-risk maximum completed-cycle cap has been reached.
+The application records fills, commissions received from IBKR, gross and net P/L, timing, order references, and audit events. With auto-repeat enabled, another cycle can start when **Stop after current cycle** is off and the enabled maximum completed-cycle cap has not been reached. Unresolved application cycles, orders or shares, and inconsistent execution identity also block automatic repetition. New BUYs remain subject to the normal trading guards.
 
 ## Core features
 
@@ -125,7 +133,7 @@ The application records fills, commissions received from IBKR, gross and net P/L
 - Native IBKR BUY and SELL trailing-stop orders with side-aware broker-price normalization.
 - Optional Stage-3 profitable market liquidation and Stage-4 cancel-confirm-market liquidation before the contract-specific RTH close.
 - Market-order alternatives when a trail percentage is exactly zero.
-- Optional automatic cycle repetition and reinvestment of positive completed application P/L.
+- Optional automatic cycle repetition and reinvestment of positive cumulative net P/L from completed application cycles (losses offset gains).
 - Portable SQLite persistence and additive schema migration.
 - Atomic resume checkpoints for normal exits and controlled Windows update/sign-out/shutdown requests.
 - Single-instance lock to reduce the risk of two copies using the same database and API client configuration.
@@ -134,9 +142,13 @@ The application records fills, commissions received from IBKR, gross and net P/L
 - CSV trade-history export and diagnostic audit bundles.
 - BouncyBot application branding and an **About > Info** screen with the project repository, referral link, and copyable support addresses.
 
-<img width="1800" height="1880" alt="BouncyBot_extended_GitHub_style_layout_fixed" src="https://github.com/user-attachments/assets/8f964ac5-f5be-4cdf-b425-7955ce2ce1c3" />
+<p align="center">
+  <img src="Images/BouncyBot_extended_Git.png" alt="BouncyBot 5 stages" width="1920" />
+</p>
 
 ## Screenshots
+
+These screenshots show earlier layouts. The current 5.3.0 arrangement is described in [Using the application](#using-the-application) and the [GUI release note](docs/V5_3_0_GUI_LAYOUT.md).
 
 <p float="left">
   <img src="Images/Trading-Simple-view.png" width="30%" />
@@ -224,7 +236,7 @@ Depending on configuration and runtime state, blockers include:
 - an unresolved application-owned long quantity;
 - what-if, market-rule, preflight, order-submission, broker-rejection, or protective-order cancellation failures.
 
-Expected guard/session pauses are displayed as caution states. **Red is reserved for real broker/local-state inconsistencies** and states requiring operator reconciliation. The Maximum spread field is never rewritten from live bid/ask data; only explicit user edits and loading the saved setting can change it.
+Recovery displays expected guard/session pauses as caution states and distinguishes them from broker/local-state inconsistencies requiring reconciliation. Workflow cards use their own colors: a red **BLOCKED** card can also mean an ordinary prerequisite is unmet, so read its reason before treating it as a recovery fault. The Maximum spread field is never rewritten from live bid/ask data; only explicit user edits and loading the saved setting can change it.
 
 ### Optional account routing
 
@@ -238,7 +250,7 @@ IBKR positions are account-level values and individual shares are not tagged by 
 
 ### Recovery and reconciliation
 
-The Reconciliation tab compares local SQLite state with app-owned open orders, the broker position, and recent executions reported by IBKR. It presents a deliberate three-step workflow:
+Open **Reconciliation** using the button at the right of the tab row. It compares local SQLite state with app-owned open orders, the broker position and recent executions reported by IBKR:
 
 1. **Refresh from IBKR/TWS** to retrieve current broker facts without placing, modifying, or cancelling an order.
 2. Compare SQLite with the returned orders, position, and executions.
@@ -264,15 +276,18 @@ See [Worker watchdog and automatic recovery](docs/WORKER_WATCHDOG_AND_AUTO_RECOV
 
 ### Stop choices
 
-The Stop dialog supports five distinct actions:
+The Stop dialog shows the choices applicable to the current cycle, visible orders and app-owned quantity:
 
-- cancel open application orders;
-- cancel application SELL orders as needed and market-sell the application-owned quantity;
-- leave application orders working;
-- stop after the current cycle;
-- stop monitoring immediately without broker action.
+- **Cancel open bot orders** requests cancellation of app-owned orders.
+- **Sell app-bought unsold position with market order** cancels working app-owned orders as needed and sells the remaining app-owned quantity after cancellation is confirmed. It requires a separate potential-loss confirmation.
+- **Leave orders working and recover later** disconnects the app while leaving broker orders in place for later recovery.
+- **Stop after current cycle / no next cycle** allows the current cycle to finish without repeating.
+- **Stop strategy now** stops the local cycle without cancelling or submitting broker orders.
+- **Stop strategy and exit app** also closes the app after the local stop is confirmed.
+- **Exit app and resume/recover later** preserves the active cycle for a later explicit resume, without a stop, cancel or SELL command.
+- **Exit app** is shown when no cycle is running and no app-owned open orders or unsold quantity are detected.
 
-The market-close path waits for cancellation confirmation of a working application SELL before submitting another SELL.
+**Cancel** closes the dialog without choosing an action. Closing the main window opens the same decision path.
 
 ### Market-data capture and audit tools
 
@@ -378,53 +393,65 @@ Host and port remain editable. The optional Start helper can launch a configured
 
 ### 1. Connect
 
-Select the TWS/Gateway profile, host, port, client ID, market-data mode, and optional account override. Click **1. Connect**. A blank account requests automatic selection of one unambiguous managed account before a new cycle. The Connection indicator distinguishes a local socket connection from the Gateway/TWS upstream IBKR link; **Gateway only** means the local process is reachable but trading is paused because upstream connectivity is not confirmed. Contract search, ticker confirmation, and strategy start stay disabled until the upstream link is ready and any post-restoration reconciliation has completed. After an enabled local API connection is lost, BouncyBot retries every ten seconds without an attempt limit. Manual **Disconnect** and application shutdown stop those retries.
+If the GUI is locked, unlock it with the top lock button to restore the workflow buttons and view-mode selector. Select **Advanced** or **Debug** to edit connection and strategy settings.
+
+Select the TWS/Gateway profile, host, port, client ID, market-data mode, and optional account override. Click **1. Connect to IB Gateway API** or **1. Connect to TWS API**, according to the selected profile. A blank account requests automatic selection of one unambiguous managed account before a new cycle. The Connection indicator distinguishes a local socket connection from the Gateway/TWS upstream IBKR link; **Gateway only** means the local process is reachable but trading is paused because upstream connectivity is not confirmed. Contract search, ticker confirmation, and strategy start stay disabled until the upstream link is ready and any post-restoration reconciliation has completed. After an enabled local API connection is lost, BouncyBot retries every ten seconds without an attempt limit. Manual **Disconnect** and application shutdown stop those retries.
 
 ### 2. Search for a contract
 
-Enter a stock symbol and use **2. Search/select ticker**. Choose the exact ordinary `STK` result with the intended positive `conId`, USD or EUR currency, and primary exchange. Routing remains `SMART`. Editing the ticker invalidates the prior exact selection, and a database with completed or active cycles rejects results in the other contract currency.
+Enter a stock symbol and use **2. Search / select ticker**. Choose the exact ordinary `STK` result with the intended positive `conId`, USD or EUR currency, and primary exchange. Routing remains `SMART`. Editing the ticker invalidates the prior exact selection, and a database with completed or active cycles rejects results in the other contract currency.
 
 ### 3. Confirm the ticker and price
 
-Use **3. Confirm ticker + get price**. The application rechecks the selected symbol, `conId`, currency, ordinary `STK` type, SMART route, primary exchange and required order capabilities. It retains IBKR session metadata for the separate RTH check; missing or unusable hours/timezone cannot declare the session open and block RTH-restricted submissions. Review the selected price source, bid/ask, **actual update age**, update sequence/subscription identity, market-data type, contract minimum tick, and RTH state. The applicable market rule is resolved at order-preflight time and recorded in order diagnostics. A cached value can remain visible after an outage, but it is labelled cached-only and does not count as a fresh update.
+Use **3. Confirm ticker + get price**. The application rechecks the selected symbol, `conId`, currency, ordinary `STK` type, SMART route, primary exchange and required order capabilities. It retains IBKR session metadata for the separate RTH check. Missing or unusable hours/timezone data leaves RTH unavailable and blocks RTH-restricted submissions. Review the selected price source, bid/ask, **actual update age**, update sequence/subscription identity, market-data type, contract minimum tick, and RTH state. The applicable market rule is resolved at order-preflight time and recorded in order diagnostics. A cached value can remain visible after an outage, but it is labelled cached-only and does not count as a fresh update.
 
 ### 4. Configure and start
 
 Review the investment amount, manual or ATR-derived percentages, protective exit, slippage planning, repetition, reinvestment, stale-data/session guards, and optional hard limits. Click **4. Start strategy**.
 
-The top lock button prevents accidental editing. When locked, the five workflow buttons and editable configuration controls are disabled; monitoring, tabs, history, and reconciliation views remain available.
+The top lock button prevents accidental editing. When locked, editable configuration controls remain disabled and the entire Live strategy bottom bar containing the five workflow buttons and view-mode selector is hidden. Unlocking restores the bar with each button subject to its existing state-dependent permissions. The top lock, monitoring, tab navigation, history and Reconciliation remain available.
 
-The ten equal-width status boxes and lock control appear first, with the five-stage ribbon immediately below. Both rows are fixed above the tabs and remain visible while scrolling and on other tabs. The lock control retains its compact width. Long status text wraps without enlarging an individual box.
+The ten equal-width status boxes and compact lock control sit above the five-stage ribbon. Both rows remain visible while scrolling or changing tabs. Long status text wraps within its box. The top Ticker box shows **N/A** when no ticker name is available; populated labels retain their identity details.
+
+Live strategy, Strategy flowchart and Trade history stay on the left of the tab row. The **Reconciliation** button on the right opens that page and indicates when it is selected. It remains reachable while locked; keyboard users can focus the button with Tab and activate it with Space. Ctrl+Tab cycles the three visible left-side tabs and skips the hidden Reconciliation tab header.
 
 The **Trading** status is the concise source for current BUY/SELL eligibility. Hover it to see all active blockers rather than only the first one. Its top-right header value is **current displayed price / minimum-profit trigger**; reaching the trigger does not imply that quote or order-safety gates have passed. The **Position** value at the top-right is the cost of app-owned shares still held, including allocated recorded BUY commission, not market value or other account holdings. Both top-right values use the same font as their top-left titles; the main status and share quantity remain below the header. When disconnected and no account is known, the Account box shows N/A; a known saved/cycle account remains visible.
 
-The Price data monitor combines Data mode with streaming-update age and combines RTH status with UTC/system time. **Show stage details** expands Current stage and Why not moving? beneath the market metrics; these diagnostics continue updating while collapsed. The duplicate Stage metric is removed (the top Stage status and ribbon remain).
+In every view mode, **Price data monitor** includes the **Market and strategy graph** directly below **Strategy progress** and above the five metric boxes. The separate graph area and the “Rolling graph buffer…” footer are removed. In Advanced and Debug, the connection/strategy configuration row comes first, followed by Price data monitor directly above **Market and strategy state**. Simple hides the configuration row, leaving Price data monitor as the first visible panel. Graph history and updates are unchanged.
+
+The Price data monitor combines Data mode with streaming-update age and combines RTH status with UTC/system time. **Show stage details** expands Current stage and Why not moving? beneath the market metrics; these diagnostics continue updating while collapsed. The top Stage status and ribbon show the current stage.
 
 **Total buy cost** in Order and position state and **Invested** in Trade history both show actual cumulative BUY quantity times average BUY fill plus recorded BUY commission. They remain the full entry cost after a SELL; the top Position cost falls as shares are sold. Unknown fill facts are not replaced by a budget, and pending commissions can change the displayed cost. Long OrderRefs wrap as exact copyable plain text, using the same card background and proportional value font in light and dark modes, with internal scrolling for unusually long references.
 
-The Strategy input map retains its sixteen values and four lanes in a shorter 420-pixel-minimum-height panel. Expanding raw API fields fills the available width: content-sized Field columns alternate with stretching Value columns.
+The Strategy flowchart uses one text-fitting height for all five cards without shrinking their fonts. Narrower widths or longer text can increase that common height. The separate Strategy input map keeps its sixteen values and four lanes in a panel with a 420-pixel minimum height.
+
+Expanding raw API fields fills the available width: content-sized Field columns alternate with stretching Value columns.
 
 The Completed trade summary has three columns and four rows; **Average net P/L** follows **Best net P/L** and **Worst net P/L**. It is total realized net P/L divided by completed cycles, including losses and commissions. History keeps its horizontal scrollbar at the table viewport bottom even with many rows. The Invested column sorts numerically; CSV export retains its existing schema and does not gain a derived GUI-only column.
 
-In Cycle audit Timeline, each plot has an independent cursor. Hovering a plot shows its local time/price crosshair and record tooltip without drawing a cursor on the other graph. Moving to the other plot clears the previous overlay; leaving the plots or moving into the gap clears all hover guides. The single-graph Summary and other charts retain independent hover behavior; existing time-axis zoom and scrolling remain. Both lower Timeline tables retain equal height. Orders and Executions use the full available width with OrderRef absorbing spare space. Market capture starts at the top even when no capture ZIP is available; its summary and preview fill the width and scroll independently. Decision events continues to fill its tab. Opening the audit dialog starts one read-only background worker to prepare capture data and decision display rows. Timeline and Market capture share the prepared data; Decision cells and wrapped row heights are added in bounded GUI batches. Closing the dialog cancels the work and discards late results. Other record tabs remain lazy. Timeline shows only actual changes between two recorded stages; all decision events remain available in Decisions.
+In Cycle audit Timeline, each plot has an independent cursor. Hovering a plot shows its local time/price crosshair and record tooltip without drawing a cursor on the other graph. Moving to the other plot clears the previous overlay; leaving the plots or moving into the gap clears all hover guides. The single-graph Summary and other charts retain independent hover behavior; existing time-axis zoom and scrolling remain. Both lower Timeline tables retain equal height.
+
+Orders and Executions use the full available width with OrderRef absorbing spare space. Market capture starts at the top even when no capture ZIP is available; its summary and preview fill the width and scroll independently. Decision events fills its tab.
+
+Opening the audit dialog starts one read-only background worker to prepare capture data and decision display rows. Timeline and Market capture share the prepared data; Decision cells and wrapped row heights are added in bounded GUI batches. Closing the dialog cancels the work and discards late results. Other record tabs remain lazy. Timeline shows only actual changes between two recorded stages; all decision events remain available in Decisions.
 
 The Cycle audit Summary details table refits when width, font/style or content changes. If wrapped rows exceed its height cap, a vertical scrollbar keeps all details accessible. Compact table sizing also reserves space for horizontal scrollbars where enabled.
 
-**Simple** hides the **Recovery / audit log**; **Advanced** and **Debug** retain it at full dashboard width. This does not hide the Reconciliation tab, disable recovery, or change audit recording. Workflow actions remain in the fixed five-button command bar; the former duplicate dashboard Controls panel is not shown.
+**Simple** hides the connection and strategy configuration panels, **Budget and P/L** and **Recovery / audit log**. **Advanced** and **Debug** show those panels, with the audit log at full dashboard width; Debug also expands raw API fields. Reconciliation and audit recording remain available in every mode. The five workflow buttons and view-mode selector are visible when unlocked.
 
 ### 5. Stop or close
 
-Use **5. Stop strategy** and select the intended broker action. Closing the main window invokes the same stop decision path rather than silently abandoning the active state. Stop/exit quantity decisions come from the persisted application-owned fill ledger, not the account-wide broker position, so unrelated external shares do not create a SELL option.
+Unlock the GUI if needed, then use **5. Stop strategy** and select the intended action. Closing the main window invokes the same stop decision path rather than silently abandoning the active state. Stop/exit quantity decisions come from the persisted application-owned fill ledger, not the account-wide broker position, so unrelated external shares do not create a SELL option.
 
 When Windows requests an orderly session shutdown, such as an update restart, sign-out, or battery-triggered controlled shutdown, the app does not display a stop dialog. It writes the same durable state used by **Exit app and resume/recover later** and preserves the active cycle stage and app-owned broker orders. It does not stop the worker or exit from inside Qt's session callback, so the app remains usable if Windows shutdown is cancelled; when shutdown proceeds, normal event-loop cleanup stops the worker. On the next launch, reconnect and explicitly use **4. Start strategy** or the applicable Reconciliation action before monitoring resumes. A sudden total power loss or forced process kill cannot run this final hook; recovery then uses the most recent SQLite commits already on disk.
 
 ### Paper and live operation
 
-The selected connection profile defines paper versus live mode. Live mode adds explicit warnings and guard behavior. Validate the entire workflow with an IBKR paper account and realistic market-data conditions before deciding whether to use live mode.
+The established connection profile defines paper versus live mode. Editing an idle connection profile does not change the active broker session: reconnect to apply it before starting a strategy. Live mode adds explicit warnings and guard behavior. Validate the entire workflow with an IBKR paper account and realistic market-data conditions before deciding whether to use live mode.
 
 ### About and project information
 
-Use **About > Info** to view the fully centered BouncyBot logo, current application version, the project GitHub link, the IBKR referral link, and the same copyable support addresses listed in the [Thank me](#thank-me) section. The app always starts with the light Fusion appearance. Use **View > Light mode** or **View > Dark mode** to change the appearance for the current session.
+Use **About > Info** to view the BouncyBot logo, current application version, the project GitHub link, the IBKR referral link, and the same copyable support addresses listed in the [Thank me](#thank-me) section. The app always starts with the light Fusion appearance. Use **View > Light mode** or **View > Dark mode** to change the appearance for the current session.
 
 ## Data, backups, and diagnostics
 
@@ -433,7 +460,7 @@ The application writes these paths beside the project or packaged executable:
 | Path | Contents |
 |---|---|
 | `bot_state.sqlite` | Settings, cycle state, orders, executions, decisions, broker events, and audit events |
-| `backups/` | Full, restore-validated SQLite backups; normal rotation retains the newest 50 when deletion succeeds |
+| `backups/` | Full SQLite backups, including pre-schema startup copies. Normal event-triggered backups are restore-validated and then rotate the folder to the newest 50 when deletion succeeds |
 | `exports/` | User-requested history and audit exports |
 | `logs/` | Reserved generated-data directory; the current persistent readable audit log is under `debug_reports/` |
 | `debug_reports/` | Human-readable audit log and latest state report; the periodic latest-state file refreshes at most once per 60 seconds unless forced |
@@ -445,6 +472,8 @@ Do not edit the live SQLite file manually while the application is running. Pres
 All app-generated timestamps are UTC. The GUI may also show system-local time for operator comparison, but persisted audit time remains UTC.
 
 Before an accepted app exit or controlled Windows shutdown, `connection`, `strategy`, the current cycle, and `last_resume_checkpoint` metadata are committed together. The checkpoint also writes an audit event and requests a restore-validated online backup. Shutdown checkpointing applies safe editable fields without re-evaluating the last quote or issuing a broker action. It does not persist current-session ATR observations or an incomplete market-data capture.
+
+Full backups are requested by lifecycle and trading events, not by a periodic full-backup timer. Restore validation makes a consistent temporary SQLite copy, exercises additive migrations on it, and validates it. Since 5.2.0, only that disposable copy skips its redundant pre-schema backup. Opening an existing real database still attempts a pre-schema backup; that startup path does not run the restore-validation or rotation steps itself. The manual-handling index is created when missing and does not change existing table rows. See [database compatibility and backup details](docs/DATABASE_SCHEMA.md).
 
 ## Repository safety
 
@@ -466,7 +495,7 @@ Run:
 
 This verifies standard GIL-enabled CPython 3.14.x before installing dependencies or running tests, then performs Python compilation, every collected pytest test (including the bounded soak tests) with `ResourceWarning` checks, statement and branch coverage with a 75% minimum, a generated per-callable coverage check, a seventeen-mutant safety smoke gate, all deterministic CSV simulations, Ruff, and Pyright. The Windows full-test path applies no pytest marker filter. Every effective executable callable under `app/` and in `main.py` must be entered by at least one test. Failure at any required stage produces a nonzero result.
 
-The offline suite includes broker-event permutations, generated controller state sequences, numerical/payload properties, recovery decision matrices, differential simulations, crash/restart and schema-migration cases, storage fault injection, Gateway outage sequences, and multi-instance isolation. The CSV gate validates 58 explicit scenario contracts across 54 price-path files, including threshold edges, gap fills, partial fills, RTH transitions, protective exits, slippage buffers, sizing, reinvestment, and zero-trailing market-order branches. It does not launch the GUI, connect to IBKR, or use real market/account/order data. See [Deterministic offline behavior tests](docs/OFFLINE_BEHAVIOR_TESTS.md) and [production incident replay tests](docs/PRODUCTION_INCIDENT_REPLAY_TESTS.md).
+The offline suite includes broker-event permutations, generated controller state sequences, numerical/payload properties, recovery decision matrices, differential simulations, crash/restart and schema-migration cases, storage fault injection, Gateway outage sequences, and multi-instance isolation. The CSV gate validates 58 explicit scenario contracts across 54 price-path files, including threshold edges, gap fills, partial fills, RTH transitions, protective exits, slippage buffers, sizing, reinvestment, and zero-trailing market-order branches. These offline checks do not connect to IBKR or use real market/account/order data. GUI tests use Qt doubles or offscreen native widgets with an inert controller; they do not start live trading. See [Deterministic offline behavior tests](docs/OFFLINE_BEHAVIOR_TESTS.md) and [production incident replay tests](docs/PRODUCTION_INCIDENT_REPLAY_TESTS.md).
 
 ### Direct Python tests
 
@@ -493,16 +522,16 @@ Run:
 .\build_windows.bat
 ```
 
-The default build skips the test suite, keeps the PyInstaller onedir output at:
+The default build skips the test suite and leaves the PyInstaller folder-based output at:
 
 ```text
 dist\IBKRTradingBot\IBKRTradingBot.exe
 ```
 
-and creates the versioned release folder and final ZIP using the same naming pattern as IBKR Market Replay Lab:
+It also creates a versioned release folder and ZIP:
 
 ```text
-release\IBKRTradingBot_5.0.0_Windows\
+release\IBKRTradingBot_5.3.0_Windows\
   BouncyBot.lnk
   GUI\IBKRTradingBot.exe
   docs\
@@ -512,7 +541,7 @@ release\IBKRTradingBot_5.0.0_Windows\
   SECURITY.md
   QUICK_START.txt
 
-release\IBKRTradingBot_5.0.0_Windows.zip
+release\IBKRTradingBot_5.3.0_Windows.zip
 release\SHA256SUMS.txt
 ```
 
@@ -538,14 +567,14 @@ The source `Images/` directory is not copied into the Windows release root. PyIn
 
 ```text
 app/
-  atr_memory.py           Validated saved RTH ATR estimates
+  atr_memory.py            Validated saved RTH ATR estimates
   controller.py            Worker loop, guards, recovery, broker action execution
-  flowchart_model.py       Pure flowchart/card model
+  flowchart_model.py        Pure flowchart/card model
   gui.py                   PySide6 interface and audit visualizations
   ib_adapter.py            IBKR adapter and native order construction
   ib_platform.py           TWS/Gateway profiles and launch helpers
   lockfile.py              Single-instance protection
-  market_data_capture.py   In-memory pre/post-fill capture manager
+  market_data_capture.py    In-memory pre/post-fill capture manager
   models.py                Serializable models, defaults, validation, calculations
   order_diagnostics.py     Native trailing-order diagnostics
   order_edit_policy.py     Reviewed settings edits before the next order
@@ -587,10 +616,12 @@ Start with the [documentation index](docs/README.md). Current authoritative guid
 
 Superseded release-specific documents are indexed under [docs/legacy](docs/legacy/README.md) and are retained only for traceability.
 
-
 ## Release history
 
-- [v5.0.0 release note](docs/V5_0_0_TRADING_SAFETY_AND_PYTHON314.md) - targeted trading/recovery safeguards, standard CPython 3.14 migration, regression tests and smaller stage indicators.
+- [v5.3.0 release note](docs/V5_3_0_GUI_LAYOUT.md) - GUI layout, lock-bar visibility, compact flowchart cards and release files.
+- [Archived v5.2.0 release note](docs/legacy/V5_2_0_STORAGE_PERFORMANCE.md) - targeted manual-handling index and removal of the redundant temporary restore-validation backup.
+- [Archived v5.1.0 release note](docs/legacy/V5_1_0_TARGETED_TRADING_FIXES.md) - targeted fixes for all eleven reviewed defect groups, regression coverage, database compatibility and lock-button sizing.
+- [Archived v5.0.0 release note](docs/legacy/V5_0_0_TRADING_SAFETY_AND_PYTHON314.md) - the preceding trading/recovery safeguards and standard CPython 3.14 migration.
 - [v4.2.0 release note](docs/legacy/V4_2_0_HEADER_AND_INDEPENDENT_TIMELINE.md) - retained header, independent-cursor and responsive-table changes.
 - [v4.1.0 release note](docs/legacy/V4_1_0_GUI_METRICS_AND_AUDIT_LAYOUT.md) - historical GUI metrics/layout and linked-crosshair release; Timeline cursor linking was removed in v4.2.0.
 - [v4.0.0 release note](docs/legacy/V4_0_0_ATR_SESSION_MEMORY_AND_ORDER_EDITING.md) - persisted RTH ATR starting estimates, reviewed next-order risk edits, amber LIVE profile, and non-selling exit defaults.

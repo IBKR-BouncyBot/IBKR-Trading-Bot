@@ -1,6 +1,6 @@
 # Documentation index
 
-The files in this directory describe the current v5.0.0 behavior unless explicitly marked otherwise. The root of `docs/` is intentionally limited to current operating, design, recovery, and verification material. Superseded release notes are stored under [`legacy/`](legacy/README.md).
+The files in this directory describe the current v5.3.0 behavior unless explicitly marked otherwise. The root of `docs/` is intentionally limited to current operating, design, recovery, and verification material. Superseded release notes are stored under [`legacy/`](legacy/README.md).
 
 When documents disagree, use this source-of-truth order:
 
@@ -17,7 +17,7 @@ When documents disagree, use this source-of-truth order:
 | [`../CHANGELOG.md`](../CHANGELOG.md) | Consolidated release history |
 | [`../SECURITY.md`](../SECURITY.md) | Private vulnerability reporting and sensitive-artifact guidance |
 | [`../LICENSE`](../LICENSE) | PolyForm Noncommercial License 1.0.0 terms |
-| [`../IMPLEMENTATION_TEST_REPORT.txt`](../IMPLEMENTATION_TEST_REPORT.txt) | Measured 5.0.0 verification, source scope and outstanding platform gates |
+| [`../IMPLEMENTATION_TEST_REPORT.txt`](../IMPLEMENTATION_TEST_REPORT.txt) | Measured 5.3.0 verification, source scope and outstanding platform gates |
 
 ## Current guides
 
@@ -51,12 +51,12 @@ When documents disagree, use this source-of-truth order:
 
 ## Current release note
 
-[`V5_0_0_TRADING_SAFETY_AND_PYTHON314.md`](V5_0_0_TRADING_SAFETY_AND_PYTHON314.md) covers submission, recovery, order identity, quote and protective-exit safeguards; authoritative RTH metadata; the Python 3.14 upgrade; compact stage indicators; background audit loading; post-SELL market context; and verification limits. The current [README](../README.md) documents the independent Timeline cursors, responsive Reconciliation table and other retained GUI behavior. Earlier release notes are implementation history, not additional operating instructions.
+[`V5_3_0_GUI_LAYOUT.md`](V5_3_0_GUI_LAYOUT.md) describes the ticker placeholder, Live strategy layout, lock visibility, compact flowchart cards, Reconciliation navigation and release files. The current [README](../README.md) documents the retained trading and GUI behavior. Earlier release notes are implementation history, not additional operating instructions.
 
 ## Archived documentation
 
-The [`legacy/`](legacy/README.md) directory contains all superseded release-specific notes and retained historical reports. Only the current v5.0.0 release note remains in the root of `docs/`. Archived files may accurately describe the release that introduced a feature, but labels, defaults, layouts, tests, and limitations in them can be obsolete. They are not the current operating specification.
+The [`legacy/`](legacy/README.md) directory contains all superseded release-specific notes and retained historical reports. Only the current v5.3.0 release note remains in the root of `docs/`. Archived files may accurately describe the release that introduced a feature, but labels, defaults, layouts, tests, and limitations in them can be obsolete. They are not the current operating specification.
 
 The [v4.0.0 ATR and order-editing note](legacy/V4_0_0_ATR_SESSION_MEMORY_AND_ORDER_EDITING.md) records the origin of the saved ATR estimates and next-order edit policy. Consult the current configuration and strategy guides for their present behavior.
 
-Other recent history: [v4.2.0 headers and independent cursors](legacy/V4_2_0_HEADER_AND_INDEPENDENT_TIMELINE.md), [v4.1.0 GUI metrics and audit layout](legacy/V4_1_0_GUI_METRICS_AND_AUDIT_LAYOUT.md), and [v3.9.0 diagnostic coalescing](legacy/V3_9_0_AUDIT_DIAGNOSTIC_COALESCING.md).
+Other recent history: [v5.2.0 storage performance](legacy/V5_2_0_STORAGE_PERFORMANCE.md), [v5.1.0 targeted trading fixes](legacy/V5_1_0_TARGETED_TRADING_FIXES.md), [v5.0.0 safeguards and Python 3.14](legacy/V5_0_0_TRADING_SAFETY_AND_PYTHON314.md), [v4.2.0 headers and independent cursors](legacy/V4_2_0_HEADER_AND_INDEPENDENT_TIMELINE.md), [v4.1.0 GUI metrics and audit layout](legacy/V4_1_0_GUI_METRICS_AND_AUDIT_LAYOUT.md), and [v3.9.0 diagnostic coalescing](legacy/V3_9_0_AUDIT_DIAGNOSTIC_COALESCING.md).

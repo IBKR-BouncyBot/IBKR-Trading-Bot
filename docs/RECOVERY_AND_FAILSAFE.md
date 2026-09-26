@@ -249,3 +249,11 @@ Do not resolve these by editing SQLite. Preserve the audit bundle and use broker
 Recovered terminal partial SELLs stay incomplete. Holdings must be sufficient for reconciled app-owned unsold quantity in the exact account/conId; unrelated extra holdings do not invalidate recovery. Legacy blank accounts with exposure require unambiguous owned broker evidence. A new ticker cannot replace an unresolved cycle. Late fills for replaced references update the ledger and may require cancellation/reconciliation of an oversized owned replacement.
 
 Configured protection that is absent, uncertain, or cancelled without a feasible replacement is a recovery condition. This does not close or insure the shares. Protective handoffs check normalized order feasibility before cancellation and require subsequent confirmation/revalidation.
+
+## v5.1.0 recovery corrections
+
+Recovery refuses conflicting execution identifiers even when a numeric order ID matches. An exact-known working order beside a waiting-entry cycle is a reconciliation conflict, not permission to start another BUY.
+
+Mark manually handled acknowledges the cycle and order/fill state actually reviewed. If that state changes while the dialog is open or before the worker processes the command, the acknowledgement is refused and must be reviewed again. Price-only updates do not invalidate it.
+
+The timed-out exit-checkpoint fallback preserves the latest committed cycle under the SQLite transaction lock. It cannot replace a newly accepted order with an older GUI-thread copy. Normal worker checkpoints still apply allowed settings without evaluating the displayed quote.

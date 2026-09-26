@@ -34,7 +34,7 @@ Key/value storage for editable drafts, resume checkpoints, the database currency
 
 Draft settings are persisted independently of an active cycle. Starting a cycle copies the relevant values into `cycles` so recovery does not depend on later draft edits.
 
-The `last_resume_checkpoint` key records the checkpoint ID, UTC creation time, shutdown reason, active cycle identity/stage, ticker, and whether explicit resume is required. During an accepted app exit or controlled Windows shutdown, this setting is committed in the same transaction as the latest connection/strategy drafts, active cycle row, and audit event.
+The `last_resume_checkpoint` key records the checkpoint ID, UTC creation time, shutdown reason, active cycle identity/stage, ticker, and whether explicit resume is required. During an accepted app exit or controlled Windows shutdown, this setting is committed in the same transaction as the latest connection/strategy drafts, active cycle state and audit event. The normal worker writes its current cycle; a timed-out GUI fallback re-reads and preserves an existing committed cycle under the transaction lock, and its marker reflects that committed state.
 
 
 ### `database_contract_currency`
@@ -50,7 +50,7 @@ One row per strategy cycle. This is the core restart/recovery and completed-hist
 ### Identity and lifecycle
 
 - `id`, `cycle_number`, `ticker`, `stage`;
-- `created_at`, `updated_at`;
+- `created_at`, `updated_at`, nullable storage-owned `completed_at`;
 - `account`, exact IBKR `con_id`, SMART `exchange`, native `primary_exchange`, one-database `currency`, and `rth_only`;
 - `recovery_required`, `close_position_market_requested`, `stop_after_current_cycle`, `error_message`.
 
@@ -152,6 +152,8 @@ These records explain why a transition or submission did or did not occur. They 
 
 Trade-history audit lookup uses the ordered index `(cycle_id, created_at, id)`.
 
+The partial index `idx_decision_events_manually_handled_cycle` stores `cycle_id` only for rows whose `event_type` is exactly `MANUALLY_HANDLED`. The existing unresolved-cycle and app-owned-position queries can use it to check acknowledgement without scanning other decision records. Their SQL predicates and returned data are unchanged. Other event types do not add entries to this index.
+
 ## `broker_events`
 
 Raw broker/recovery event records.
@@ -174,7 +176,7 @@ Normal application operation does not delete completed cycle history as part of 
 
 `_ensure_schema()` is additive and idempotent:
 
-1. when an existing database is present, make a best-effort pre-schema-check online backup;
+1. when an existing database is opened normally, make a best-effort pre-schema-check online backup; the internally created disposable restore-validation candidate alone skips this redundant backup;
 2. create any missing tables/indexes;
 3. add known missing `cycles` columns with `ALTER TABLE`;
 4. deserialize cycle rows using known dataclass fields and defaults, ignoring unknown columns in the in-memory object without dropping those columns from SQLite.
@@ -193,7 +195,9 @@ v3.1.2 added one defaulted cycle-state column: `buy_remainder_cancel_requested I
 
 The latest validation is written to `backups/latest_restore_validation.json`. Backups are named with a UTC stamp and reason, and the default retention is 50 files.
 
-Backups are requested before/around high-value lifecycle events such as schema checks, order submission, fills, shutdown, and audit export. Backup failure is recorded/handled by the calling path; it does not transform a backup into broker truth.
+The restore candidate is made with SQLite's online backup API so committed WAL contents are included. It still runs the normal additive migrations and validation checks. From 5.2.0 its internal `BotStorage` opening alone skips the pre-schema backup of this already-disposable copy. This removes one full temporary database copy per restore-validation attempt without removing the actual backup or candidate. The candidate is discarded after validation, and the supplied backup and active database are not migrated by validation.
+
+Backups are requested before/around high-value lifecycle events such as schema checks, order submission, fills, shutdown, and audit export. There is no periodic full-backup interval. The 5.2.0 changes do not alter these triggers, retention or immediate trading-state persistence. Backup failure is recorded/handled by the calling path; it does not transform a backup into broker truth.
 
 ## Audit bundles
 
@@ -226,3 +230,20 @@ Normal SQLite backups include these records. Copy the existing database when upg
 ## v5.0.0 compatibility
 
 v5.0.0 adds no table, column or index. `SUBMISSION_UNKNOWN` uses existing order/cycle status fields, and manual-review state uses existing recovery fields. Historical order-role/account evidence is read from existing orders/executions. Restore readiness now requires original core columns and primary keys and checks declared foreign-key integrity, then tests existing additive migrations on a disposable consistent SQLite backup. No active database or supplied backup is modified by that validation. It is not a blanket validation of all stored values or a substitute for broker reconciliation.
+
+## v5.1.0 completion-date migration
+
+The additive migration introduces one nullable `cycles.completed_at` TEXT column. Storage captures the first persisted final CYCLE_COMPLETE transition and preserves it during subsequent upserts, including execution/commission reconciliation. It is not the first partial SELL timestamp and is not reconstructed broker execution time. An offline completion first recognized on a later application day uses that day.
+
+Existing completed rows lacking completion evidence are backfilled once from their current `updated_at`. Already-moved dates from an older release cannot be repaired automatically. Unfinished rows remain NULL until completion; older CycleState dictionaries do not need the new storage-owned field. Daily P/L/count queries and completed-cycle loss ordering use the stable timestamp. No existing fills, order identities, quantities, ATR checkpoints or settings are reset.
+
+## v5.2.0 partial index
+
+The normal additive schema path executes:
+
+```sql
+CREATE INDEX IF NOT EXISTS idx_decision_events_manually_handled_cycle
+ON decision_events(cycle_id) WHERE event_type = 'MANUALLY_HANDLED';
+```
+
+Creating the missing index scans existing decision records and writes the index once; it can extend the first opening of a large database. Subsequent openings retain it. This index adds no table or column and does not modify application table rows. Upgrading from releases earlier than 5.1.0 still performs the preceding migrations, including the documented completion-date backfill above. Existing records, manual acknowledgements and legacy error-message exclusions keep their existing interpretation.

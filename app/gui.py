@@ -32,7 +32,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from PySide6.QtCore import QEvent, QObject, QPointF, QRectF, QSize, Qt, QTimer
-from PySide6.QtGui import QAction, QBrush, QColor, QFont, QIcon, QPainter, QPalette, QPen, QPixmap, QTextOption
+from PySide6.QtGui import QAction, QBrush, QColor, QFont, QFontMetricsF, QIcon, QPainter, QPalette, QPen, QPixmap, QTextOption
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QApplication,
@@ -153,7 +153,7 @@ CURRENCY_SYMBOLS = {"USD": "$", "EUR": "€"}
 ACTIVE_CONTRACT_CURRENCY = "USD"
 CURRENCY_SYMBOL = CURRENCY_SYMBOLS[ACTIVE_CONTRACT_CURRENCY]
 
-APP_VERSION = "5.0.0"
+APP_VERSION = "5.3.0"
 DARK_MODE_APP_PROPERTY = "bouncybotDarkMode"
 
 LIGHT_FUSION_PALETTE_COLORS = {
@@ -422,7 +422,7 @@ STAGE_ORDER = [_stage_value(stage) for stage, _label in STAGE_LABELS]
 STAGE_TITLES = {_stage_value(stage): label for stage, label in STAGE_LABELS}
 DEFAULT_VIEW_MODE = "Advanced"
 VIEW_MODE_HELP = {
-    "Simple": "Simple: core status, chart, next action, orders, positions, and risk status. Stage details are expandable; the Recovery / audit log is hidden.",
+    "Simple": "Simple: core status, chart, next action, orders, positions, and risk status. Stage details are expandable.",
     "Advanced": "Advanced: default live-supervision view with summaries, guards, previews, history tools, and a full-width Recovery / audit log.",
     "Debug": "Debug: Advanced plus raw API fields, internal diagnostics, detailed audit output, and full troubleshooting panels.",
 }
@@ -1699,12 +1699,13 @@ class LiveStatusBar(QFrame):
         self.input_lock_btn.setChecked(False)
         self.input_lock_btn.setFixedWidth(48)
         self.input_lock_btn.setMinimumHeight(40)
+        self.input_lock_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
         lock_font = self.input_lock_btn.font()
         lock_font.setPointSize(max(lock_font.pointSize() + 4, 16))
         lock_font.setBold(True)
         self.input_lock_btn.setFont(lock_font)
         self.input_lock_btn.setToolTip(
-            "Input lock is off. Toggle on to prevent configuration edits and disable the five workflow buttons."
+            "Input lock is off. Toggle on to prevent configuration edits and hide the workflow buttons and view selector."
         )
         self._input_lock_state: Optional[bool] = None
         layout.addWidget(self.input_lock_btn, 0)
@@ -1716,9 +1717,9 @@ class LiveStatusBar(QFrame):
         self._input_lock_state = locked
         self.input_lock_btn.setText("\U0001f512" if locked else "\U0001f513")
         self.input_lock_btn.setToolTip(
-            "Input lock is on. Toggle off to edit configuration values or use the five workflow buttons."
+            "Input lock is on. Toggle off to edit configuration values and show the workflow buttons and view selector."
             if locked
-            else "Input lock is off. Toggle on to prevent configuration edits and disable the five workflow buttons."
+            else "Input lock is off. Toggle on to prevent configuration edits and hide the workflow buttons and view selector."
         )
         self.input_lock_btn.setProperty("locked", bool(locked))
         self.input_lock_btn.style().unpolish(self.input_lock_btn)
@@ -1769,8 +1770,9 @@ class LiveStatusBar(QFrame):
             if widget.toolTip() != connection_tooltip:
                 widget.setToolTip(connection_tooltip)
 
-        platform = platform_label(connection.get("platform") or GATEWAY_PLATFORM)
-        mode = str(connection.get("trading_mode") or "live").upper()
+        session = snapshot.get("established_connection") or connection
+        platform = platform_label(session.get("platform") or GATEWAY_PLATFORM)
+        mode = str(session.get("trading_mode") or "live").upper()
         self.pills["Profile"].set_value(f"{platform} {mode}", "waiting" if mode == "LIVE" else "success")
         account_candidates = [
             cycle.get("account"),
@@ -1792,10 +1794,10 @@ class LiveStatusBar(QFrame):
         account_text = account or ("Auto (single managed account)" if connected and local_connected else "N/A")
         self.pills["Account"].set_value(account_text, "success" if upstream_connected is True else "waiting")
         contract = price_snapshot.get("contract") or {}
-        ticker = cycle.get("ticker") or contract.get("ticker") or strategy.get("ticker") or "Waiting for ticker confirmation"
+        ticker = cycle.get("ticker") or contract.get("ticker") or strategy.get("ticker")
         exchange = cycle.get("exchange") or contract.get("exchange") or strategy.get("exchange") or "SMART"
         currency = cycle.get("currency") or contract.get("currency") or strategy.get("currency") or "USD"
-        self.pills["Ticker"].set_value(f"{ticker} / {exchange} / {currency}", "success" if ticker and ticker != "Waiting for ticker confirmation" else "waiting")
+        self.pills["Ticker"].set_value(f"{ticker} / {exchange} / {currency}" if ticker else "N/A", "success" if ticker else "waiting")
         rth_open = price_snapshot.get("rth_open")
         rth_text = _format_rth_status(price_snapshot, short=True)
         if rth_open is True:
@@ -3943,13 +3945,6 @@ class StrategyGraphWidget(QWidget):
             if row_y > legend.bottom() - 28:
                 break
 
-        painter.setPen(_theme_color("#5b6270", "#aeb8c8"))
-        note = "Native trailing-stop orders are managed by TWS; market-order mode is used when a trailing field is 0. Active trail lines are estimates from prices observed by this app."
-        if self._history:
-            hours = self._history_max_age_seconds / 3600.0
-            note = f"Rolling graph buffer: {len(self._history):,}/{self._history_max_points:,} points, max {hours:.0f}h | " + note
-        painter.drawText(QRectF(rect.left() + 12, rect.bottom() - 32, rect.width() - 24, 24), Qt.AlignLeft | Qt.AlignVCenter, note)
-
     def mouseMoveEvent(self, event) -> None:  # type: ignore[override]
         plot = self._last_plot_rect
         if plot is None or not self._history or not plot.contains(event.position()):
@@ -3990,8 +3985,6 @@ class StrategyFlowchartWidget(QWidget):
     """
 
     MIN_CANVAS_WIDTH = 760
-    CANVAS_HEIGHT = 1580
-    CARD_HEIGHT = 272.0
     CARD_GAP = 12.0
 
     def __init__(self):
@@ -4002,25 +3995,94 @@ class StrategyFlowchartWidget(QWidget):
         self._cards: list[FlowchartStageCard] = build_strategy_flowchart_cards(self._strategy)
         self._view_mode = "Full strategy"
         self._compact_mode = False
+        self._text_height_cache: dict[tuple[Any, ...], float] = {}
         self._refresh_canvas_size()
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
     def sizeHint(self) -> QSize:  # type: ignore[override]
         return QSize(1120, self._canvas_height())
 
-    def _canvas_height(self) -> int:
+    def _card_texts(self, card: FlowchartStageCard) -> tuple[str, str, str, str]:
+        status = self._status_for_card(card)
+        title = card.title + (f"  -  {status.upper()}" if status != "Pending" else "")
+        order = f"Stage status: {status}\n\nBroker order type used\n{card.order_summary}"
+        trigger = "Calculated trigger values\n" + card.trigger_summary
+        details = "\n".join(["Input values used and live guard status:"] + [f"- {line}" for line in card.details])
+        return title, order, trigger, details
+
+    def _wrapped_text_height(self, text: str, width: float, point_size: int, bold: bool) -> float:
+        font = QFont(self.font())
+        font.setPointSize(point_size)
+        font.setBold(bold)
+        key = (text, width, font.toString(), self.logicalDpiX(), self.logicalDpiY(), self.devicePixelRatioF())
+        if key not in self._text_height_cache:
+            metrics = QFontMetricsF(font, self)
+            height = metrics.boundingRect(QRectF(0, 0, width, 1000000), Qt.AlignLeft | Qt.AlignTop | Qt.TextWordWrap, text).height()
+            # Keep unchanged paragraphs cheap across live-price updates, with
+            # bounded memory when changing prices produce new text strings.
+            if len(self._text_height_cache) >= 256:
+                self._text_height_cache.clear()
+            self._text_height_cache[key] = float(math.ceil(height))
+        return self._text_height_cache[key]
+
+    def _card_layout(self, canvas_width: Optional[float] = None) -> tuple[float, float, float, tuple[float, float, float]]:
+        canvas_width = max(float(self.MIN_CANVAS_WIDTH), float(self.width()) if canvas_width is None else canvas_width)
+        card_width = canvas_width - 32.0
+        inner_width = card_width - 40.0
+        box_gap = 8
+        order_width = max(112.0, inner_width * 0.17)
+        trigger_width = max(188.0, inner_width * 0.28)
+        details_width = inner_width - order_width - trigger_width - 2 * box_gap
+        if details_width < 260.0:
+            shortage = 260.0 - details_width
+            order_width = max(105.0, order_width - shortage * 0.35)
+            trigger_width = max(170.0, trigger_width - shortage * 0.65)
+            details_width = inner_width - order_width - trigger_width - 2 * box_gap
+        widths = (order_width, trigger_width, max(180.0, details_width))
+        header_height = 38.0
+        body_height = 16.0
+        # Measure all five stages, including hidden ones, so a view-filter
+        # change keeps identical card heights. Do not shrink the fonts.
+        for card in self._cards:
+            title, *body = self._card_texts(card)
+            header_height = max(header_height, self._wrapped_text_height(title, card_width - 150.0, 12, True) + 16.0)
+            for index, text in enumerate(body):
+                body_height = max(body_height, self._wrapped_text_height(text, widths[index] - 20.0, 9, index < 2) + 16.0)
+        return header_height + 12.0 + body_height + 12.0, header_height, body_height, widths
+
+    def _canvas_height(self, canvas_width: Optional[float] = None) -> int:
         try:
             count = len(self._filtered_cards())
         except Exception:
             count = len(self._cards) or 5
         count = max(1, count)
-        height = 140.0 + count * self.CARD_HEIGHT + max(0, count - 1) * self.CARD_GAP + 46.0
+        card_height = self._card_layout(canvas_width)[0]
+        height = 140.0 + count * card_height + max(0, count - 1) * self.CARD_GAP + 46.0
         return int(max(640.0, height))
 
     def _refresh_canvas_size(self) -> None:
         height = self._canvas_height()
         self.setMinimumSize(self.MIN_CANVAS_WIDTH, height)
         self.resize(max(self.width(), self.MIN_CANVAS_WIDTH), height)
+
+    def resizeEvent(self, event) -> None:  # type: ignore[override]
+        super().resizeEvent(event)
+        if event.size().width() != event.oldSize().width():
+            self._refresh_canvas_size()
+            self.updateGeometry()
+
+    def changeEvent(self, event) -> None:  # type: ignore[override]
+        super().changeEvent(event)
+        if event.type() in (QEvent.FontChange, QEvent.ApplicationFontChange) and "_cards" in self.__dict__:
+            self._refresh_canvas_size()
+            self.updateGeometry()
+
+    def event(self, event) -> bool:  # type: ignore[override]
+        result = super().event(event)
+        if event.type() == QEvent.DevicePixelRatioChange and "_cards" in self.__dict__:
+            self._refresh_canvas_size()
+            self.updateGeometry()
+        return result
 
     def update_data(self, cycle: Optional[dict[str, Any]], price_snapshot: Optional[dict[str, Any]], strategy: StrategySettings) -> bool:
         cards = build_strategy_flowchart_cards(strategy, cycle, price_snapshot)
@@ -4200,7 +4262,7 @@ class StrategyFlowchartWidget(QWidget):
         x = margin_x
         y = 140.0
         card_w = canvas_w - 2 * margin_x
-        card_h = self.CARD_HEIGHT
+        card_h, header_h, box_h, column_widths = self._card_layout(canvas_w)
         gap = self.CARD_GAP
         stage_colors = {
             Stage.WAIT_INITIAL_DROP: (_theme_color("#fff7ed", "#431407"), _theme_color("#c2410c", "#fb923c")),
@@ -4229,38 +4291,27 @@ class StrategyFlowchartWidget(QWidget):
             rect = QRectF(x, top, card_w, card_h)
             self._draw_round_box(painter, rect, _theme_color("#ffffff", "#1f2937"), border, border_width)
             painter.fillRect(QRectF(rect.left(), rect.top(), 14, rect.height()), accent)
-            painter.fillRect(QRectF(rect.left() + 14, rect.top(), rect.width() - 14, 38), fill)
+            painter.fillRect(QRectF(rect.left() + 14, rect.top(), rect.width() - 14, header_h), fill)
 
-            title = card.title + (f"  -  {stage_status.upper()}" if stage_status != "Pending" else "")
-            self._draw_text(painter, QRectF(rect.left() + 30, rect.top() + 8, rect.width() - 150, 30), title, _theme_color("#111827", "#f3f4f6"), 12, True)
+            title, order_text, trigger_text, detail_text = self._card_texts(card)
+            self._draw_text(painter, QRectF(rect.left() + 30, rect.top() + 8, rect.width() - 150, header_h - 16), title, _theme_color("#111827", "#f3f4f6"), 12, True)
             badge = QRectF(rect.right() - 96, rect.top() + 8, 64, 24)
             self._draw_round_box(painter, badge, fill, accent, 1, 8)
             stage_number = _stage_index(card.stage.value) or (idx + 1)
             self._draw_text(painter, badge.adjusted(0, 3, 0, 0), f"{stage_number}/5", accent, 9, True, Qt.AlignCenter)
 
             inner_left = rect.left() + 20
-            inner_top = rect.top() + 50
-            inner_width = rect.width() - 40
+            inner_top = rect.top() + header_h + 12
             box_gap = 8
-            order_w = max(112.0, inner_width * 0.17)
-            trigger_w = max(188.0, inner_width * 0.28)
-            details_w = inner_width - order_w - trigger_w - 2 * box_gap
-            if details_w < 260.0:
-                shortage = 260.0 - details_w
-                order_w = max(105.0, order_w - shortage * 0.35)
-                trigger_w = max(170.0, trigger_w - shortage * 0.65)
-                details_w = inner_width - order_w - trigger_w - 2 * box_gap
-            box_h = 198.0
+            order_w, trigger_w, details_w = column_widths
             order_box = QRectF(inner_left, inner_top, order_w, box_h)
             trigger_box = QRectF(order_box.right() + box_gap, inner_top, trigger_w, box_h)
             details_box = QRectF(trigger_box.right() + box_gap, inner_top, max(180.0, details_w), box_h)
             for box_rect in (order_box, trigger_box, details_box):
                 self._draw_round_box(painter, box_rect, _theme_color("#f9fafb", "#0f172a"), _theme_color("#d1d5db", "#475569"), 1, 8)
 
-            self._draw_text(painter, order_box.adjusted(10, 8, -10, -8), f"Stage status: {stage_status}\n\nBroker order type used\n{card.order_summary}", accent, 9, True)
-            self._draw_text(painter, trigger_box.adjusted(10, 8, -10, -8), "Calculated trigger values\n" + card.trigger_summary, _theme_color("#111827", "#f3f4f6"), 9, True)
-            detail_lines = ["Input values used and live guard status:"] + [f"- {line}" for line in card.details]
-            detail_text = "\n".join(detail_lines)
+            self._draw_text(painter, order_box.adjusted(10, 8, -10, -8), order_text, accent, 9, True)
+            self._draw_text(painter, trigger_box.adjusted(10, 8, -10, -8), trigger_text, _theme_color("#111827", "#f3f4f6"), 9, True)
             self._draw_text(painter, details_box.adjusted(10, 8, -10, -8), detail_text, _theme_color("#374151", "#d1d5db"), 9, False)
 
             if idx < len(cards) - 1:
@@ -4332,7 +4383,7 @@ class FlowchartPanel(QWidget):
         except Exception:
             viewport_width = int(self.width())
         target_width = max(StrategyFlowchartWidget.MIN_CANVAS_WIDTH, viewport_width - 4)
-        target_height = self.flowchart._canvas_height()
+        target_height = self.flowchart._canvas_height(target_width)
         self.flowchart.setMinimumSize(target_width, target_height)
         self.flowchart.resize(target_width, target_height)
         self.flowchart.updateGeometry()
@@ -4510,6 +4561,11 @@ class PricePanel(QGroupBox):
         self.progress_bar.setValue(0)
         root.addWidget(self.progress_label)
         root.addWidget(self.progress_bar)
+
+        self.strategy_graph = StrategyGraphWidget()
+        self.strategy_graph.setMinimumHeight(260)
+        root.addWidget(self.strategy_graph)
+
         self.stage3_guard_status = QLabel("")
         self.stage3_guard_status.setObjectName("PriceGuardStatus")
         self.stage3_guard_status.setWordWrap(True)
@@ -6501,7 +6557,7 @@ class CycleAuditDialog(QDialog):
             lines.extend([
                 "BUILT-IN EXAMPLE CYCLE",
                 "=" * 80,
-                "This is synthetic v5.0.0 paper-trading example data. It is not an actual market record, is not stored in SQLite, and cannot affect trading or risk totals.",
+                "This is synthetic v5.3.0 paper-trading example data. It is not an actual market record, is not stored in SQLite, and cannot affect trading or risk totals.",
                 "The scenario models a liquid U.S. stock pullback, a multi-execution trailing BUY fill, a temporary protective SELL, and a modest trailing-stop profit exit.",
                 "",
             ])
@@ -6626,7 +6682,7 @@ class MainWindow(QMainWindow):
         self._watchdog_shutdown_expected = False
         auto_restart_value = str(os.environ.get("IBKR_BOT_AUTO_RESTART", "1") or "1").strip().lower()
         self._watchdog_auto_restart_enabled = auto_restart_value not in {"0", "false", "no", "off"}
-        self.setWindowTitle("BouncyBot - IBKR Portable Trading Bot v5.0.0")
+        self.setWindowTitle("BouncyBot - IBKR Portable Trading Bot v5.3.0")
         icon_path = resource_path("Images", "BouncyBot_app_icon.png")
         if icon_path.is_file():
             self.setWindowIcon(QIcon(str(icon_path)))
@@ -6676,6 +6732,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.flowchart_tab, "Strategy flowchart")
         self.tabs.addTab(self.history_tab, "Trade history")
         self.tabs.addTab(self.recovery_tab, "Reconciliation")
+        self._place_reconciliation_tab_on_right()
         self.tabs.currentChanged.connect(self._on_tab_changed)
         self._on_tab_changed(0)
         self._build_dashboard()
@@ -7123,8 +7180,9 @@ class MainWindow(QMainWindow):
         """Register configuration widgets disabled by the operator input lock.
 
         The lock is an accidental-edit guard, not a trading stop. It disables
-        fields, configuration selectors, and all five workflow buttons while
-        leaving tab navigation, view mode, history, and recovery controls usable.
+        fields, configuration selectors, and all five workflow buttons, and
+        hides their bar and view selector. Tab navigation, history and recovery
+        controls remain usable.
         """
         widgets: list[QWidget] = []
         for container_name in ("connection_box", "strategy_box"):
@@ -7151,6 +7209,9 @@ class MainWindow(QMainWindow):
         self._update_input_locks(stage)
         self._update_command_bar_states(self.current_snapshot)
         self._update_historical_recovery_controls(self.current_snapshot)
+        if hasattr(self, "command_bar"):
+            self.command_bar.setVisible(not self._manual_input_lock_enabled)
+            QTimer.singleShot(0, self._refresh_live_tab_layout)
 
     def _install_no_wheel_field_filter(self) -> None:
         self._no_wheel_edit_filter = NoWheelEditFilter(self)
@@ -7159,19 +7220,40 @@ class MainWindow(QMainWindow):
             widget.installEventFilter(self._no_wheel_edit_filter)
             widget.setFocusPolicy(Qt.StrongFocus)
 
+    def _place_reconciliation_tab_on_right(self) -> None:
+        """Move only the Reconciliation selector, preserving all page indices."""
+        self.recovery_tab_index = self.tabs.indexOf(self.recovery_tab)
+        # Hide the tab header, not the page. Qt still permits selecting this
+        # existing index; its native corner-widget layout reserves the space.
+        self.tabs.tabBar().setTabVisible(self.recovery_tab_index, False)
+        self.recovery_corner_btn = QPushButton("Reconciliation")
+        self.recovery_corner_btn.setObjectName("ReconciliationTabButton")
+        self.recovery_corner_btn.setCheckable(True)
+        self.recovery_corner_btn.setProperty("activeRecovery", False)
+        self.recovery_corner_btn.setAccessibleName("Reconciliation")
+        self.recovery_corner_btn.setToolTip("Open Reconciliation")
+        self.recovery_corner_btn.clicked.connect(self._open_reconciliation_tab)
+        self.tabs.setCornerWidget(self.recovery_corner_btn, Qt.TopRightCorner)
+
+    def _open_reconciliation_tab(self) -> None:
+        self.tabs.setCurrentIndex(self.recovery_tab_index)
+        # Clicking the already selected page must not leave its selector off.
+        self.recovery_corner_btn.setChecked(True)
+
     def _on_tab_changed(self, index: int) -> None:
         if hasattr(self, "command_bar"):
             # The command/view-mode bar is parented inside the Live strategy
-            # tab. Other tabs cannot show it, and the widget is never collapsed
-            # to zero height. This avoids the Windows layout bug where it could
+            # tab and hidden only by the input lock. Its maximum height is never
+            # collapsed to zero. This avoids the Windows layout bug where it could
             # return below the visible window until the window was maximized.
-            self.command_bar.setVisible(True)
+            self.command_bar.setVisible(not bool(getattr(self, "_manual_input_lock_enabled", False)))
             self.command_bar.setEnabled(True)
             self.command_bar.setMaximumHeight(16777215)
             if index == 0:
                 QTimer.singleShot(0, self._refresh_live_tab_layout)
         if hasattr(self, "recovery_corner_btn"):
             active = index == getattr(self, "recovery_tab_index", -1)
+            self.recovery_corner_btn.setChecked(active)
             if bool(self.recovery_corner_btn.property("activeRecovery")) != active:
                 self.recovery_corner_btn.setProperty("activeRecovery", active)
                 self.recovery_corner_btn.style().unpolish(self.recovery_corner_btn)
@@ -7312,6 +7394,13 @@ class MainWindow(QMainWindow):
         layout.addWidget(mode_box, 1)
         return bar
 
+    def _connection_session_mismatch(self, snapshot: dict[str, Any]) -> bool:
+        established = snapshot.get("established_connection") or {}
+        if not snapshot.get("connected") or not established:
+            return False
+        requested = self._connection_from_ui()
+        return any(getattr(requested, field, None) != value for field, value in established.items())
+
     def _update_command_bar_states(self, snapshot: Optional[dict[str, Any]] = None) -> None:
         if not hasattr(self, "command_steps"):
             return
@@ -7324,11 +7413,13 @@ class MainWindow(QMainWindow):
         local_connected = bool(broker_connectivity.get("local_connected", connected))
         upstream_connected = broker_connectivity.get("upstream_connected")
         upstream_recovery_pending = bool(snapshot.get("upstream_recovery_pending"))
+        session_mismatch = self._connection_session_mismatch(snapshot)
         broker_ready = bool(
             connected
             and local_connected
             and upstream_connected is True
             and not upstream_recovery_pending
+            and not session_mismatch
         )
         ticker_text = self.ticker_edit.text().strip().upper() if hasattr(self, "ticker_edit") else ""
         has_selected_contract = bool(self._contract_con_id_from_ui() if hasattr(self, "con_id_edit") else None)
@@ -7353,7 +7444,9 @@ class MainWindow(QMainWindow):
             connect_text = f"1. Connect to {short_platform} API"
             if self.command_step_buttons["connect"].text() != connect_text:
                 self.command_step_buttons["connect"].setText(connect_text)
-        if connection_error and not connected:
+        if session_mismatch:
+            self.command_steps["connect"].set_state("Ready", True, "Reconnect to apply the selected profile")
+        elif connection_error and not connected:
             self.command_steps["connect"].set_state("Error", True, status_text[:80])
         elif connected and not local_connected:
             self.command_steps["connect"].set_state("Error", True, "Local API socket is not available")
@@ -7402,7 +7495,11 @@ class MainWindow(QMainWindow):
             else:
                 self.command_steps["confirm"].set_state("Not ready", False, "Search/select ticker first")
         if not broker_ready:
-            detail = "Wait for broker reconciliation" if upstream_recovery_pending else "IBKR server connection is not ready"
+            detail = (
+                "Reconnect to apply the selected profile" if session_mismatch
+                else "Wait for broker reconciliation" if upstream_recovery_pending
+                else "IBKR server connection is not ready"
+            )
             self.command_steps["start"].set_state("Blocked", False, detail)
         elif startup_resume_required:
             self.command_steps["start"].set_state("Ready", True, "Click to resume stored cycle")
@@ -7479,12 +7576,9 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(10)
 
-        # Keep the price feed at the top of the operational content in every
-        # view mode. In Advanced/Debug this places it before the connection and
-        # strategy configuration panels, matching the first visible section in
-        # Simple view.
         self.price_panel = PricePanel()
-        root.addWidget(self.price_panel)
+        # Keep the existing snapshot-update path for the embedded graph.
+        self.strategy_graph = self.price_panel.strategy_graph
 
         top = QHBoxLayout()
         top.setSpacing(10)
@@ -7494,15 +7588,7 @@ class MainWindow(QMainWindow):
         top.addWidget(self.strategy_box, 2)
         root.addLayout(top)
 
-        # Keep the live graph immediately below the price monitor so the
-        # operator can read price feed, chart, and then detailed state in order.
-        self.strategy_graph_box = QGroupBox("Market and strategy graph")
-        strategy_graph_layout = QVBoxLayout(self.strategy_graph_box)
-        strategy_graph_layout.setContentsMargins(8, 10, 8, 8)
-        self.strategy_graph = StrategyGraphWidget()
-        self.strategy_graph.setMinimumHeight(260)
-        strategy_graph_layout.addWidget(self.strategy_graph, 1)
-        root.addWidget(self.strategy_graph_box, 0)
+        root.addWidget(self.price_panel)
 
         mid = QHBoxLayout()
         mid.setSpacing(10)
@@ -8537,7 +8623,7 @@ class MainWindow(QMainWindow):
         self.controller.request_stop(StopAction.CANCEL_OPEN_BOT_ORDERS)
 
     def _recovery_mark_manual_clicked(self) -> None:
-        cycle = (self.current_snapshot or {}).get("active_cycle") or {}
+        cycle = deepcopy((self.current_snapshot or {}).get("active_cycle") or {})
         if not cycle:
             QMessageBox.information(self, "Recovery", "No active SQLite cycle is visible to mark manually handled.")
             return
@@ -8564,9 +8650,12 @@ class MainWindow(QMainWindow):
         )
         if choice != QMessageBox.Yes:
             return
+        if recovery_cycle_signature(cycle) != recovery_cycle_signature((self.current_snapshot or {}).get("active_cycle")):
+            QMessageBox.warning(self, "Recovery", "The reviewed cycle or its order/fill state changed. Review again before confirming.")
+            return
         method = getattr(self.controller, "mark_recovery_manually_handled", None)
         if callable(method):
-            method(operator_note)
+            method(operator_note, expected_cycle=cycle)
             return
         QMessageBox.warning(self, "Recovery", "This build does not expose a mark-manually-handled command.")
 
@@ -9889,6 +9978,9 @@ class MainWindow(QMainWindow):
         self.controller.confirm_ticker_price(self._connection_from_ui(), strategy)
 
     def _start_clicked(self) -> None:
+        if self._connection_session_mismatch(self.current_snapshot or {}):
+            QMessageBox.warning(self, "Reconnect required", "Click Connect to establish the selected profile before starting trading.")
+            return
         connection = self._connection_from_ui()
         strategy = self._strategy_from_ui()
         errors = connection.validate() + strategy.validate()
@@ -12211,6 +12303,21 @@ class MainWindow(QMainWindow):
                 color: #111827;
                 font-weight: 600;
             }
+            QPushButton#ReconciliationTabButton {
+                background-color: #e7e9ee;
+                color: #3d4552;
+                padding: 8px 14px;
+                border: 1px solid #c7cbd1;
+                border-bottom: none;
+                border-radius: 0;
+                min-width: 110px;
+                min-height: 0;
+            }
+            QPushButton#ReconciliationTabButton[activeRecovery="true"] {
+                background-color: #ffffff;
+                color: #111827;
+                font-weight: 600;
+            }
             QGroupBox {
                 color: #111827;
                 font-weight: 600;
@@ -12399,7 +12506,7 @@ class MainWindow(QMainWindow):
             QLabel#RecoveryStepTitle {
                 color: #111827;
                 font-size: 13px;
-                font-weight: 900;
+                font-weight: 400;
                 padding-top: 2px;
             }
             QLabel#RecoveryRefreshStatus {

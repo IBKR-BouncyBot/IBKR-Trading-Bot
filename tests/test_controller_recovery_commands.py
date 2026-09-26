@@ -203,7 +203,9 @@ def test_recovery_mark_manually_handled_stops_cycle_and_writes_audit(tmp_path, m
     cycle.error_message = "RECOVERY REQUIRED: test"
     controller.storage.upsert_cycle(cycle)
 
-    controller._handle_command("MARK_RECOVERY_MANUALLY_HANDLED", {"note": "closed in TWS"})
+    controller._handle_command("MARK_RECOVERY_MANUALLY_HANDLED", {
+        "note": "closed in TWS", "expected_cycle": cycle.to_dict(),
+    })
 
     stored = controller.storage.get_cycle(cycle.id)
     details = controller.storage.get_cycle_audit_bundle(cycle.id)

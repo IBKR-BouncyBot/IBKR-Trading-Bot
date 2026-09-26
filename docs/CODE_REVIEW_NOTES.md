@@ -1,6 +1,6 @@
 # Maintainer review notes
 
-This file records the current review boundaries for v5.0.0. It is not a release changelog and should not be used instead of the behavioral guides.
+This file records the current review boundaries for v5.3.0. It is not a release changelog and should not be used instead of the behavioral guides.
 
 ## Source-of-truth order
 
@@ -99,7 +99,7 @@ When behavior changes:
 
 The public-repository documentation set:
 
-- keeps the application, package and current documentation version aligned at v5.0.0;
+- keeps the application, package and current documentation version aligned at v5.3.0;
 - keeps current operational material in `docs/` and superseded release notes in `docs/legacy/`;
 - treats SQLite files, backups, audit bundles, reports, captures, screenshots, and broker/account data as private unless deliberately sanitized;
 - uses the unmodified PolyForm Noncommercial License 1.0.0 text in the repository root;
@@ -130,3 +130,16 @@ Review is relative to the supplied v4.1.0 Status Order Linked Crosshairs source.
 ## v5.0.0 trading-safety review
 
 The runtime patch is limited to adapter/controller/strategy/model/storage boundaries and the requested GUI behavior. It does not consolidate the architecture or alter unrelated ATR/capture/watchdog modules. Each fault correction has a focused regression and adjacent valid-path coverage, with independent review of submission uncertainty, identity, recovery, protection and market subscriptions. The original callback-GC allegation and several audit-only suggestions were excluded from this patch. Current measured results and unavailable native/runtime gates belong in the root implementation report; the preceding GUI-only scope is historical.
+
+## v5.1.0 implementation review
+
+All eleven confirmed defect groups from the 25 September review receive narrow changes and positive/negative regression coverage. Runtime changes are confined to controller, broker snapshot metadata, storage, one strategy protection condition and GUI session/confirmation/sizing behavior. Version/test/build metadata and affected operating guides are updated separately.
+
+Six implementation scopes were independently cross-reviewed. Review follow-ups covered legacy execution raw-data types, authoritative zero/foreign-currency fee precedence, restart during partial SELL cancellation, completed-date migration and old test snapshots whose measured ages disagreed with their wall timestamps. The excluded shutdown observation and Linux-qualified folder-lock issue were not implemented. See the root verification report for final measured results and unavailable tools.
+
+
+## v5.3.0 review boundary
+
+This release is relative to 5.2.0. Runtime presentation edits belong in `app/gui.py`: the empty ticker placeholder, graph/monitor order, lock-driven command-bar visibility, measured flowchart geometry and the right-side Reconciliation selector. Reconciliation retains its existing page and index; the native corner button replaces only its left-side tab header. Lock hiding must retain the existing disabled states and restore workflow gating after unlock or theme changes. Flowchart layout must fit all five cards at their existing font sizes, including cards excluded by the current view filter.
+
+No strategy, broker, storage, timer, dependency or persisted-setting change belongs in this release. Confirm that those modules match 5.2.0 and retain their tests. Native widget checks and manual Windows scaling checks complement Qt-double regressions; list executed checks and remaining limits in the root report.

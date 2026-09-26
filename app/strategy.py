@@ -439,7 +439,11 @@ class StrategyEngine:
 
         next_cycle.buy_remainder_cancel_requested = False
         next_cycle.stage = Stage.WAIT_RISE_TRIGGER
-        if bool(getattr(next_cycle, "protective_sell_enabled", False)) and not next_cycle.protective_sell_order_ref:
+        if (
+            bool(getattr(next_cycle, "protective_sell_enabled", False))
+            and not next_cycle.protective_sell_order_ref
+            and not next_cycle.close_position_market_requested
+        ):
             stop_price = _protective_sell_stop_price(next_cycle)
             if stop_price > 0:
                 next_cycle.protective_sell_initial_stop_price = stop_price

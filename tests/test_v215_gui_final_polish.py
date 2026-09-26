@@ -6,9 +6,9 @@ PYPROJECT = Path("pyproject.toml").read_text(encoding="utf-8")
 
 
 def test_v215_version_metadata_and_package_folder_name_are_current():
-    assert "BouncyBot - IBKR Portable Trading Bot v5.0.0" in GUI
-    assert "# BouncyBot - an IBKR Portable Trading Bot " in README
-    assert 'version = "5.0.0"' in PYPROJECT
+    assert "BouncyBot - IBKR Portable Trading Bot v5.3.0" in GUI
+    assert "# BouncyBot - an IBKR Trading Bot" in README
+    assert 'version = "5.3.0"' in PYPROJECT
     assert Path("docs/legacy/V2_20_RECOVERY_GRAPH_RECOVERY_UI.md").exists()
 
 
@@ -55,5 +55,6 @@ def test_v215_recovery_uses_yellow_for_configured_guard_pauses_not_red():
     assert 'QLabel#PriceStatusWarning' in GUI
     assert 'Trading is paused by a configured guard/session condition.' in GUI
     assert 'Resolution actions are disabled; Refresh from IBKR/TWS and audit export remain available.' in GUI
-    assert 'Red is reserved for real broker/local-state inconsistencies' in README
+    assert 'Recovery displays expected guard/session pauses as caution states' in README
+    assert 'a red **BLOCKED** card can also mean an ordinary prerequisite is unmet' in README
     assert 'trading_text, trading_state = "Guard paused", "waiting"' in GUI

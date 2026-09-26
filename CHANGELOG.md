@@ -2,6 +2,36 @@
 
 Each version has one consolidated entry describing its delivered changes. Current behavior is documented in [README.md](README.md) and the [current guides](docs/README.md); older entries and archived notes describe their historical releases.
 
+## v5.3.0
+
+- Show N/A in the top Ticker box when no ticker name is available, retaining populated ticker formatting.
+- Integrate Market and strategy graph into Price data monitor below Strategy progress and above the five metric boxes in Simple, Advanced and Debug views. Remove the separate graph area and the “Rolling graph buffer…” footer. In Advanced and Debug, place the integrated monitor after the configuration row and directly above Market and strategy state; it remains the first visible panel in Simple. Graph history and updates are unchanged.
+- Hide the complete Live strategy bottom command bar, including its five workflow buttons and view-mode selector, while the GUI lock is engaged. Restore it under the existing permissions when unlocked.
+- Fit all five Strategy flowchart cards to one compact text-based height while retaining their fonts.
+- Place Reconciliation navigation at the right of the tab row and keep the other three tabs at the left.
+- Add the supplied dark-theme logo, five-stage ribbon and three infographic images to `Images/`, and adopt the supplied README image links and title.
+- Add GUI regressions and update current documentation and release metadata. Name the changed-file archive `IBKR_Trading_Bot_5.3.0_Release_files.zip`. Trading, storage and timer behavior are unchanged. See the [release note](docs/V5_3_0_GUI_LAYOUT.md) and [implementation and test report](IMPLEMENTATION_TEST_REPORT.txt).
+
+## v5.2.0
+
+- Add the partial index `idx_decision_events_manually_handled_cycle` on `decision_events(cycle_id)` for `MANUALLY_HANDLED` records. Existing unresolved-cycle and app-owned-position queries can use it without changing their predicates, returned data or safety checks.
+- Skip the redundant pre-schema backup only for the internally created disposable restore-validation candidate. Retain the actual backup, consistent SQLite candidate copy, migration exercise, integrity checks, ordinary database-opening backup and existing backup triggers/retention.
+- Add storage regression coverage and update release/build metadata and documentation. Trading logic, durable order/fill persistence, timer intervals and log handling are unchanged. See the [release note](docs/legacy/V5_2_0_STORAGE_PERFORMANCE.md) and [measured verification report](docs/legacy/V5_2_0_IMPLEMENTATION_TEST_REPORT.txt).
+
+## v5.1.0
+
+- Bind trading to the established broker session; changed idle connection/profile settings require a matching re-established session before trading, and the displayed profile retains the connected identity.
+- Require consistent execution ownership during recovery, preserving exact account/contract/permanent identity and refusing ambiguous numeric-ID matches.
+- Prevent timeout exit checkpoints from overwriting newer committed order state; require reconciliation for a waiting-entry cycle with an exact-known working order.
+- Correct manual-close cancellation sequencing for working BUY remainders and partially filled SELLs; check known replacement eligibility before removing an existing exit.
+- Bind Mark manually handled confirmation to the reviewed cycle and broker-relevant state in both GUI and worker.
+- Revalidate enabled BUY quote/session gates after backup and durable intent writes; consume unobserved quote evidence despite later size events; age production observations using monotonic elapsed time.
+- Add immutable UTC completion dating for realized P/L and risk ordering. Late commissions retain the original completion day; existing completed rows use their current update timestamp as a documented legacy fallback.
+- Invalidate ATR warmup readiness on period/interval edits and require matching calculation identity; preserve valid saved estimates.
+- Preserve signed commissions/rebates and consistently exclude foreign-currency fees from local cycle totals without FX conversion.
+- Match the lock button height to the status row, with unchanged width, font and lock behavior.
+- Add targeted regression and native Qt geometry tests; update current guides, release/build metadata and verification documentation. See the [release note](docs/legacy/V5_1_0_TARGETED_TRADING_FIXES.md) and [measured verification report](docs/legacy/V5_1_0_IMPLEMENTATION_TEST_REPORT.txt).
+
 ## v5.0.0
 
 - Preserve potentially transmitted orders and their exact broker identity as `SUBMISSION_UNKNOWN`; pause persistently for reconciliation without automatic retry. Require exact owned identity for cancellation.
@@ -17,7 +47,7 @@ Each version has one consolidated entry describing its delivered changes. Curren
 - Require standard GIL-enabled CPython 3.14.x in source launch/test/build scripts, update compatible dependency floors, and reject stale virtual environments before changing packages.
 - Reduce five-stage indicator height/padding without reducing text size; show confirmed, missing, cancelling and unconfirmed protection accurately. Preserve 4.2.0 independent cursors and table sizing.
 - Prepare audit captures and Decision rows with one cancellable background reader; populate Decision cells in bounded GUI batches. Retain verified same-instrument post-SELL context across Auto-repeat and show only actual Timeline stage changes. Display N/A for an unknown account while disconnected. Remove guessed RTH schedules/timezones from the adapter and GUI.
-- Add targeted safety and migration regressions. See the [release note](docs/V5_0_0_TRADING_SAFETY_AND_PYTHON314.md) and [verification report](IMPLEMENTATION_TEST_REPORT.txt) for completed checks and unavailable Windows/Python 3.14 gates.
+- Add targeted safety and migration regressions. See the [release note](docs/legacy/V5_0_0_TRADING_SAFETY_AND_PYTHON314.md) and [verification report](docs/legacy/V5_0_0_IMPLEMENTATION_TEST_REPORT.txt) for completed checks and unavailable Windows/Python 3.14 gates.
 
 ## v4.2.0
 

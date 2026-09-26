@@ -160,7 +160,9 @@ The operator-requested Stop-screen market close remains a separate workflow. Whi
 
 The operator-requested market-close path sells the local unsold application quantity from persisted app fills, not the account-wide broker position. The Stop dialog, main-window close path, and Reconciliation tab use the same quantity source.
 
-Before sending it, the controller cancels any working app-created SELL and waits for broker confirmation that it is no longer working. It then submits one market SELL for the remaining local quantity. This sequencing reduces duplicate-exit risk.
+Before cancelling an existing exit, the controller validates known market-close eligibility, including RTH and quantity compatibility. A still-working BUY must become terminal and its cumulative fills must be reconciled before a SELL quantity is chosen. Pending or failed cancellation leaves the BUY under supervision. A new protective SELL is not armed while an explicit market-close request is pending.
+
+For an existing app-created SELL, the controller waits for exact terminal cancellation confirmation. If that SELL partially filled, the explicitly requested market close continues only for the reconciled unsold remainder. A full fill needs no replacement. Unknown outcomes, inconsistent quantities, or unexpected partial terminal replacement orders retain manual-review handling. Final eligibility checks still apply after cancellation.
 
 ## Account routing
 
@@ -189,3 +191,11 @@ It may attach to a locally known exact `OrderRef`, import missing executions ide
 ## Manual intervention boundary
 
 Manual cancellation or selling in TWS can be operationally necessary, but it can leave local state incomplete. Use Reconciliation to refresh and either resume or mark the cycle manually handled. Routine ATR/data/session/spread waits are not manual-intervention states and therefore do not enable recovery-changing buttons. Do not edit the database to imitate a broker event.
+
+## v5.1.0 session, submission and recovery identity
+
+The established host/port/client/profile identity is separate from editable connection drafts. A draft/session mismatch blocks Start, quote confirmation/search and trading mutations until a matching session is established. Cycle account/contract identity remains pinned independently.
+
+A BUY repeats enabled freshness and session checks after potentially slow local backup/intent writes and immediately before the broker call. Definite pre-transmission failure records the intent and rolls back; a possibly transmitted order still uses the existing SUBMISSION_UNKNOWN recovery path.
+
+Recovery rejects contradictory available account, contract and permanent-order identifiers. A numeric order ID by itself is insufficient to claim an otherwise unproven execution. Exact owned references retain their safeguards. Commission projections consistently use currency-validated signed amounts; authoritative later zero/downward corrections are not replaced by stale larger cumulative fees.

@@ -70,4 +70,4 @@ The patch uses existing database tables/status fields and does not add a new tra
 
 The source release includes focused regression tests for the changed fault paths and adjacent successful paths. Consult the root `IMPLEMENTATION_TEST_REPORT.txt` for measured counts, independent review and remaining gates. The available host could not download/run Python 3.14 or run native Windows/Qt, actual pytest, coverage, Ruff or Pyright. Offline checks on Python 3.12 and a limited compatibility runner must not be interpreted as those gates passing. A Windows build and paper-broker qualification remain required before live deployment.
 
-The prior [4.2.0 note](legacy/V4_2_0_HEADER_AND_INDEPENDENT_TIMELINE.md) and [verification report](legacy/V4_2_0_IMPLEMENTATION_TEST_REPORT.txt) are retained unchanged in scope as historical records.
+The prior [4.2.0 note](V4_2_0_HEADER_AND_INDEPENDENT_TIMELINE.md) and [verification report](V4_2_0_IMPLEMENTATION_TEST_REPORT.txt) are retained unchanged in scope as historical records.

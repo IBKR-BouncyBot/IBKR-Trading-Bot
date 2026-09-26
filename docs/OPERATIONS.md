@@ -1,6 +1,6 @@
 # Operations guide
 
-This guide describes the normal operator workflow for v5.0.0. It does not replace the broker’s API documentation or account controls.
+This guide describes the normal operator workflow for v5.3.0. It does not replace the broker’s API documentation or account controls.
 
 ## Before starting
 
@@ -78,9 +78,9 @@ Monitor:
 - warning/error events;
 - Reconciliation state after any disconnect.
 
-The top lock button is an accidental-edit guard. When engaged, editable settings and all five workflow buttons are disabled. It does not stop the worker or cancel an order.
+The top lock button is an accidental-edit guard. When engaged, editable settings remain disabled and the Live strategy bottom bar containing all five workflow buttons and the view-mode selector is hidden. Unlocking restores the bar and reapplies each button's current permissions. The top lock and tab navigation remain available. Locking does not stop the worker or cancel an order.
 
-Advanced and Debug modes show **Recovery / audit log** across the full dashboard width. Simple hides this log panel; the Reconciliation tab and audit recording remain available. The removed duplicate Controls panel is not needed because the fixed five-button command bar remains visible.
+Advanced and Debug modes show **Recovery / audit log** across the full dashboard width. Simple hides this log panel; the Reconciliation tab and audit recording remain available. The fixed five-button command bar is available when unlocked and hidden while the lock is engaged; the duplicate Controls panel remains absent. In all three modes, Price data monitor contains the Market and strategy graph directly below Strategy progress and above the five metric boxes. There is no separate graph area or “Rolling graph buffer…” footer. In Advanced and Debug, the connection/strategy configuration row comes first, followed by Price data monitor directly above Market and strategy state. Simple hides the configuration row, leaving Price data monitor as the first visible panel. Graph history and updates are unchanged.
 
 
 ## Audit-condition summaries
@@ -289,3 +289,9 @@ In the Stop strategy dialog, non-selling choices and their explanations precede 
 Close the app, retain the working executable/database/backups, and create a separate standard CPython 3.14 environment. The launcher rejects an older `.venv` before installing packages; rename it before creating the new one. Follow the release note and complete the Windows test/build and paper-recovery checks before live deployment.
 
 An uncertain submission now pauses visibly with its reference preserved. Do not submit a replacement simply because an open-order list is empty. Resolve exact order, execution and position facts first. Protection shows On only for a confirmed working status with a reconciled broker connection; Missing/Unconfirmed requires attention. Both Connect buttons obey the same workflow and input lock. The five stage indicators are shorter with unchanged text size.
+
+## v5.1.0 profile and close workflow
+
+Changing connection/profile fields while idle saves the draft. If those values differ from the established session, use Connect to apply them through a deliberate reconnect; Start stays blocked until they match. The profile status continues to describe the established connection while a different draft is pending.
+
+An explicit market close waits for any cancelling BUY to become terminal and reconciles fills before choosing the SELL quantity. A confirmed cancellation of a partially filled existing SELL continues the requested close for only the unsold remainder. If RTH is already closed, the existing exit is not cancelled for an ineligible replacement. A rejected manual-handling acknowledgement means the reviewed cycle/order/fill state changed and needs another review.

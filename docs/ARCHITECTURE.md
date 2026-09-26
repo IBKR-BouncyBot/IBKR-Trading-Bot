@@ -55,7 +55,7 @@ Opening a Cycle audit log schedules one read-only `CycleAuditReader` thread afte
 
 Validated fill archives may contribute same-instrument pre/post-fill context across cycle boundaries, including the next cycle after a SELL. This affects audit display only: cycle/order ownership and recorded data remain unchanged. Timeline stage markers and its stage table include only transitions with two nonempty, differing stages; Decision events retains all records.
 
-The top input lock is an accidental-edit guard. It disables editable configuration and all five workflow buttons while leaving monitoring, tabs, history, and reconciliation views usable. It does not stop the worker or cancel broker orders.
+The top input lock is an accidental-edit guard. It disables editable configuration and all five workflow buttons, and hides their Live strategy command bar together with its view-mode selector. Monitoring, the top lock, tabs, history and reconciliation views remain usable. Unlocking restores the bar under the existing workflow gates. It does not stop the worker or cancel broker orders.
 
 The fixed five-button command bar is the dashboard workflow control surface. The former duplicate Controls group has been removed; the Recovery / audit log occupies the full dashboard width in Advanced/Debug and is hidden in Simple. Diagnostics and audit recording continue while hidden.
 
@@ -148,7 +148,7 @@ The controller’s database snapshot cadence reduces repeated read-only connecti
 
 A SQLite exception activates an in-memory storage-fault boundary. Event reporting falls back to a plain file outside SQLite, all broker mutations and strategy advancement are blocked, and only IBKR transport servicing plus GUI health snapshots continue. A short independent write transaction is rolled back after proving main-database write access; successful recovery requests process replacement rather than resuming inside potentially compromised storage state.
 
-The resume-checkpoint transaction writes the latest connection draft, strategy draft, active cycle, `last_resume_checkpoint` metadata, and its audit event together. The controller normally performs this in the worker after applying safe active-cycle edits without re-evaluating the last market price. A bounded direct-storage fallback uses the same checkpoint ID, and the transaction begins with an immediate write lock so a delayed worker and fallback cannot duplicate the logical checkpoint.
+The resume-checkpoint transaction writes the latest connection draft, strategy draft, active cycle, `last_resume_checkpoint` metadata, and its audit event together. The controller normally performs this in the worker after applying safe active-cycle edits without re-evaluating the last market price. A bounded direct-storage fallback uses the same checkpoint ID. Its immediate write transaction re-reads and preserves an existing committed cycle rather than overwriting it with a previously copied GUI snapshot; marker/audit state follows that row. A delayed worker and fallback cannot duplicate the logical checkpoint.
 
 The storage layer also creates restore-validated online backups and audit bundles. Its persisted BUY and SELL fills define the application-owned unsold quantity used by BUY gating, Stop, window-close, and Reconciliation actions. It is not the sole source for live order status; recovery compares it with broker facts.
 
@@ -221,3 +221,11 @@ This design avoids continuous disk writes but means a crash or early shutdown lo
 `app/lockfile.py` prevents another process from acquiring the same lock path in the same portable folder. The lock contains the PID and performs a Windows-safe process-existence check before removing a stale lock.
 
 It cannot prevent a copy of the project in another folder from using another database or API client ID. Operational uniqueness still requires deliberate configuration.
+
+## v5.1.0 safety state
+
+The controller captures established connection identity separately from mutable drafts and refuses mismatched trading requests until a matching session is established. Connect deliberately reapplies changed settings while already connected; the existing automatic reconnect loop can also establish the current draft after a disconnect. Manual handling carries the reviewed cycle and broker-relevant state across the GUI/worker queue, with validation at both boundaries.
+
+Production market snapshots carry the monotonic observation reference used to advance independently measured field ages. Raw wall timestamps remain audit/display evidence. The controller consumes actual per-field/quote sequences since its last observation, so later non-price events neither create freshness nor erase unconsumed price evidence. ATR uses the selected field's receipt time.
+
+Storage owns immutable application-completion dating; late fee projection changes P/L without relocating completed cycles. This adds one nullable column and no new trading worker or database architecture.

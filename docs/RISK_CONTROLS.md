@@ -74,7 +74,7 @@ Defaults:
 
 Freshness is based on actual `pendingTickersEvent` delivery, not on whether a cached `Ticker` still contains non-null bid, ask, or Last fields. Each live subscription has an identity and each actual callback has a sequence/timestamp. The live adapter additionally records update and numerical-change identity for each price field. A bid-size, ask-size, last-size, or timestamp event therefore cannot refresh an unchanged cached price; a same-value raw price tick can refresh that specific field.
 
-The controller consumes a whole-event sequence once. ATR and generic Stage-1/Stage-3 selected-price handling additionally require the raw selected-price basis to have updated in that event. The normal Stage-3 final SELL requires both bid and ask to be independently fresh, a valid spread, the bid at the trigger, and two distinct qualifying quote updates. Rereading cached fields does not reset age or create another confirmation. After an upstream outage or reconnect, field timestamps remain invalid until the corresponding fields update again. If field tracking is unavailable on the production path, the guarded Stage-3 exit fails closed.
+The controller consumes each observation once and retains genuine selected-field/quote updates that have not yet been consumed when a later size-only callback arrives. ATR and generic Stage-1/Stage-3 selected-price handling require an updated selected-price basis within that subscription generation; a size event alone cannot provide it. The normal Stage-3 final SELL requires both bid and ask to be independently fresh, a valid spread, the bid at the trigger, and two distinct qualifying quote updates. Rereading cached fields does not reset age or create another confirmation. After an upstream outage or reconnect, field timestamps remain invalid until the corresponding fields update again. If field tracking is unavailable on the production path, the guarded Stage-3 exit fails closed.
 
 A quote can legitimately remain numerically unchanged while fresh same-value price ticks continue. The GUI therefore shows both actual-update age/count and value-change age/count.
 
@@ -140,7 +140,7 @@ The master is off by default and controls loss, cycle-count, minimum-price, and 
 - maximum completed application net loss for the selected ticker/conId;
 - maximum completed application net loss across stored tickers.
 
-Both daily queries select the current UTC date from each completed cycle’s `updated_at` field; they are not exchange-local trading-day calculations. Contract-specific queries include legacy same-ticker rows without a conId and exclude another positive conId.
+Both daily queries use each completed cycle’s stable `completed_at` UTC date; they are not exchange-local trading-day calculations. This is the first persisted final completion in the application, so an offline fill first completed through recovery on a later day belongs to that application-completion day. Late commission or metadata updates do not move the cycle into another day. Existing completed rows use their recorded `updated_at` once as a legacy fallback; already-altered historical dates cannot be reconstructed automatically. Contract-specific queries include legacy same-ticker rows without a conId and exclude another positive conId.
 
 The values come from local completed cycles in the database's single contract currency, not real-time account P/L. Open losses, unrelated trades, FX, financing, and broker adjustments are outside the calculation. A commission reported in another currency is retained for audit but excluded from local net P/L, and Auto-repeat is disabled because no FX conversion is performed.
 
@@ -236,3 +236,11 @@ A working Stage-2 BUY retains its original partial-fill, safety-cancellation, an
 The BUY spread ceiling and its numeric validation are independent of the hard-risk master. Whenever the ceiling is nonzero, a valid fresh bid/ask book is required even if the separate stale-data toggle is off. When stale-data protection is enabled, the selected price basis and each quote side are checked independently; settings edits and partial-BUY remainder supervision use the same evidence. A recent ticker/size event cannot refresh an old price field.
 
 The weekday RTH fallback and timezone substitution have been removed. Missing authoritative contract-session evidence blocks RTH-restricted submissions and produces no guessed session hours or countdown. A substantive terminal partial-BUY rejection disables automatic repetition while the acquired position continues to be managed.
+
+## v5.1.0 entry and accounting boundaries
+
+Production quote age is the adapter's measured age plus elapsed monotonic observation time. Rounded audit timestamps and wall-clock corrections do not make a price fresher or prematurely expire it. Enabled time-sensitive BUY checks are repeated after backup and intent persistence, immediately before transmission. If they fail, the untransmitted intent is recorded as failed and the entry state is restored.
+
+Changing ATR period or interval invalidates readiness before edit-triggered evaluation. A warmup-guarded entry requires readiness for the active period/bar duration. Valid unchanged saved estimates retain their existing rules.
+
+Signed authoritative fees, including negative rebates and later corrections, feed cycle totals without a synthetic positive offset. Nonmatching-currency fees remain audit-only and keep the existing Auto-repeat stop policy. Neither change introduces FX conversion.

@@ -5,16 +5,16 @@ import ast
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-NOTE = 'V5_0_0_TRADING_SAFETY_AND_PYTHON314.md'
+NOTE = 'V5_3_0_GUI_LAYOUT.md'
 
 
 def test_metadata_agrees_with_gui_about_windows_and_package():
     gui = (ROOT / 'app/gui.py').read_text(encoding='utf-8')
-    assert 'APP_VERSION = "5.0.0"' in gui
-    assert 'BouncyBot - IBKR Portable Trading Bot v5.0.0' in gui
-    assert 'version = "5.0.0"' in (ROOT / 'pyproject.toml').read_text(encoding='utf-8')
-    assert '$version = "5.0.0"' in (ROOT / 'scripts/build_windows.ps1').read_text(encoding='utf-8')
-    assert '**Current release: v5.0.0**' in (ROOT / 'README.md').read_text(encoding='utf-8')
+    assert 'APP_VERSION = "5.3.0"' in gui
+    assert 'BouncyBot - IBKR Portable Trading Bot v5.3.0' in gui
+    assert 'version = "5.3.0"' in (ROOT / 'pyproject.toml').read_text(encoding='utf-8')
+    assert '$version = "5.3.0"' in (ROOT / 'scripts/build_windows.ps1').read_text(encoding='utf-8')
+    assert '**Current release: v5.3.0**' in (ROOT / 'README.md').read_text(encoding='utf-8')
 
 
 def test_current_note_and_corrected_v400_history_are_retained():

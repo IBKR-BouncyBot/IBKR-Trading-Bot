@@ -272,10 +272,10 @@ with tempfile.TemporaryDirectory() as folder:
 """,
     ),
     Mutation(
-        name="late zero commission cannot erase a known commission",
+        name="unauthoritative zero commission cannot erase a known commission",
         relative_path="app/storage.py",
         original=(
-            "                    or (commission_value == 0.0 and "
+            "                    or (not commission_authoritative and commission_value == 0.0 and "
             "float(current.get(\"commission\") or 0.0) != 0.0)"
         ),
         replacement="",

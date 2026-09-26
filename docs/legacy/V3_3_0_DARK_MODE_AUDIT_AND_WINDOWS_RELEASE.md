@@ -133,7 +133,7 @@ disables automatic replacement without disabling the watchdog display. Audit
 bundles include the emergency log and restart history and copy only a
 redacted form of any pending one-time handoff. Detailed behavior and operational
 limits are documented in
-[`WORKER_WATCHDOG_AND_AUTO_RECOVERY.md`](WORKER_WATCHDOG_AND_AUTO_RECOVERY.md).
+[`WORKER_WATCHDOG_AND_AUTO_RECOVERY.md`](../WORKER_WATCHDOG_AND_AUTO_RECOVERY.md).
 
 ## Documentation structure
 

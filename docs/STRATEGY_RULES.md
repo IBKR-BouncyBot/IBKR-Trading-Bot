@@ -1,6 +1,6 @@
 # Strategy rules
 
-This document is the current functional description of the five-stage strategy in v5.0.0. It describes application decisions; IBKR remains authoritative for accepted order state and execution.
+This document is the current functional description of the five-stage strategy in v5.3.0. It describes application decisions; IBKR remains authoritative for accepted order state and execution.
 
 ## Scope and invariants
 
@@ -247,3 +247,9 @@ Stop is not a single state transition. The operator chooses whether to cancel ap
 The initial drop and minimum-profit comparisons use unrounded thresholds derived from current anchors/fills; displayed prices remain formatted. A complete recovered exit is required before automatic repetition. A substantive partial-BUY rejection may stop further cycles without abandoning management of filled shares.
 
 All cycle broker operations must retain the cycle account and exact contract. Existing native protection must not be cancelled before a proposed normal exit passes route-price/quantity normalization and applicable guard checks. Changed evidence after cancellation produces a visible recovery state.
+
+## v5.1.0 targeted corrections
+
+Unconsumed genuine quote/price updates remain eligible when a separate size callback arrives before the strategy read. Size-only updates and cached rereads cannot create new observations or SELL confirmations. ATR samples retain the selected price's receipt time, and a period/bar-duration edit invalidates readiness from the old calculation.
+
+An explicit manual market close suppresses creation of new protective orders while the BUY is being settled; ordinary terminal BUY protection remains unchanged. The requested close uses final reconciled app-owned quantity after exact cancellation confirmation. The thresholds, normal native-order model and saved-ATR policy are unchanged.

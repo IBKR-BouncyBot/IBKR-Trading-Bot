@@ -49,6 +49,7 @@ class StartWorkflowStatusTests(unittest.TestCase):
             },
             _manual_input_lock_enabled=locked,
         )
+        window._connection_session_mismatch = lambda current: self.gui.MainWindow._connection_session_mismatch(window, current)
         self.gui.MainWindow._update_command_bar_states(window, snapshot)
         return window.command_steps
 

@@ -8,9 +8,9 @@ PYPROJECT = Path("pyproject.toml").read_text(encoding="utf-8")
 
 
 def test_v220_version_metadata_updated():
-    assert "BouncyBot - IBKR Portable Trading Bot v5.0.0" in GUI
-    assert "# BouncyBot - an IBKR Portable Trading Bot " in README
-    assert 'version = "5.0.0"' in PYPROJECT
+    assert "BouncyBot - IBKR Portable Trading Bot v5.3.0" in GUI
+    assert "# BouncyBot - an IBKR Trading Bot" in README
+    assert 'version = "5.3.0"' in PYPROJECT
 
 
 def test_rth_status_is_human_readable_with_hours_and_countdown():
@@ -22,12 +22,22 @@ def test_rth_status_is_human_readable_with_hours_and_countdown():
     assert "RTH open - closes in" in GUI
 
 
-def test_live_strategy_graph_is_between_price_panel_and_market_state():
-    price_pos = GUI.index("self.price_panel = PricePanel()")
-    graph_pos = GUI.index("self.strategy_graph = StrategyGraphWidget()", price_pos)
-    mid_pos = GUI.index("mid = QHBoxLayout()", graph_pos)
+def test_live_strategy_graph_is_inside_price_panel_above_summary_cards():
+    panel = GUI[GUI.index("class PricePanel"):GUI.index("class StopDialog")]
+    progress_pos = panel.index("root.addWidget(self.progress_bar)")
+    graph_pos = panel.index("root.addWidget(self.strategy_graph)")
+    cards_pos = panel.index("root.addLayout(summary_grid)")
+    assert progress_pos < graph_pos < cards_pos
+    dashboard_pos = GUI.index("def _build_dashboard")
+    configuration_pos = GUI.index("root.addLayout(top)", dashboard_pos)
+    price_pos = GUI.index("self.price_panel = PricePanel()", dashboard_pos)
+    price_insert_pos = GUI.index("root.addWidget(self.price_panel)", dashboard_pos)
+    mid_pos = GUI.index("mid = QHBoxLayout()", price_pos)
     market_group_pos = GUI.index("def _market_state_group", mid_pos)
-    assert price_pos < graph_pos < mid_pos < market_group_pos
+    assert price_pos < mid_pos < market_group_pos
+    assert configuration_pos < price_insert_pos < mid_pos
+    assert "self.strategy_graph = self.price_panel.strategy_graph" in GUI
+    assert 'QGroupBox("Market and strategy graph")' not in GUI
     market_body = GUI[market_group_pos:GUI.index("def _order_state_group", market_group_pos)]
     assert "StrategyGraphWidget()" not in market_body
 

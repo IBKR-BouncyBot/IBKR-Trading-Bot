@@ -1,0 +1,238 @@
+BouncyBot v5.1.0
+Targeted implementation and verification report
+25 September 2026
+
+DELIVERY AND SCOPE
+
+All eleven confirmed defect groups from the read-only review of the final
+5.0.0 source are addressed, together with the requested status-row lock-button
+height correction. This is a source release with Windows build scripts, not a
+prebuilt or target-platform-qualified Windows executable.
+
+Baseline: reviewed final 5.0.0, associated with upstream commit
+07cdeb003efed701fa09cb91f87ee798b7d720b7.
+Baseline ZIP SHA-256:
+cd6335c14ff675f1476fc4ba9bfcf53a96805f6e2306ff112932ee7e0c86a91f
+The implementation began with all 407 baseline files checked against the saved
+source manifest. The separate review baseline was not edited.
+
+Runtime edits are limited to five existing modules:
+  app/controller.py
+  app/gui.py
+  app/ib_adapter.py
+  app/storage.py
+  app/strategy.py
+
+Other changes are regression tests, current-version assertions, documentation,
+version/build labels and one mutation-probe target updated to the corrected
+commission condition. No dependency ranges, five-stage strategy thresholds,
+saved ATR seed policy or standard GIL-enabled CPython 3.14.x requirement changed.
+No live IBKR connection, broker order or user trading database was used or changed.
+
+FIXES AND FOCUSED REGRESSION COVERAGE
+
+F01 - Established broker-session identity
+  Capture the successful session's endpoint/client/profile separately from
+  editable settings. Block mismatched starts and submissions. Connect reapplies
+  changed idle settings through reconnection; selecting a different profile no
+  longer relabels an existing session. The existing automatic reconnect path can
+  also establish the current draft after a disconnect.
+  Tests: test_v510_gui_commands.py (shared with F05).
+
+F02 - Exact execution ownership during recovery
+  Reject conflicting account, contract, side or permanent identity. Numeric
+  orderId alone is insufficient ownership proof. Preserve compatible legacy
+  exact-reference recovery and older retry fills only when the exact permanent
+  identity is persisted for that cycle/reference.
+  Tests: test_v510_recovery_commissions.py (shared with F11), plus a corrected
+  unsafe orderId-only expectation and a matching permanent-ID positive control.
+
+F03 - Timeout checkpoint and waiting-entry recovery
+  Re-read and preserve an existing committed cycle inside the checkpoint
+  transaction instead of overwriting it from an older GUI snapshot. The saved
+  marker describes the preserved row. A waiting-entry cycle with an exact-known
+  working order requires reconciliation. Normal worker checkpoints are retained.
+  Tests: test_v510_checkpoint.py, 12 cases.
+
+F04 - Manual market-close cancellation sequencing
+  Keep supervising a pending/failed BUY cancellation before sizing the SELL.
+  Continue an explicit close after confirmed partial final/protective SELL
+  cancellation using reconciled remaining quantity. Check known eligibility
+  before cancelling a working exit, and recheck after cancellation. Preserve
+  manual review for unknown outcomes or inconsistent quantities. Restart and
+  old-order-full-fill cases do not submit a duplicate replacement.
+  Tests: test_v510_manual_close.py, 26 cases.
+
+F05 - Manual-handling confirmation identity
+  Bind acknowledgement to the cycle and broker-relevant state actually reviewed.
+  Recheck after the modal dialog and in the worker. Harmless price-only updates
+  do not invalidate the acknowledgement.
+  Tests: test_v510_gui_commands.py, 19 cases across F01/F05.
+
+F06 - Final BUY preflight
+  Re-evaluate enabled time-sensitive quote/RTH/session gates after blocking
+  lookups and again after backup/intent persistence, immediately before the
+  broker call. Record an untransmitted rejected intent and use the existing
+  definite-failure rollback, preserving uncertain-submission handling.
+  Tests: test_v510_data_timing.py (shared with F07/F10), MKT and TRAIL paths,
+  quote expiry during backup/intent writes, time-window transitions and controls.
+
+F07 - Quote update followed by size callback
+  Consume unobserved per-field price/quote evidence within its subscription
+  generation even when a later size callback precedes evaluation. Do not count
+  cached reads or size-only events as another SELL confirmation. Keep original
+  selected-price receipt time for ATR observation timing.
+  Tests: test_v510_data_timing.py, positive and negative price/size sequences,
+  subscription changes, invalid books and distinct Stage-3 confirmations.
+
+F08 - Stable realized P/L date and loss ordering
+  Store the first persisted final completion timestamp and retain it through
+  later fee/metadata upserts. Daily completed-cycle P/L/count and consecutive-loss
+  ordering use that timestamp. Amounts can be corrected without moving the date.
+  Tests: test_v510_strategy_risk.py (shared with F09), legacy migration,
+  idempotence, partial/final completion, old model objects, late fees and guards.
+
+F09 - ATR parameter edits
+  Invalidate cached readiness after period/bar-duration edits before same-command
+  entry evaluation. The enabled warmup guard requires matching calculation
+  identity. Matching saved estimates and unchanged settings retain their rules.
+  Tests: test_v510_strategy_risk.py, 11 cases across F08/F09.
+
+F10 - Monotonic quote ages
+  Production snapshots carry their monotonic observation time. Add elapsed
+  monotonic time to measured field ages instead of rebuilding ages from rounded
+  wall timestamps. Invalid monotonic observations fail closed. Retain compatibility
+  fallback for older manually supplied snapshots without observation metadata.
+  Tests: test_v510_data_timing.py, 19 cases across F06/F07/F10, including
+  subsecond thresholds, wall-clock adjustments and delayed observations.
+
+F11 - Signed and authoritative commissions
+  Retain authoritative downward, zero and negative corrections. Stale default
+  fees cannot erase known authoritative fees; complete execution evidence cannot
+  create an artificial residual offset against a rebate. Apply validated ledger
+  fees consistently to cycle totals, including recovery. Foreign-currency fees
+  remain excluded under the existing no-FX and stop-after-cycle policy.
+  Tests: test_v510_recovery_commissions.py, 24 cases across F02/F11, including
+  legacy non-mapping raw JSON and a foreign recovery fee after a recorded fee.
+
+GUI - Lock-button height
+  Change only the button's vertical size policy to fill the existing status row.
+  Width, text size, checked state and locking behavior are unchanged.
+  Test: test_v510_lock_button_geometry.py, one native Qt test with 24 combinations
+  of scale (100/150/200%), theme, width and lock state. Native execution is
+  explicitly skipped here because PySide6 is unavailable.
+
+There are 112 new regression test methods: 111 executed successfully here and
+one native Qt method could not run because its class setup was skipped.
+
+FINAL INTEGRATED RESULTS
+
+Host: Linux, CPython 3.12.14, dependency-free/headless broker and Qt test doubles.
+This host is not the supported application runtime; see unavailable gates below.
+
+1. unittest
+   IBKR_BOT_HEADLESS_SIGNALS=1 python -W error::ResourceWarning -m unittest \
+       discover -s tests -p 'test_v5*.py' -v
+   Result: Ran 372 tests in 14.041 seconds; OK (skipped=2).
+   There were 371 successful methods and one skipped PowerShell method. The
+   second skip is the native Qt class setup, outside unittest's testsRun count.
+   All 111 executable new regression cases passed. No ResourceWarning failure.
+
+2. Existing function-style tests
+   Result: 1,408 passed, zero failed, using the local limited minipytest fallback.
+   This runner executes the project's function cases with a small pytest-like
+   surface. It is not pytest, does not supply pytest plugin/coverage semantics,
+   and is not shipped as a replacement for the project's real release gate.
+   The separate unittest run above covers the class-based v5 tests.
+   Deliberate negative coverage-checker fixture diagnostics in this log are
+   expected assertions, not a claimed real coverage measurement.
+
+3. Deterministic CSV simulations
+   python scripts/run_all_simulations.py
+   Result: 58 validated scenarios passed across 54 price-path files.
+   Covers entry, execution, endurance, lifecycle, numeric, protection, RTH,
+   SELL execution, sizing and slippage scenarios.
+
+4. Safety mutation smoke
+   python scripts/run_mutation_smoke.py
+   Result: 17/17 safety mutants killed; baseline probes passed.
+   One probe's source-match target was updated for the authoritative commission
+   condition; its behavioral assertion was retained. This is a bounded smoke
+   gate, not an exhaustive mutation campaign.
+
+5. Static/source checks
+   In-memory AST parsing and compilation passed for 199 Python files on 3.12.
+   git diff --check passed. Current release labels and relative documentation
+   links were reviewed. These checks do not substitute for Ruff or Pyright.
+
+INDEPENDENT REVIEW
+
+The changes were divided by defect boundaries and cross-reviewed separately
+from implementation. Review covered connection/GUI command identity, checkpoint
+serialization, manual-close sequencing and restart handoffs, field update
+consumption, monotonic timing, final BUY guards, completion-date migration,
+ATR invalidation, recovery identity and signed fee reconciliation.
+
+Review found a legacy execution raw-JSON compatibility issue and an aggregate
+foreign-fee ordering edge; both were reproduced, fixed and given regressions
+before the final integrated run. Four additional manual-close restart/full-fill
+probes were retained as permanent tests. Review also corrected documentation
+claims about reconnect behavior and archived release references.
+
+The final changed paths had no unresolved concrete blocker identified by these
+reviews and available tests. This is not a claim that all possible application
+or broker defects have been excluded.
+
+UNAVAILABLE TARGET GATES
+
+Attempting installation of standard CPython 3.14 and the project's declared
+packages returned HTTP 403 from their download sources. The project quality
+command was attempted with --require-tools and failed for missing Ruff/Pyright;
+it did not pass. Required runtime checks and dependency versions were not
+relaxed to make this host appear qualified.
+
+Not run or not available:
+  - Supported CPython 3.14.x execution.
+  - Real pytest, branch coverage and full callable-entry coverage gates.
+  - Ruff and Pyright.
+  - Native Windows/PowerShell launch, shutdown and build behavior.
+  - Native PySide6 rendering, actual high-DPI geometry and packaged GUI behavior.
+  - PyInstaller executable generation.
+  - Live or paper IBKR integration with actual callback timing and fills.
+
+The delivered Windows run_all_tests.bat remains the complete declared gate.
+The build script's -RunTests option is narrower and does not replace that gate.
+Native geometry tests will execute when real PySide6 is installed.
+
+DATABASE AND UPGRADE NOTES
+
+The sole schema addition is nullable cycles.completed_at TEXT, using the
+existing additive migration. It records the first application-persisted final
+completion in UTC, not the first partial SELL time or reconstructed broker time.
+An offline fill first completed through recovery on a later day belongs to that
+application-completion day. Existing completed rows are backfilled once from
+current updated_at. Dates already moved by an older version cannot be recovered
+reliably from this field. No existing fills, quantities, order identities, ATR
+checkpoints or settings are reset.
+
+Retain a consistent application backup and the working installation. Close the
+instance before replacing source or executable files. Each bot instance keeps
+its own database, settings and client ID. Use the full source package, or apply
+the supplied patch/changed files only to the exact reviewed final 5.0.0 baseline.
+Source files alone do not update a previously built executable.
+
+Before qualifying a Windows build for unattended use, run run_all_tests.bat on
+standard CPython 3.14, build it, and exercise the changed workflows in an isolated
+paper setup. The current TEST_PLAN.md includes the requested boundary cases.
+No additional production audit logs are needed to implement the eleven known
+reproductions. To close the outstanding platform validation, the Windows full
+suite output, quality/build logs and native/paper check results are needed.
+If a new runtime discrepancy occurs, supply that instance's audit/log bundle
+and exact build identification; this report does not infer live validation.
+
+The excluded shutdown-queue observation and Linux-only lock reproduction from
+the review were not added to the requested eleven-defect scope. No broad worker,
+database, GUI or strategy architecture refactor was introduced.
+
+Release details: docs/V5_1_0_TARGETED_TRADING_FIXES.md
+Historical 5.0.0 report: docs/legacy/V5_0_0_IMPLEMENTATION_TEST_REPORT.txt
