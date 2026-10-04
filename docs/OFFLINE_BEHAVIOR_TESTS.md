@@ -1,8 +1,12 @@
 # Deterministic offline behavior tests
 
-The v5.3.0 GUI layer covers the N/A ticker placeholder, the embedded graph position, footer removal and monitor ordering in all modes, command-bar hiding and restoration under the GUI lock, equal text-fitting flowchart cards and Reconciliation navigation. See the [GUI release note](V5_3_0_GUI_LAYOUT.md#verification-boundaries) and root implementation report for actual execution results and native-platform limits.
+The v5.6.0 regressions target the fifteen reported GUI defects: manual/ATR input ownership, reconciliation confirmation and quantities, working partial orders, ticker/graph identity, historical flowcharts, filtered exports, protective-exit classification, audit values and completed-history refresh. See the [release note](V5_6_0_TARGETED_GUI_FIXES.md#verification-boundaries) and the root [implementation and test report](../IMPLEMENTATION_TEST_REPORT.txt) for actual results and remaining platform checks. The retained v5.5.1 history tests cover all-ticker totals, shared filters, more than 500 matching cycles and obsolete-result rejection; the retained v5.5.0 GUI tests cover connection/freshness separation, RTH headline priority, fault visibility and actual-update timestamps.
 
-This document describes the current non-GUI, non-Windows, non-network test layer in v5.3.0. Here, non-GUI excludes native widget rendering; GUI contracts are exercised with Qt doubles. It covers strategy behavior, controller state transitions, audit diagnostic coalescing, BUY partial-fill grace/timeout safety, broker-event handling, persistence and recovery, shutdown checkpoints, GUI contracts, and bounded performance behavior.
+`tests/test_v540_deferred_backups.py` covers queue deferral and retained order/fill behavior. `tests/test_v540_storage_reliability.py` covers schema stamps, legacy migration copies, future-version rejection, full restore validation and retention ordering. The existing v4.0.0 ATR memory and close-persistence tests cover the revised age boundary and retained checkpoint guards.
+
+The retained v5.4.0 reliability layer covers deferred order/fill backups, schema-aware startup copies, future-schema rejection, 20-file retention after full validation, and the 24-hour ATR seed age limit. See the [archived release note](legacy/V5_4_0_RELIABILITY.md#verification-boundaries) and [5.4.0 report](legacy/V5_4_0_IMPLEMENTATION_TEST_REPORT.txt) for that release's execution results and platform limits. The [archived v5.3.0 GUI note](legacy/V5_3_0_GUI_LAYOUT.md#verification-boundaries) records the retained layout coverage.
+
+This document describes the current non-GUI, non-Windows, non-network test layer in v5.6.0. Here, non-GUI excludes native widget rendering; GUI contracts are exercised with Qt doubles. It covers strategy behavior, controller state transitions, audit diagnostic coalescing, BUY partial-fill grace/timeout safety, broker-event handling, persistence and recovery, shutdown checkpoints, GUI contracts, and bounded performance behavior.
 
 The 5.2.0 layer adds `test_v520_manual_marker_index.py` and `test_v520_backup_validation.py` for index/query equivalence, table-row preservation, WAL-consistent backup validation and failure/cleanup/retention behavior. The [archived release note](legacy/V5_2_0_STORAGE_PERFORMANCE.md#verification-and-measurement-boundaries) maps their coverage; the [archived verification report](legacy/V5_2_0_IMPLEMENTATION_TEST_REPORT.txt) records the 5.2.0 results.
 
@@ -182,7 +186,7 @@ Use [`TEST_PLAN.md`](TEST_PLAN.md) for those manual and integration checks.
 
 `test_v400_atr_memory_and_order_edits.py` covers first-session warmup, weekend/restart reuse, session and contract separation, corrupt/future/expired estimates, bounded persistence failures, live takeover, same-contract volatility-history preservation, and explicit next-order guard persistence/isolation. `test_v400_gui.py` checks amber LIVE status, retained error colors, removal of only the profit banner, risk-field/manual locks, saved ATR provenance, and non-selling dialog defaults. `test_v400_release.py` checks metadata, documentation layout, compatibility, and unchanged order/broker modules.
 
-Historical corrected v4.0.0 results are preserved in [`legacy/V4_0_0_IMPLEMENTATION_TEST_REPORT.txt`](legacy/V4_0_0_IMPLEMENTATION_TEST_REPORT.txt). The root `IMPLEMENTATION_TEST_REPORT.txt` records the current v5.3.0 verification.
+Historical corrected v4.0.0 results are preserved in [`legacy/V4_0_0_IMPLEMENTATION_TEST_REPORT.txt`](legacy/V4_0_0_IMPLEMENTATION_TEST_REPORT.txt). The root `IMPLEMENTATION_TEST_REPORT.txt` records the current v5.6.0 verification.
 
 
 ## v5.0.0 GUI regression layer

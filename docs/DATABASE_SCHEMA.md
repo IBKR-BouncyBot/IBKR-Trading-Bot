@@ -176,10 +176,11 @@ Normal application operation does not delete completed cycle history as part of 
 
 `_ensure_schema()` is additive and idempotent:
 
-1. when an existing database is opened normally, make a best-effort pre-schema-check online backup; the internally created disposable restore-validation candidate alone skips this redundant backup;
-2. create any missing tables/indexes;
-3. add known missing `cycles` columns with `ALTER TABLE`;
-4. deserialize cycle rows using known dataclass fields and defaults, ignoring unknown columns in the in-memory object without dropping those columns from SQLite.
+1. read `PRAGMA user_version` through a read-only connection before writing; an unreadable stamp or a stamp above supported schema version `1` is rejected before backup or migration;
+2. for an existing unstamped or older database, attempt a best-effort pre-migration online backup; the current stamp skips that redundant copy, as does the internally created disposable restore-validation candidate;
+3. create missing tables/indexes and add known missing `cycles` columns with `ALTER TABLE`, retaining these idempotent checks even when the stamp is current;
+4. record schema version `1` after the schema work succeeds;
+5. deserialize cycle rows using known dataclass fields and defaults, ignoring unknown columns in the in-memory object without dropping those columns from SQLite.
 
 The migration path does not drop tables or rewrite trading history.
 
@@ -190,14 +191,16 @@ v3.1.2 added one defaulted cycle-state column: `buy_remainder_cancel_requested I
 `backup_database()` uses SQLite’s online backup API after a passive WAL checkpoint. A backup is accepted only when:
 
 - `PRAGMA integrity_check` returns `ok`;
-- required core tables exist;
+- required core tables, columns and primary keys exist, and declared foreign keys are consistent;
 - a temporary restore-candidate copy can also be opened and validated.
 
-The latest validation is written to `backups/latest_restore_validation.json`. Backups are named with a UTC stamp and reason, and the default retention is 50 files.
+The latest validation is written to `backups/latest_restore_validation.json`. Backups are named with a UTC stamp and reason, and the default retention is 20 files. Only a newly completed backup that passes full restore validation triggers pruning. Startup alone and a failed backup/candidate validation do not prune older copies; deletion failures can leave more than the target count.
 
 The restore candidate is made with SQLite's online backup API so committed WAL contents are included. It still runs the normal additive migrations and validation checks. From 5.2.0 its internal `BotStorage` opening alone skips the pre-schema backup of this already-disposable copy. This removes one full temporary database copy per restore-validation attempt without removing the actual backup or candidate. The candidate is discarded after validation, and the supplied backup and active database are not migrated by validation.
 
-Backups are requested before/around high-value lifecycle events such as schema checks, order submission, fills, shutdown, and audit export. There is no periodic full-backup interval. The 5.2.0 changes do not alter these triggers, retention or immediate trading-state persistence. Backup failure is recorded/handled by the calling path; it does not transform a backup into broker truth.
+Backups are requested by high-value lifecycle events such as migrations, order submission, fills, shutdown and audit export. There is no periodic full-backup interval. Nine order/fill paths enqueue their requests through the existing controller command queue; the normal submission reason is `order_submission`. The current operation completes before the queued copy runs. Immediate trading-state writes remain synchronous, and the snapshot includes the committed state at the later copy time rather than exactly at the request time.
+
+These backups still run on the controller worker and still perform full restore validation. Deferral removes the copy/validation from the current order/fill call stack, but does not make that work concurrent or eliminate later worker stalls. Lifecycle, shutdown and audit-export paths retain their existing synchronous backup behavior. Backup failure is recorded/handled by the calling path; it does not transform a backup into broker truth.
 
 ## Audit bundles
 
@@ -215,6 +218,8 @@ Audit bundles can contain sensitive account, order, execution, and strategy info
 ## History and derived metrics
 
 Completed-cycle history is read from `cycles` and enriched in memory with display/export metrics such as gross/net percentage, configured percentages, holding time summaries, win rate, completed drawdown, and loss streak.
+
+The completed summary uses the Trade history filters and includes all matching completed cycles. A blank ticker with the other filters cleared includes the entire portable database. History rows are filtered before their 500-row display limit; summary totals have no corresponding row cap.
 
 These derived metrics do not alter stored order/fill facts and are not account-wide performance figures.
 

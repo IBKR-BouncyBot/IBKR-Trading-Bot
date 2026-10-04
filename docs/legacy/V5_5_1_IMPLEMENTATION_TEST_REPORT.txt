@@ -1,0 +1,152 @@
+BouncyBot v5.5.1 - Implementation and verification report
+Date: 2026-10-04
+Scope: completed-trade summary/history filters; additional GUI review report
+Baseline: exact previously delivered 5.5.0 source ZIP
+Baseline source ZIP SHA256:
+f16e31d7de08c0925cd46d0420ebf85e467834a5302037454e293c46c129c888
+
+WHAT CHANGED
+
+The Completed trade summary previously used the configured strategy ticker,
+while the history table used independent filters. Changing an instance from
+SHELL/TDIV to ARGX, or VWRL to 2IS, therefore produced zero summary metrics beside
+valid completed rows for its earlier tickers.
+
+1. The summary follows the Trade history filters, independently of the strategy
+   ticker. Blank ticker and default filters mean every completed cycle in this
+   portable database. Date/outcome/ATR/paper-live filters narrow the result.
+2. Shared parameterized SQL applies the same selection to summary and table.
+   Summary calculations cover all matches, with no 500-cycle cap. Table loading
+   retains the latest-500 matching-row limit and applies filters before that
+   limit. This also makes older matching rows reachable.
+3. Changing or clearing filters requests matching rows through the existing
+   controller worker. Clearing a ticker cannot leave a narrowed backing cache.
+   Requests/results carry detached filter values. Results and periodic summaries
+   for a different filter cannot overwrite the current selection.
+4. The GUI clears old summary values while a changed-filter request is pending.
+   Empty filtered results remain empty; the existing empty-database example is
+   excluded from summary totals. A summary tooltip explains the full-database
+   scope and the separate table limit.
+5. Summary cache metadata checks and worker cadence are retained. Filtered
+   summaries use one bounded cache entry. Reapplying unchanged filters does not
+   queue more database work. Reporting reads do not add persistent writes.
+6. Version metadata, current documentation and regression expectations identify
+   5.5.1. The 5.5.0 note is archived; its implementation report is preserved
+   byte-for-byte under docs/legacy/.
+
+The history table still refreshes at startup, on filter changes and on Refresh;
+periodic summaries can reflect a newly completed trade before its table row is
+reloaded. CSV export retains its pre-existing scope. These two additional
+reporting discrepancies are documented in the GUI review, not silently changed.
+
+SCOPE REVIEW
+
+Application changes are confined to app/gui.py, app/controller.py and
+app/storage.py. Controller edits are initialization, history command/result
+routing, reporting cache selection and summary filter identity in snapshots.
+Storage edits are reporting predicates and summary-cache/query selection.
+No schema migration, order/broker command, strategy setting, persistent filter,
+RTH/ATR safeguard, timer interval or backup policy was added or changed.
+
+Every other app module, main.py and requirements.txt is byte-identical to the
+5.5.0 source. The strategy engine, IB adapter, order handling, recovery and
+submission checks are unchanged. All 27 tracked Images files are unchanged.
+The Python requirement remains standard GIL-enabled CPython 3.14.x.
+
+An independent review found no blocking defect in the reporting fix. It checked
+complete-database scope, bounded table results, filter identity, callback races,
+legacy storage API compatibility, cached read cadence and absence of new DML or
+broker operations. A broad regression test exposed a positional-call
+compatibility issue with an existing history-summary test double; the all-ticker
+call now passes the empty ticker explicitly. Its cadence regression and the
+complete function suite passed on rerun.
+
+SUPPLIED AUDIT DATA REPLAY
+
+The three provided databases were opened read-only and their byte hashes were
+unchanged. Actual reporting methods plus the GUI Qt stubs produced:
+
+Current instance   Completed history          Count   Total net P/L
+PURR               PURR                         4     USD 1531.875140
+ARGX               SHELL and TDIV               3     EUR   53.158846
+2IS                VWRL                         3     EUR  227.160653
+
+Selecting ARGX or 2IS explicitly correctly returns zero completed cycles for
+that ticker. Clearing the ticker restores the full database totals. Losing
+filters also match the actual stored records. No user databases or account
+identifiers are included in the release archives.
+
+VERIFICATION EXECUTED
+
+Host: Linux, CPython 3.12.14, SQLite 3.53.1. No broker connection or real order.
+
+- 26 new unittest methods: 12 storage and 14 controller/GUI tests; all passed.
+  They cover blank/all tickers, literal ticker matching, combined filters,
+  safe SQL parameters, 504-cycle histories, older matching records, sample
+  exclusion, queued filter identity, cache invalidation/boundedness, pending
+  display, unchanged database bytes and unchanged strategy selection.
+- All 37 standard-unittest modules: 486 successful test methods, no failure or
+  error. Runner: Ran 491 tests, OK (skipped=7). Five method skips are counted in
+  491; two skipped class setups are additional. Skips require native Qt or
+  PowerShell, unavailable on this host. ResourceWarning was treated as error.
+- Complete function suite: 1479 cases passed, zero failed or collection errors,
+  using the explicitly limited dependency-free fallback runner. This is not
+  pytest and does not establish coverage. Its negative coverage-tool fixtures
+  intentionally print failure messages; the final run summary is all passed.
+- The fallback runner was itself checked with six focused self-tests and 43
+  representative project cases before full execution. Unsupported features are
+  reported as errors; unittest classes are run separately.
+- Independent SQL/GUI parity: 63 outcome x ATR x account-mode combinations
+  over 144 persisted synthetic fixtures; selected IDs and summary counts matched.
+- Both existing 8000-cycle storage performance checks passed, retaining their
+  existing first-summary/cached-summary/table-read thresholds. These are bounded
+  synthetic checks, not a measurement of live CPU usage across ten instances.
+- All 209 Python files compiled. git diff --check passed.
+- Local documentation links/anchors and release source scope were checked;
+  detailed counts and evidence are included in the update archive.
+- Source ZIP hashes, patch application and manual overlay reconstruction are
+  verified against every file in the exact 5.5.0 baseline before delivery.
+
+DEEP GUI REVIEW
+
+Fifteen additional concrete discrepancies are reported in
+  docs/GUI_REVIEW_5_5_1.md
+and the separate BouncyBot_5.5.1_GUI_Review.txt download. They remain unfixed in
+this targeted release, as requested. Highest follow-up priority is the queued
+ATR snapshot that can overwrite and autosave a newly entered manual percentage.
+Other findings cover liquidation confirmation consistency, reconciliation
+quantity/partial-order guidance, mixed ticker graph data, trailing-stop
+estimates, historical selection/settings, protective input locking, exports,
+exit classification and audit readouts.
+
+Review evidence distinguishes actual supplied trade data, synthetic reachable
+states and source-traced behavior. It does not claim those synthetic problems
+occurred in the user's live instances. Existing audit-worker lifecycle tests
+passed and no additional concrete worker-lifecycle defect was established.
+
+VALIDATION LIMITS
+
+Attempts to install Python 3.14 and actual pytest/coverage/Ruff/Pyright/PySide6/
+ib_async tools were blocked by HTTP 403 responses. No toolchain requirement was
+relaxed in the project. The required quality command
+  python scripts/run_quality_checks.py --require-tools
+failed because Ruff/Pyright are unavailable. It did not pass.
+
+This host did not validate Windows packaging, Python 3.14 execution, native Qt
+rendering/scaling/event-loop behavior, PyInstaller or live IBKR interaction.
+There is no fresh coverage percentage. Run run_all_tests.bat and the Windows
+build in the required target environment. Source-level/stub verification must
+not be presented as a native platform pass.
+
+RELEASE CONTENTS
+
+IBKR_Trading_Bot_5.5.1_Source.zip - complete source project.
+IBKR_Trading_Bot_5.5.1_Release_files.zip - changed files, patch, update/removal
+  instructions, hashes and validation evidence for the exact 5.5.0 baseline.
+BouncyBot_5.5.0_to_5.5.1.patch - alternative exact-baseline update.
+BouncyBot_5.5.1_Implementation_Test_Report.txt - this report.
+BouncyBot_5.5.1_GUI_Review.txt - full additional GUI findings and proposed fixes.
+
+Close the instance before replacing source, retain its own database/settings/
+client ID/captures/backups, and rebuild any packaged executable. Use full source
+if the baseline differs or is uncertain. No prebuilt Windows EXE is included.

@@ -1,109 +1,160 @@
-BouncyBot v5.3.0 - Implementation and verification report
-Date: 2026-09-26
-Current update: Simple-mode wording, Reconciliation heading weight, Ruff I001
-Immediate source baseline: c41838853c0e4ef6b84ee1d15bea713c7463bc41 (5.3.0)
-Cumulative release baseline: deb865045e57e0bfa0f421be13e1f21dd2130282 (5.2.0)
+BouncyBot v5.6.0 - Implementation and verification report
+Date: 2026-10-04
+Scope: targeted corrections for G01-G15, plus six support-address updates
+Baseline: exact previously delivered 5.5.1 source ZIP
+Baseline source ZIP SHA256:
+2bc4eb868ff63bddeda022580e254c42b939500bd4410fa9a80470a135bf2028
 
-CURRENT FINDINGS AND FIXES
+DELIVERED CHANGES
 
-1. The Simple-mode help sentence included the Recovery / audit log wording
-   the user requested removing. It now ends: Stage details are expandable.
-   Mode visibility, audit recording and stage expansion behavior are unchanged.
-2. The numbered Reconciliation labels (1. Refresh current broker facts,
-   2. Compare SQLite with IBKR/TWS, 3. Resolve the situation) share the
-   RecoveryStepTitle selector. Its font-weight is changed from 900 to 400.
-   This makes the three labels regular weight in light and dark themes.
-   Their text, 13px size, colors and spacing are retained.
-3. The supplied Windows log identifies exactly one Ruff I001 error in
-   tests/test_v530_live_layout.py. The two imported names are reordered to
-   _blocked_running_snapshot, _ControllerStub, exactly as Ruff suggested.
-   No imports, lint rules, application logic or test behavior are removed.
+G01 - Current master/per-field ATR checkbox selections own editable inputs.
+      An older queued snapshot cannot replace a newly entered manual value
+      after the operator disables adaptation. Startup hydration and suppression
+      of autosave during programmatic updates remain intact.
+G02 - Reconciliation market SELL shares Stop's potential-loss confirmation,
+      defaulting to Cancel. After the modal, it rechecks probe freshness, cycle
+      identity/order-fill signature, conId and persisted unsold quantity before
+      calling the existing StopAction workflow. Worker guards still apply.
+G03 - Reconciliation compares the full app-owned unsold quantity with broker
+      holdings using the existing 1e-9 tolerance. Unknown/stale positions are
+      labelled unavailable for verification, not consistent.
+G04 - Nonterminal partial fills remain working orders in Reconciliation.
+      Terminal statuses determine whether the remainder is cancellable.
+G05 - Confirmed contract identity drives ribbon/graph display. A retained cycle
+      from another instrument cannot supply old graph prices/levels or profit
+      triggers for the newly confirmed contract.
+G06 - Trailing graph estimates track observed prices per broker order, retain
+      extrema independently of display-buffer pruning and reset on replacement.
+      Same-second observations are handled explicitly. Orders already active
+      at startup, and ambiguous submission-time evidence, show an unavailable
+      estimate instead of reconstructing a stop from pre-order cycle prices.
+      The submitted initial stop remains visible; estimates are not broker stops.
+G07 - Historical flowchart selection follows persisted cycle ID after history
+      changes. If that cycle disappears from the selected results, selection
+      deliberately returns to the current strategy.
+G08 - Historical diagrams reconstruct saved settings and do not inherit today's
+      draft. Missing fields use fixed display defaults, disclosed in the
+      explanation/tooltip. Actual older rows lack auto_repeat, sec_type and tif;
+      the app does not claim their original values were recovered.
+G09 - Inactive next-cycle manual protective percentages are editable consistently
+      with other inputs. Active Stage 3/4, manual-review, ATR and operator locks
+      remain in force. Editing an inactive draft does not alter its retained cycle.
+G10 - CSV applies the same ticker/date/outcome/ATR/paper-live predicates as history
+      and summary, without a row cap. Existing CSV columns and legacy exact-ticker
+      storage calls remain supported. Export failures still show an operator error.
+G11 - A cancelled/unfilled protective reference is not classified as an exit.
+      Badges and SQL use protective filled quantity or an actually filled SELL
+      carrying the protective executing reference; P/L calculations are unchanged.
+G12 - Completion markers use aggregate fill price with the completion timestamp.
+      If only individual execution evidence exists, its own price and timestamp
+      stay paired. Stored executions are not rewritten.
+G13 - Audit Summary keeps legitimate zero percentages and zero P/L instead of
+      discarding them through boolean fallback expressions.
+G14 - Audit Summary derives BUY type from matching stored order evidence and
+      holding duration from valid fill timestamps. Ambiguous/missing order
+      identity and invalid/reversed times remain explicitly unavailable.
+G15 - History rows and flowchart choices refresh with completed-history changes
+      on the existing database cadence. The existing summary metadata query is
+      reused. An in-memory completed-write revision catches same-second late
+      commissions without adding queries or persistent writes to the write path.
+      Unchanged revisions do not reload rows. Failed filter/read requests retry;
+      different filters with equal counts/timestamps cannot retain the old rows.
 
-The executable-source delta is two literal replacements in app/gui.py and
-one import ordering correction in the test module. All other app modules,
-main.py, dependencies, supported Python branch and build configuration retain
-preceding-release contents. Non-GUI app modules also remain byte-identical
-to 5.2.0. No broker, strategy, order, market-data, database, backup or timing
-logic is changed. Version stays 5.3.0. The GUI guide and manual checks are
-updated. There is no extra changelog entry for the lint correction.
+About > Info > Thank me and README now contain exactly the supplied ADA, ETH,
+NIGHT, SOL, XRP and ZEC strings. ADA was already the supplied value; ETH/NIGHT/SOL
+were replaced; XRP/ZEC were added. All six GUI fields and README entries are
+checked against the literal user-provided values. No transfer or ownership check
+was made or is implied.
 
-RETAINED CUMULATIVE 5.3.0 CONTENT
+SCOPE AND REVIEW
 
-- N/A ticker placeholder when ticker identity is unavailable.
-- One Market and strategy graph inside Price data monitor, below Strategy
-  progress and above the five metric boxes, with no Rolling graph buffer
-  footer. Advanced/Debug order: configuration, monitor, market/strategy state.
-  Simple hides configuration and keeps the monitor first visible.
-- GUI lock hides the Live strategy bottom command bar and view selector;
-  unlock restores the existing button gates.
-- Five flowchart cards share a text-fitting height without reducing fonts.
-- Reconciliation navigation on the right, retaining the existing fourth page.
-- Supplied README and all five supplied PNGs in Images/ are preserved.
-  Existing application logo/icon resources are unchanged.
+Runtime edits are limited to app/gui.py, app/controller.py and app/storage.py.
+Controller changes are reporting request/result handling and CSV filters.
+Storage changes are reporting predicates/export and memory-only cache/revision
+invalidation after the existing completed-cycle upsert. Its SQL statement,
+transaction and disk-write behavior are unchanged.
 
-CURRENT VERIFICATION
+Every other app module, main.py and requirements.txt is byte-identical to 5.5.1.
+The strategy engine, broker adapter, order submission/cancellation sequencing,
+RTH/freshness guards, schema, backup policy and cadence intervals are unchanged.
+All 27 tracked Images files are unchanged. Runtime remains standard GIL-enabled
+CPython 3.14.x. Version/build metadata and current release assertions are updated.
 
-Host: Linux, CPython 3.12.14, SQLite 3.53.1. GUI tests use existing Qt/controller
-substitutes; ResourceWarning is treated as an error. Production still requires
-standard GIL-enabled CPython 3.14.x; no runtime guard was weakened.
+Independent reviewers checked the ATR/reconciliation changes, historical/audit
+changes and reporting changes. Review found and corrected two graph edge cases:
+same-second prices and reused references with different broker order IDs.
+It also found the failed-filter equal-revision retry case and the same-second
+commission cache issue; both now have explicit regression coverage.
 
-- Existing v5.3.0 GUI modules: 25 deterministic cases passed. The unittest
-  runner reports 29 tests and OK (skipped=5): four skipped methods are in the
-  count; a native class-setup skip is not an executed method. All five native
-  Qt cases remain unverified on this host.
-- Existing v2.2.0 and v3.5.0 layout/theme function tests: 10 passed using the
-  limited dependency-free fallback runner, not actual pytest or coverage.
-- Independent execution of both old/new style emitters in both themes
-  verified their complete outputs differ only in the targeted font weight.
-  GUI construction checked the exact Simple help and three numbered labels.
-  The source matches exactly the two requested literal replacements.
-- Independent review found no defects in the three-line code/test delta.
-- All 204 Python files compile; git diff --check passes. All 191 local links
-  across 25 current documents resolve with exact filename case and anchors.
-- Ruff and Pyright are unavailable here. The mandatory quality command exits
-  nonzero for missing tools. Installing Ruff 0.16.9 failed with no matching
-  distribution available. The attached Ruff correction was applied exactly;
-  a fresh Ruff pass is NOT claimed. Native Qt/DPI, Windows executable build,
-  Python 3.14 and live/paper-broker checks were not executed here.
+A transaction-rollback probe preserved committed P/L and database bytes. Five
+forced reporting cadences caused one conservative row refresh after rollback,
+then reused it; no DML/DDL statement ran during those reporting cadences. A
+completed-cycle write for another ticker can conservatively refresh a filtered
+view once. Unchanged periodic snapshots do not repeatedly reload full history.
 
-The existing focused tests and independent exact-output checks are sufficient
-for this literal/style/import delta; the full simulation and storage suites
-were not repeated. No user database or broker connection was used.
+SUPPLIED AUDIT REPLAY
 
-USER-SUPPLIED WINDOWS EVIDENCE (PRECEDING FILES)
+All 10 completed cycles from the three supplied databases were checked read-only.
+BUY and FINAL SELL marker prices match persisted aggregate fills and corresponding
+fill timestamps. PURR cycle 2 now displays FINAL SELL 13.691500630517025 instead of
+the first partial's 13.71. TDIV cycle 1 Summary now displays TRAIL and 1439.83 min.
+Changing today's ATR/repeat/currency settings leaves reconstructed history fixed.
+No user database, actual account identifier or audit bundle is in the archives.
 
-CWINDOWSsystem32cmd.exe.txt reports CPython 3.14.6 standard GIL, 1,891 pytest
-cases passed, total statement/branch coverage 83.4%, 1,104/1,104 executable
-application callables entered, 17/17 safety mutation checks, 58 CSV scenarios
-across 54 files, and Pyright with zero errors/warnings/informations. Its only
-reported quality failure is the Ruff import ordering fixed above. These are
-results from the supplied run, not a new Windows run of the present files.
-The log does not identify a source commit. The release includes a summary
-without local Windows paths; the original log is left unchanged.
+EXECUTED VERIFICATION
 
-PRIOR OFFLINE RELEASE EVIDENCE
+Host: Linux, CPython 3.12.14, SQLite 3.53.1. No live broker connection or order.
 
-Preceding c418388 verification recorded 419 successful unittest cases and
-1,465 function cases through the limited fallback. Earlier 5.3.0 CSV and
-mutation runs passed 58 scenario contracts and 17 mutation checks. Retained
-logs are labeled preceding_release; none is presented as a current full run.
+- 85 new unittest methods: ATR 10, Reconciliation 18, graph 26, historical/audit
+  16, history reporting/support addresses 15. All passed.
+- All 42 unittest modules: 571 successful methods, no failure/error. Runner:
+  Ran 576 tests, OK (skipped=7). Five skipped methods are part of the 576;
+  two additional native-Qt class-setup skips are listed separately by unittest.
+  ResourceWarning was treated as an error. Skips need native Qt or PowerShell.
+- 1479 function cases passed, no failure/collection error, using the explicitly
+  limited dependency-free fallback runner. This is NOT actual pytest and does
+  not establish coverage. Six focused fallback-runner self-tests also passed.
+- The first broad function run found an obsolete export test-double signature
+  and the not-yet-updated root report version. The double now exercises the
+  filtered API while retaining its permission-error assertion; the report now
+  identifies 5.6.0. The complete function suite passed after those corrections.
+- The repository's own mutation gate passed: 17/17 safety mutants killed.
+- The repository's simulation gate passed: 58 scenarios across 54 CSV files.
+- All 214 Python files compiled. git diff --check passed.
+- 313 local links across 28 documents were checked; none missing.
+- Both source and update ZIPs pass CRC/content verification. Applying the patch
+  or the documented changed-file overlay to the exact 5.5.1 baseline reproduces
+  every 5.6.0 source file. Detailed hashes/evidence are in the update archive.
 
-RELEASE DELIVERY
+VALIDATION LIMITS
 
-IBKR_Trading_Bot_5.3.0_Source.zip contains the complete source tree.
-IBKR_Trading_Bot_5.3.0_Release_files.zip contains cumulative changed files
-since 5.2.0, deletion instructions, hashes, exact-baseline patch and evidence.
-BouncyBot_5.2.0_to_5.3.0.patch applies only to the exact delivered 5.2.0 source.
-The release packager verifies the patch and overlays from 5.2.0 and all three
-preceding 5.3.0 source commits: 9ab94c7, 8ba771b and c418388. Every reconstructed
-file is compared with the committed release, including all five image hashes.
-ZIP integrity and complete source-file hashes are checked.
+Renewed attempts to install Python 3.14 and the exact project requirements were
+blocked by HTTP 403. Actual pytest/coverage, Ruff, Pyright, PySide6, ib_async and
+PyInstaller are unavailable. No requirement was relaxed and no global package
+was changed. The required runtime check and
+  python scripts/run_quality_checks.py --require-tools
+were attempted and failed due to the interpreter/missing tools. They did not pass.
 
-Use full source if the installed baseline is uncertain. Close the instance
-before replacing files, retain its database/settings/client ID/captures/logs,
-and follow README_UPDATE.txt for the cumulative overlay. The obsolete path
-docs/V5_2_0_STORAGE_PERFORMANCE.md must be removed when overlaying 5.2.0; its
-archived replacement is under docs/legacy/. Source replacement does not
-update an existing executable. Run run_all_tests.bat in the supported Windows
-CPython 3.14 environment and rebuild the executable. This delivery supplies
-source, not a newly built or Windows-qualified executable.
+This host did not verify native Windows/Qt rendering, high-DPI scaling, real Qt
+event-loop behavior, Python 3.14 execution, actual pytest/branch/callable coverage,
+Windows packaging, or live IB Gateway behavior. Headless method tests and the
+fallback runner are not substitutes for these platform gates. No fresh coverage
+percentage or prebuilt Windows executable is supplied. Run run_all_tests.bat and
+the documented Windows build in the required target environment.
+
+RELEASE CONTENTS
+
+IBKR_Trading_Bot_5.6.0_Source.zip - complete source project.
+IBKR_Trading_Bot_5.6.0_Release_files.zip - exact-baseline changed files, patch,
+  removal/update instructions, hashes and verification evidence.
+BouncyBot_5.5.1_to_5.6.0.patch - alternative exact-baseline update.
+BouncyBot_5.6.0_Implementation_Test_Report.txt - this report.
+BouncyBot_5.6.0_GUI_Fixes.txt - the fifteen-finding correction map and boundaries.
+
+The original 5.5.1 GUI review is retained with a resolution link. Its release note
+and implementation report are archived; the old implementation report is
+byte-for-byte preserved. The changelog has one consolidated 5.6.0 entry.
+
+Close the instance before replacing source. Retain its own database/settings/
+client ID/captures/backups and rebuild any packaged executable. The changed-file
+archive targets exactly 5.5.1; use complete source if your baseline differs.

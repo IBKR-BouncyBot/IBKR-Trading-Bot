@@ -1,0 +1,186 @@
+BouncyBot v5.4.0 - Implementation and verification report
+Date: 2026-09-27
+Scope: reviewed reliability patch, README correction and 5.4.0 release metadata
+Baseline: exact final delivered 5.3.0 source ZIP
+Baseline SHA256: a393cc461a7ffa1c8ba6ff0f28c3a62345cdd823820722630acb2ef451a4eee0
+Input patch: v530_reliability_fixes_1-4.patch
+Patch SHA256: bb2b397740e3d191f4ed791ab346f99beb424ef584041a4856c9f628ee0eec65
+
+REVIEW DECISIONS AND IMPLEMENTED CHANGES
+
+1. Deferred order/fill backups: accepted with full validation retained.
+   Nine existing backup triggers now enqueue CREATE_DATABASE_BACKUP on the
+   existing controller worker. Durable order intent and fill records are still
+   committed synchronously before submission or subsequent strategy actions.
+   Final BUY/SELL freshness, RTH, entry-window and other submission guards are
+   retained. Submission backup reasons are now order_submission, since a
+   queued copy is not guaranteed to exist before transmission.
+   There is no additional thread or cadence change. The queue defers the copy
+   until the current handler returns; copying and validation can still stall
+   later broker/event-loop work. A backup captures the state when it runs,
+   not the state at request time. An abnormal termination may prevent a queued
+   copy from completing. Authoritative SQLite records remain synchronous;
+   existing shutdown and resume checkpoint behavior remains in place.
+
+2. Schema-aware startup backup: accepted with early compatibility rejection.
+   Successful initialization stamps PRAGMA user_version=1. An existing legacy
+   stamp 0 retains a best-effort pre-migration online backup; a current stamp 1
+   avoids making that redundant startup copy on every open. Existing additive
+   table/column/index checks still execute. No new application table or column
+   is introduced. The stamp is written only after schema operations succeed.
+   The supplied patch checked a future stamp only after migrations and then
+   claimed compatibility. Review reproduced a version 2 file being changed.
+   This release reads the stamp read-only and rejects newer schemas BEFORE
+   backup/migration writes. It also rejects an unreadable stamp. Independent
+   review reproduced a transient SQLite lock that otherwise let a failed read
+   bypass the future guard; the corrected guard preserved the version 2 stamp
+   and schema when the same actual lock experiment was repeated.
+   DatabaseSchemaError inherits sqlite3.DatabaseError, preserving existing
+   corruption/error handling. Corrupt or unreadable sources remain untouched,
+   and early rejection does not create misleading partial backup files.
+
+3. Default backup retention 20: accepted after successful validation only.
+   Ordinary backups retain the full existing SQLite integrity, required
+   schema/primary-key, foreign-key and disposable restore/migration checks.
+   The proposed validate=False path was rejected: it allowed an invalid new
+   copy to delete the last known-good recovery copy. This was reproduced with
+   a synthetic orphaned order and a one-file retention limit.
+   Unconditional startup pruning was also rejected. Retention runs only after
+   a new backup passes full validation, preserving old copies on copy or
+   validation failure. Excess existing files are not deleted just by opening
+   the app. Deletion failures can leave more than 20 files. Retention reduces
+   retained disk occupancy; it does not reduce bytes written by each full
+   backup. The next successful rotation applies the 20-file default.
+
+4. ATR seed age 24 elapsed hours: accepted as an intentional policy change.
+   A saved estimate is eligible through exactly 24 elapsed UTC hours from its
+   observation. Older estimates, including normal Friday-to-Monday gaps,
+   expire and the existing warmup applies. Eligible same-session and adjacent
+   weekday reuse remains. No exchange holiday calendar is guessed. ATR
+   formulas, seed identity/profile/contract checks, broker-reported RTH gates,
+   current quote checks, fresh-bar preference and checkpoint write cadence
+   remain unchanged. The seed record format stays version 1.
+   The supplied test changes removed MONDAY and changed the meaning of FRIDAY
+   without updating the close-persistence module; they also mislabeled a
+   Saturday timestamp as the next weekday and invalidated one bad-boundary
+   fixture. These were corrected without removing the safety assertions.
+
+The README no longer states that screenshots are old. Current documentation,
+changelog, package/GUI/build version strings and release assertions are
+synchronized to 5.4.0. The 5.3.0 GUI note/report are archived; the prior report is
+byte-identical. The supplied README branding and all five Images/ PNGs remain.
+
+MINIMAL RUNTIME SCOPE
+
+Operational changes are confined to app/controller.py, app/storage.py and
+app/atr_memory.py. app/gui.py changes only its three release-version strings.
+All other app modules, main.py and requirements.txt remain byte-identical to
+the final 5.3.0 source. Build/runtime scripts and pyproject.toml change only
+version strings. Standard GIL-enabled CPython 3.14.x remains the supported
+runtime. Broker cadence, command draining, backup validation implementation,
+strategy formulas, order types, quantities, stop calculations and reconciliation
+logic retain their existing implementations. The tighter seed-age policy can
+intentionally delay ATR-dependent progress until fresh observations suffice.
+
+INITIAL 5.4.0 OFFLINE VERIFICATION
+
+Host: Linux, CPython 3.12.14, SQLite 3.53.1. Offline controller tests use inert
+brokers, temporary synthetic databases and headless signals. ResourceWarning
+was treated as an error. No user database, Gateway connection or order was used.
+
+- All 34 standard-unittest modules: 437 successful test methods. The runner
+  reports Ran 442 tests, OK (skipped=7): five skipped methods are included in
+  the 442 count; two class-setup skips are additional. Skips are native Qt and
+  PowerShell checks, not successful platform validation.
+- All function tests: 1,479 passed, zero failed with the limited dependency-free
+  fallback runner. This is NOT an actual pytest or coverage measurement.
+  Expected negative coverage-tool fixture messages are not release failures
+  or measured release coverage. The final runner summary is authoritative.
+- All 58 CSV simulation contracts passed across 54 price-path files.
+- All 17 seeded safety mutation checks were detected.
+- Added 18 unittest cases (10 storage, 8 deferred backup) and 14 net parameterized
+  function cases in the ATR suites. Coverage includes committed WAL migration,
+  failed migration/stamp retry, future/unreadable schema rejection, no pruning
+  on failure, 20 fully validated retained copies, submitted-order/intent ordering,
+  intent failure, backup failure, partial and full fills, immediate protection,
+  close-before-RTH handling, 24-hour boundaries, future timestamps, timezone
+  offsets/DST, weekend or missed-session expiry and fresh ATR warmup.
+- Existing stale quote, RTH closing and BUY-entry-window timing assertions are
+  retained. Their artificial delay is injected during intent persistence now
+  that a deferred backup no longer delays the immediate submission path.
+- All 206 Python files compiled. Source comparisons confirm the minimal runtime
+  scope and unchanged backup-validation bodies/cadence. git diff --check passed.
+- All 196 local links/anchors across 25 current documents passed, including 79
+  README local references and all 12 image references. External links were not
+  rechecked for this release. The existing referral URL is retained unchanged.
+
+The initial full function run identified obsolete release-note path assertions
+and the corruption exception/partial-file expectation. Metadata was corrected,
+the SQLite exception contract was preserved, and the corruption test now asserts
+unchanged source bytes plus no invalid backup artifact. The complete function
+and unittest runs were then repeated successfully. No guard was removed to make
+the tests pass. Logs are in validation/ in Release_files.zip. These full-suite
+results precede the test-cleanup correction documented below.
+
+WINDOWS TEST-CLEANUP CORRECTION
+
+The supplied Windows CPython 3.14.6 log reports 1 failed, 1922 passed and
+1 warning. The failure occurs when TemporaryDirectory removes state-2.sqlite
+after test_all_normal_order_types_commit_intent_and_submit_before_copy.
+The test's independent intent-reader connection used sqlite3's transaction
+context manager, which does not close the connection. Windows then reports
+WinError 32 when deleting the database while that handle is still open.
+
+The test now uses contextlib.closing for that reader. Its original order-intent,
+submission and backup-ordering assertions are unchanged. Independent review
+confirmed the cause and that the other new storage tests already explicitly
+close their readers. No application module, dependency, version string or
+changelog changed for this correction.
+
+Fresh verification on Linux CPython 3.12.14, with ResourceWarning treated as
+an error:
+- A lifetime probe retained all five reader objects, preventing garbage
+  collection from hiding the leak. Before the fix all five were still usable
+  after cleanup; after the fix all five were closed and rejected queries.
+- All 18 cases in test_v540_deferred_backups and test_v540_storage_reliability
+  passed. The changed test module compiled and git diff --check passed.
+- Release reconstruction and archive hash checks were repeated after the fix.
+
+The complete suite was not rerun for this test-only correction. Windows
+CPython 3.14 and Ruff remain unavailable locally, so the corrected Windows
+run_all_tests.bat result is still unverified. The uploaded log does not include
+the warning details. Evidence is included as validation/test_cleanup_*.log.
+
+INDEPENDENT REVIEW AND LIMITS
+
+Independent source review covered the original patch and resulting implementation.
+It found the transient schema-read guard bypass described above, reproduced it
+using a real SQLite exclusive lock, and verified its correction. It separately
+ran 37 unittest cases and 99 ATR fallback cases. No further concrete defect was
+identified in the reviewed runtime changes after corrections.
+
+Python 3.14, pytest/coverage, Ruff, Pyright, native PySide6/Qt, ib_async, PyInstaller
+and Windows/PowerShell are unavailable on this host. A bounded attempt to install
+pytest/Ruff found no matching distribution available. The required quality-tool
+command exits nonzero because Ruff/Pyright are missing; it did NOT pass. No
+fresh coverage percentage, target-platform build, native visual or live-broker
+qualification is claimed. The Windows run_all_tests.bat and build remain the
+supported target-environment gates. Runtime checks were not weakened.
+
+RELEASE FILES AND UPDATE BOUNDARY
+
+- IBKR_Trading_Bot_5.4.0_Source.zip: complete source tree.
+- IBKR_Trading_Bot_5.4.0_Release_files.zip: replacements/additions, removal list,
+  hashes, reviewed patch and validation evidence for the exact final 5.3.0 baseline.
+- BouncyBot_5.3.0_to_5.4.0.patch: exact-baseline source patch.
+- BouncyBot_5.4.0_Implementation_Test_Report.txt: this report.
+
+The source baseline is checked against the SHA256-identified delivered ZIP.
+Both patch and manual overlay are reconstructed from that baseline and every
+resulting file hash compared against the committed release. ZIP integrity and
+all image/source hashes are checked. The old docs/V5_3_0_GUI_LAYOUT.md path is
+removed because the note is now archived under docs/legacy/. Use full source
+if your baseline differs or is uncertain. Keep each instance's own database,
+settings, client ID, logs and captures; close the instance before replacement.
+Rebuild an existing executable from the new source. This release provides source,
+not a prebuilt or newly Windows-qualified executable.

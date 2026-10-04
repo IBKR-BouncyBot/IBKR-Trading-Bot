@@ -1,0 +1,133 @@
+BouncyBot v5.5.0 - Implementation and verification report
+Date: 2026-09-27
+Scope: GUI-only connection/data/trading status and market-update timestamps
+Baseline: corrected 5.4.0 source, including the Windows test reader cleanup
+Baseline commit: 60c700abaf155f9893f30a59ebef1e9a6eeee8ac
+Baseline source ZIP SHA256:
+29ba6dd82e68b8821e6a1f253e89084afd7031b6fba7cad99366ed4eb8569e88
+
+CHANGES
+
+1. Connection reports the local API and upstream broker links independently
+   of the awaiting-fresh-data flag. Two confirmed connections display Connected.
+   Disconnected, Gateway only, Reconciling and Checking link remain distinct.
+   A confirmed link's tooltip no longer reuses an old message claiming that
+   fresh market data is currently arriving.
+
+2. Data presents known old prices consistently as, for example, Live / Stale
+   6.3h, whether their event state is stale or invalidated. The measured age,
+   actual receipt timestamp, pending-update flag and invalidation reason remain
+   in its tooltip. Unknown data, recent invalidation, missing event tracking and
+   upstream loss remain separate states. No invalidated quote becomes green.
+
+3. Trading displays BUY blocked: RTH closed or SELL blocked: RTH closed only
+   for an ordinary waiting stage whose blockers consist solely of rth_closed,
+   stale_data and/or fresh_market_data_pending. All original blocker details
+   remain in the tooltip. Disconnection, recovery/startup requirements, active
+   storage faults, working-order stages and other blocker codes retain the
+   controller's headline. Only display text changes; blocker lists are not edited.
+
+4. The Price data monitor labels actual API event receipt time Last market
+   update and separately labels cached snapshot check age. It never substitutes
+   snapshot.timestamp or other cached-read times for missing event receipt time.
+   Existing timestamp aliases remain supported. The timestamp is API receipt
+   time, not an assertion about exchange execution time or each quote field.
+   Old visible prices say Cached price - market data stale; recently invalidated
+   visible prices say Cached price - awaiting a new market update. The legacy
+   price-feed summary follows the same timestamp/status rules and uses the
+   existing warning style for cached data.
+
+5. Runtime/build/GUI version strings and current documentation identify 5.5.0.
+   The previous 5.4.0 release note is archived with repaired links, and its
+   implementation report is archived byte-for-byte. Existing branding, images
+   and GUI layout are retained.
+
+RUNTIME SCOPE AND REVIEW
+
+Only app/gui.py changes among application modules. Every other app module,
+main.py and requirements.txt was compared byte-for-byte with the corrected
+5.4.0 baseline. The build script, runtime-check script and pyproject.toml differ
+only in release-version strings. All 27 tracked Images/ files are unchanged.
+
+No adapter, controller, strategy, order handling, persistence, subscription,
+2104 handling, RTH/ATR check, freshness guard or timer interval changes are
+included. The display helpers do not call the broker or database and do not
+modify incoming snapshots. Existing standard GIL-enabled CPython 3.14.x
+requirements are retained.
+
+Independent review found one display issue in the first implementation: when
+no cycle was active, the monitor defaulted to 3 seconds although the configured
+strategy freshness limit could differ. MainWindow now supplies the current
+strategy limit to both monitor paths, matching the ribbon/controller. The
+optional PricePanel keyword preserves its existing two-argument callers.
+A regression covers both no-cycle and differing persisted-cycle-limit cases.
+No further concrete defect was found in the reviewed GUI changes.
+
+The actual PURR and VWRL report snapshots were replayed through the GUI with
+repository Qt stubs. Both show Connected and SELL blocked: RTH closed. Data
+shows Live / Stale with their respective measured ages (6.5h and 6.3h in the
+reports, which were captured at different times). Actual receipt timestamps
+remain 11:18:52 UTC and 11:18:29 UTC. Cached prices remain visible, all blockers
+remain in tooltips, and deep-copy comparisons show unchanged input snapshots.
+
+VERIFICATION EXECUTED
+
+Host: Linux, CPython 3.12.14, SQLite 3.53.1.
+ResourceWarning was treated as an error. No broker connection or order was made.
+User audit data was inspected/replayed only; application storage tests use
+synthetic temporary databases.
+
+- Added 23 unittest methods in tests/test_v550_gui_status.py. They cover status
+  equivalence, absent/recent/stale/invalidated data, lost links, missing tracking,
+  delayed mode, preserved recovery/fault headlines, BUY and SELL waits, native
+  order stages, exact timestamps and aliases, cache labels, nonmutation and
+  custom freshness limits. Independent execution of all 23 also passed.
+- All 35 standard-unittest modules: 460 successful methods, no failure or error.
+  The runner reports Ran 465 tests, OK (skipped=7): five skipped test methods
+  are included in that count and two skipped class setups are additional.
+  Skips concern unavailable native Qt or PowerShell validation.
+- All 1,479 function cases passed using the limited dependency-free fallback
+  runner. This is not an actual pytest or coverage run. Negative coverage-tool
+  fixtures deliberately print failure messages; the final runner result is
+  1,479 passed, 0 failed. No release coverage percentage is claimed.
+- The changed UTC-label contract was updated in the existing GUI regression.
+  Current-version assertions reference 5.5.0 and its release note; unrelated
+  behavior assertions were retained.
+- All 207 Python files compiled. git diff --check passed.
+- All 210 local links/anchors across 25 current documents passed, including
+  80 README references and 12 README image references. External links were
+  not rechecked. Historical notes remain linked as archived release history.
+- The complete source baseline was verified against all 434 file hashes in
+  the corrected 5.4.0 source ZIP before preparing the update.
+- The release patch and manual overlay are reconstructed from that exact
+  baseline, with every resulting file hash compared to the committed release.
+  ZIP integrity, image preservation and archived-report identity are checked.
+
+VALIDATION LIMITS
+
+Python 3.14, native PySide6/Qt, Windows/PowerShell, pytest/coverage, Ruff,
+Pyright, ib_async and PyInstaller are unavailable on this host. The required
+quality command was attempted and exited nonzero because Ruff/Pyright are
+missing; it did not pass. This release has no native visual/build qualification
+or fresh measured coverage. The Windows run_all_tests.bat and build remain
+required target-environment checks. The manual GUI plan documents the relevant
+status, tooltip, real-update and scaling checks.
+
+The runtime safety modules are byte-identical to 5.4.0. Separate mutation and
+CSV simulation launchers were not rerun for this GUI-only release; the complete
+available unittest and function suites were run as described above. Prior
+5.4.0 results remain explicitly historical in the archived report.
+
+RELEASE FILES
+
+IBKR_Trading_Bot_5.5.0_Source.zip - complete source tree.
+IBKR_Trading_Bot_5.5.0_Release_files.zip - changed files, removal instructions,
+  hashes, reviewed patch and validation evidence for corrected 5.4.0.
+BouncyBot_5.4.0_to_5.5.0.patch - alternative exact-baseline source update.
+BouncyBot_5.5.0_Implementation_Test_Report.txt - this report.
+
+Use full source if your baseline differs from the ZIP hash above. The overlay
+moves docs/V5_4_0_RELIABILITY.md into docs/legacy/. Close the instance before
+replacement and preserve each instance's own database, settings, client ID,
+logs, captures and backups. Rebuild a packaged executable from the new source.
+This delivery contains source, not a prebuilt Windows executable.

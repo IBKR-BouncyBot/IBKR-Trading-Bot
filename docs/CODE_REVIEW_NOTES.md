@@ -1,6 +1,6 @@
 # Maintainer review notes
 
-This file records the current review boundaries for v5.3.0. It is not a release changelog and should not be used instead of the behavioral guides.
+This file records the current review boundaries for v5.6.0. It is not a release changelog and should not be used instead of the behavioral guides.
 
 ## Source-of-truth order
 
@@ -99,7 +99,7 @@ When behavior changes:
 
 The public-repository documentation set:
 
-- keeps the application, package and current documentation version aligned at v5.3.0;
+- keeps the application, package and current documentation version aligned at v5.6.0;
 - keeps current operational material in `docs/` and superseded release notes in `docs/legacy/`;
 - treats SQLite files, backups, audit bundles, reports, captures, screenshots, and broker/account data as private unless deliberately sanitized;
 - uses the unmodified PolyForm Noncommercial License 1.0.0 text in the repository root;
@@ -138,8 +138,41 @@ All eleven confirmed defect groups from the 25 September review receive narrow c
 Six implementation scopes were independently cross-reviewed. Review follow-ups covered legacy execution raw-data types, authoritative zero/foreign-currency fee precedence, restart during partial SELL cancellation, completed-date migration and old test snapshots whose measured ages disagreed with their wall timestamps. The excluded shutdown observation and Linux-qualified folder-lock issue were not implemented. See the root verification report for final measured results and unavailable tools.
 
 
-## v5.3.0 review boundary
+## Historical v5.3.0 review boundary
 
 This release is relative to 5.2.0. Runtime presentation edits belong in `app/gui.py`: the empty ticker placeholder, graph/monitor order, lock-driven command-bar visibility, measured flowchart geometry and the right-side Reconciliation selector. Reconciliation retains its existing page and index; the native corner button replaces only its left-side tab header. Lock hiding must retain the existing disabled states and restore workflow gating after unlock or theme changes. Flowchart layout must fit all five cards at their existing font sizes, including cards excluded by the current view filter.
 
 No strategy, broker, storage, timer, dependency or persisted-setting change belongs in this release. Confirm that those modules match 5.2.0 and retain their tests. Native widget checks and manual Windows scaling checks complement Qt-double regressions; list executed checks and remaining limits in the root report.
+
+
+## Historical v5.4.0 review boundary
+
+The reliability changes are confined to `app/controller.py`, `app/storage.py` and `app/atr_memory.py`; GUI changes are version text only. Review the nine queue substitutions for unchanged durable writes, submission guards and fill processing. The queue is the existing controller queue, not a new worker; snapshots occur after the request and full restore validation remains synchronous when the queued command runs.
+
+Schema version `1` controls whether a pre-migration copy is needed, without bypassing the existing idempotent schema checks. Unreadable and future schema versions must be rejected before backup, migration or writing. Retention defaults to 20 and runs only after a newly created backup passes full restore validation; startup or failed validation must not delete older copies. Retain integrity, core schema, primary-key, foreign-key and disposable migration checks.
+
+ATR reuse is bounded by 24 elapsed UTC hours, with the exact boundary accepted. Check valid consecutive-day reuse, just-expired and weekend/holiday-gap rejection, timestamp offsets, same-session restart and retained identity/RTH/current-quote guards. See the [archived 5.4.0 report](legacy/V5_4_0_IMPLEMENTATION_TEST_REPORT.txt) for that release's validation results and unavailable platform gates.
+
+
+## Historical v5.5.0 review boundary
+
+Runtime changes belong only in `app/gui.py`. Connection state must not imply quote freshness, and a known old actual update must have the same stale presentation whether a post-notification event is still required or not. Preserve the waiting reason in diagnostics. A missing or invalid actual-update timestamp must never be replaced with a snapshot-read timestamp. Cached values remain diagnostic.
+
+Closed RTH may lead the compact Trading summary only when the other reasons are normal stale/pending-data waits. Preserve all reasons in the tooltip and preserve recovery, connectivity, worker/storage and other risk fault priority. Verify the GUI neither mutates the controller snapshot nor changes button permissions, strategy, broker commands, subscriptions, freshness thresholds, RTH, ATR, persistence or scheduling. Review timestamp and label behavior with missing data, reconnect, open/closed/unknown RTH, new events and worker failure. Native widget/DPI checks remain separate from headless formatter checks; the root report records what actually ran.
+
+
+## Historical v5.5.1 review boundary
+
+Limit changes to shared Trade history filter semantics, read-only summary/history queries, the worker request/cache identity and GUI result acceptance. A blank history ticker must not inherit the strategy ticker. Summary totals include every matching completed cycle; table filtering occurs before its 500-row limit. Preserve the existing date/outcome/ATR/mode meanings, numeric metric formulas and noncompleted-row exclusions.
+
+A late result must not overwrite data for newer filters. Retain the existing database snapshot cadence and cached summaries rather than adding per-repaint queries or writes. No strategy, broker command, order authorization, schema, risk-ledger or backup-policy change is part of this fix. Preserve the 5.5.0 connection/data presentation and existing trading regressions.
+
+The separate [GUI review](GUI_REVIEW_5_5_1.md) reports additional confirmed discrepancies and review limits. Those fifteen findings were not included in 5.5.1; their targeted corrections belong to 5.6.0 below. The archived [5.5.1 implementation report](legacy/V5_5_1_IMPLEMENTATION_TEST_REPORT.txt) retains the original executed checks.
+
+## v5.6.0 review boundary
+
+Keep each correction tied to a numbered finding in the [5.5.1 GUI review](GUI_REVIEW_5_5_1.md) and the [5.6.0 resolution map](V5_6_0_TARGETED_GUI_FIXES.md). Guard manual input ownership against queued ATR snapshots; add the missing market-SELL confirmation without weakening worker checks; use full owned quantities and nonterminal order status in Reconciliation. Treat ticker identity and each order's lifetime as boundaries for chart data.
+
+Preserve historical cycle identity and saved settings, including valid zero values. Share reporting predicates across rows, totals and CSV, retain the CSV schema, and classify protective exits from execution evidence. Refresh rows after completed-history changes through a revision/invalidation signal, retaining the existing worker and avoiding repeated full-history reads while unchanged. No schema migration, new recurring disk writes, backup policy change, strategy threshold change or broker-order sequencing redesign is authorized by these GUI fixes.
+
+Version and address tests must verify the exact requested six support strings in both About > Info and README. Runtime checks, official pytest/coverage, Ruff/Pyright and Windows/native Qt checks must remain distinct from headless fallback evidence. The root implementation report records the exact final execution results and outstanding gates.

@@ -110,6 +110,8 @@ class BackupValidationTests(unittest.TestCase):
     def test_ordinary_existing_database_open_retains_pre_schema_backup(self):
         with closing(sqlite3.connect(self.path)) as con, con:
             con.execute("ALTER TABLE cycles DROP COLUMN primary_exchange")
+            # Legacy databases predate schema stamping.
+            con.execute("PRAGMA user_version = 0")
         before = _application_rows(self.path)
 
         with _tracked_backups() as calls:
@@ -124,6 +126,8 @@ class BackupValidationTests(unittest.TestCase):
         self.assertEqual(reopened.get_execution("synthetic-fill")["shares"], 7)
 
     def test_failed_ordinary_migration_keeps_its_pre_schema_backup(self):
+        with closing(sqlite3.connect(self.path)) as con, con:
+            con.execute("PRAGMA user_version = 0")
         before = _application_rows(self.path)
         with _tracked_backups() as calls, patch.object(
             BotStorage, "_add_column_if_missing", side_effect=sqlite3.OperationalError("injected migration failure"),
@@ -140,6 +144,7 @@ class BackupValidationTests(unittest.TestCase):
         with closing(sqlite3.connect(self.path)) as con, con:
             con.execute("ALTER TABLE cycles DROP COLUMN primary_exchange")
             con.execute("ALTER TABLE cycles DROP COLUMN protective_sell_enabled")
+            con.execute("PRAGMA user_version = 0")
         before = self.path.read_bytes()
         rows_before = _application_rows(self.path)
         candidate_columns = []

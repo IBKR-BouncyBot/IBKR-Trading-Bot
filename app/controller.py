@@ -220,10 +220,15 @@ class TradingController:
         self._last_snapshot_emit = 0.0
         self._last_snapshot_payload: dict[str, Any] = {}
         self._last_database_refresh_monotonic = 0.0
+        # History reporting follows its own GUI filters, never the armed ticker.
+        self._history_filters: dict[str, str] = {}
+        self._history_rows_loaded = False
+        self._history_rows_revision: Optional[tuple[int, str, int]] = None
         self._snapshot_database_cache: dict[str, Any] = {
             "ticker": "",
             "recent_events": [],
             "history_summary": {},
+            "history_filters": {},
             "historical_unresolved_cycles": [],
             "guard_facts": {},
             "database_currency": {},
@@ -642,8 +647,11 @@ class TradingController:
         self._commands.put((name, queued_payload))
         return ack.wait(max(0.1, float(timeout or 0.0)))
 
-    def refresh_history(self, ticker: str = "") -> None:
-        self._commands.put(("REFRESH_HISTORY", {"ticker": ticker}))
+    def refresh_history(self, ticker: str = "", *, filters: Optional[dict[str, str]] = None) -> None:
+        payload: dict[str, Any] = {"ticker": ticker}
+        if filters is not None:
+            payload["filters"] = dict(filters)
+        self._commands.put(("REFRESH_HISTORY", payload))
 
     def refresh_broker_state(self) -> None:
         """Refresh the visible recovery comparison without submitting or cancelling orders."""
@@ -802,9 +810,11 @@ class TradingController:
             exact_con_id = active.con_id
         return self.storage.get_app_owned_unsold_position(ticker, con_id=exact_con_id)
 
-    def export_history(self, ticker: str = "") -> Path:
+    def export_history(self, ticker: str = "", *, filters: Optional[dict[str, str]] = None) -> Path:
         stamp = utc_now_iso().replace(":", "-")
-        return self.storage.export_history_csv(exports_dir() / f"trade_history_{stamp}.csv", ticker=ticker)
+        return self.storage.export_history_csv(
+            exports_dir() / f"trade_history_{stamp}.csv", ticker=ticker, filters=filters,
+        )
 
     def export_audit_bundle(self, target_dir: Optional[Path] = None) -> Path:
         """Synchronous diagnostic export used by the Reconciliation screen."""
@@ -1213,9 +1223,15 @@ class TradingController:
             recent_events = list(previous.get("recent_events") or [])
             errors["recent_events"] = str(exc)
         try:
-            history_summary = self.storage.history_summary(ticker)
+            history_summary = (
+                self.storage.history_summary(filters=self._history_filters)
+                if self._history_filters else self.storage.history_summary("")
+            )
         except Exception as exc:
-            history_summary = dict(previous.get("history_summary") or {})
+            history_summary = (
+                dict(previous.get("history_summary") or {})
+                if previous.get("history_filters", {}) == self._history_filters else {}
+            )
             errors["history_summary"] = str(exc)
         try:
             database_currency = self.storage.database_contract_currency_info()
@@ -1237,6 +1253,7 @@ class TradingController:
             "ticker": ticker,
             "recent_events": list(recent_events or []),
             "history_summary": dict(history_summary or {}),
+            "history_filters": dict(self._history_filters),
             "historical_unresolved_cycles": historical_unresolved_cycles,
             "guard_facts": guard_facts,
             "database_currency": dict(database_currency or {}),
@@ -1244,6 +1261,24 @@ class TradingController:
             "refreshed_at": utc_now_iso(),
         }
         self._last_database_refresh_monotonic = now
+        revision = self.storage.history_summary_revision
+        if (
+            self._history_rows_loaded
+            and "history_summary" not in errors
+            and revision is not None
+            and revision != self._history_rows_revision
+        ):
+            try:
+                rows = self.storage.history_cycles(filters=self._history_filters)
+                self.signals.history_updated.emit({
+                    "rows": rows, "summary": dict(history_summary or {}),
+                    "filters": dict(self._history_filters),
+                })
+                self._history_rows_revision = revision
+            except Exception as exc:
+                # Retry on the next existing database cadence. Reporting
+                # failure must not halt trading or discard previous rows.
+                errors["history_rows"] = str(exc)
         return self._snapshot_database_cache
 
     def _run_database_cycle(self, *, force: bool = False) -> None:
@@ -1365,6 +1400,7 @@ class TradingController:
             "stale_active_cycle_age_seconds": self._active_cycle_stale_age_seconds(self.active_cycle),
             "stale_active_cycle_threshold_seconds": self.STALE_ACTIVE_CYCLE_SECONDS,
             "history_summary": history_summary,
+            "history_filters": dict(database_cache.get("history_filters") or {}),
             "events": recent_events,
             "database_snapshot": {
                 "refreshed_at": database_cache.get("refreshed_at", ""),
@@ -1868,6 +1904,19 @@ class TradingController:
                 except Exception:
                     pass
 
+    def _queue_database_backup(self, reason: str) -> None:
+        """Defer a validated recovery copy until this order/fill handler returns.
+
+        The authoritative order intent and fill records remain synchronous in
+        SQLite. The backup command still runs on the same controller worker,
+        so copying/validation can delay later work; no background thread or
+        change to broker processing cadence is introduced here.
+        """
+        try:
+            self._commands.put(("CREATE_DATABASE_BACKUP", {"reason": str(reason)}))
+        except Exception:
+            pass
+
     def _drain_commands(self, max_commands: Optional[int] = None) -> None:
         processed = 0
         while max_commands is None or processed < max(0, int(max_commands)):
@@ -1959,7 +2008,25 @@ class TradingController:
         elif name == "STOP_ACTION":
             self._apply_stop_action(payload["action"])
         elif name == "REFRESH_HISTORY":
-            self.signals.history_updated.emit(self.storage.history_cycles(payload.get("ticker", "")))
+            if "filters" in payload or not payload.get("ticker"):
+                self._history_filters = dict(payload.get("filters") or {})
+                # An explicit request remains pending until both reads succeed.
+                # Invalidate even for equal count/timestamp revisions belonging
+                # to different filters, and let cadence retry initial failures.
+                self._history_rows_loaded = True
+                self._history_rows_revision = None
+                rows = self.storage.history_cycles(filters=self._history_filters)
+                summary = self.storage.history_summary(filters=self._history_filters)
+                self._snapshot_database_cache["history_summary"] = dict(summary)
+                self._snapshot_database_cache["history_filters"] = dict(self._history_filters)
+                self._snapshot_database_cache["errors"].pop("history_summary", None)
+                self.signals.history_updated.emit({
+                    "rows": rows, "summary": summary, "filters": dict(self._history_filters),
+                })
+                self._history_rows_loaded = True
+                self._history_rows_revision = self.storage.history_summary_revision
+            else:
+                self.signals.history_updated.emit(self.storage.history_cycles(payload.get("ticker", "")))
         elif name == "REFRESH_BROKER_STATE":
             self._refresh_broker_state_for_recovery()
         elif name == "RESUME_RECOVERY_MONITORING":
@@ -5326,10 +5393,7 @@ class TradingController:
                     updated_cycle,
                     extra={"source": "EXEC_DETAILS_CALLBACK", "execution": dict(event)},
                 )
-                try:
-                    self.storage.backup_database("after_buy_partial_fill")
-                except Exception:
-                    pass
+                self._queue_database_backup("after_buy_partial_fill")
 
     def _supervise_replacement_after_sell_execution(self, cycle: CycleState, execution_ref: str) -> None:
         """Cancel an unsafe replacement after new fills on a different owned ref.
@@ -9776,10 +9840,7 @@ class TradingController:
                 cycle=cycle,
                 recovery_message="All BUY preflight checks are passing; order submission is proceeding.",
             )
-        try:
-            self.storage.backup_database("before_order_submit")
-        except Exception:
-            pass
+        self._queue_database_backup("order_submission")
         order_type = "PROTECTIVE_TRAIL" if role == "PROTECTIVE_SELL" else "TRAIL"
         if rollback_side == "SELL" and isinstance(payload.get("stage3_market_data_guard"), dict):
             guard_message = self._stage3_sell_submission_guard_message(cycle, payload)
@@ -9939,10 +10000,7 @@ class TradingController:
                 cycle=cycle,
                 recovery_message="All BUY preflight checks are passing; order submission is proceeding.",
             )
-        try:
-            self.storage.backup_database("before_order_submit")
-        except Exception:
-            pass
+        self._queue_database_backup("order_submission")
         if rollback_side == "SELL" and isinstance(payload.get("stage3_market_data_guard"), dict):
             guard_message = self._stage3_sell_submission_guard_message(cycle, payload)
             if guard_message:
@@ -10378,10 +10436,7 @@ class TradingController:
                     next_cycle,
                 )
             if first_observed_buy_fill:
-                try:
-                    self.storage.backup_database("after_buy_partial_fill")
-                except Exception:
-                    pass
+                self._queue_database_backup("after_buy_partial_fill")
             self._execute_actions(actions, next_cycle)
             return
 
@@ -10396,10 +10451,7 @@ class TradingController:
             perm_id=polled.perm_id,
             raw={**dict(polled.raw or {}), "cumulative_buy_quantity": cumulative_qty},
         )
-        try:
-            self.storage.backup_database("after_buy_fill")
-        except Exception:
-            pass
+        self._queue_database_backup("after_buy_fill")
         self._log(
             "INFO",
             f"BUY settlement complete: {cumulative_qty} @ {cumulative_avg:.4f}. Moving to minimum-profit stage.",
@@ -10628,10 +10680,7 @@ class TradingController:
         self.storage.upsert_cycle(next_cycle)
         self.storage.add_decision_event(event_type="PROTECTIVE_SELL_FILL", message="Protective SELL filled.", cycle=next_cycle, stage_before=cycle.stage.value, stage_after=next_cycle.stage.value, decision_result="cycle_complete", raw=polled.raw)
         self._start_trade_market_data_capture("PROTECTIVE_SELL_FILL", next_cycle, polled)
-        try:
-            self.storage.backup_database("after_protective_sell_fill")
-        except Exception:
-            pass
+        self._queue_database_backup("after_protective_sell_fill")
         self._log("WARN", f"Protective SELL filled: {polled.filled} @ {polled.avg_fill_price:.4f}. Net P/L {next_cycle.net_pnl:.2f}.", next_cycle)
         self._maybe_start_next_cycle()
         return True
@@ -10705,10 +10754,7 @@ class TradingController:
             raw={**dict(polled.raw or {}), "cumulative_cycle_sell_quantity": quantity},
         )
         self._start_trade_market_data_capture("SELL_FILL", completed, polled)
-        try:
-            self.storage.backup_database("after_sell_fill")
-        except Exception:
-            pass
+        self._queue_database_backup("after_sell_fill")
         self._log(
             "INFO",
             f"Close-before-RTH liquidation completed: {quantity} cumulative shares sold @ {avg_price:.4f}. "
@@ -10891,10 +10937,7 @@ class TradingController:
         }
         if stage3_quote_evidence is not None:
             payload["stage3_market_data_guard"] = dict(stage3_quote_evidence)
-        try:
-            self.storage.backup_database("before_order_submit")
-        except Exception:
-            pass
+        self._queue_database_backup("order_submission")
         self._record_order_intent(cycle, payload, "SELL", "MKT")
         if self._broker_mutation_blocked_by_storage_fault(
             "Close-before-RTH market SELL submission",
@@ -11284,10 +11327,7 @@ class TradingController:
             },
         )
         self._start_trade_market_data_capture("SELL_FILL", next_cycle, polled)
-        try:
-            self.storage.backup_database("after_sell_fill")
-        except Exception:
-            pass
+        self._queue_database_backup("after_sell_fill")
         self._log(
             "INFO",
             f"SELL settlement complete: {aggregate_filled_qty} @ {aggregate_avg_price:.4f}. "

@@ -21,15 +21,15 @@ CURRENT_REPORT = ROOT / "IMPLEMENTATION_TEST_REPORT.txt"
 
 
 def test_v390_release_metadata_is_consistent() -> None:
-    assert 'APP_VERSION = "5.3.0"' in GUI
-    assert "BouncyBot - IBKR Portable Trading Bot v5.3.0" in GUI
-    assert "This is synthetic v5.3.0 paper-trading example data." in GUI
-    assert "**Current release: v5.3.0**" in README
-    assert 'version = "5.3.0"' in PYPROJECT
-    assert '$version = "5.3.0"' in BUILD
-    assert "## v5.3.0" in CHANGELOG
-    assert "current repository version, v5.3.0" in SECURITY
-    assert "current v5.3.0 behavior" in DOCS_INDEX
+    assert 'APP_VERSION = "5.6.0"' in GUI
+    assert "BouncyBot - IBKR Portable Trading Bot v5.6.0" in GUI
+    assert "This is synthetic v5.6.0 paper-trading example data." in GUI
+    assert "**Current release: v5.6.0**" in README
+    assert 'version = "5.6.0"' in PYPROJECT
+    assert '$version = "5.6.0"' in BUILD
+    assert "## v5.6.0" in CHANGELOG
+    assert "current repository version, v5.6.0" in SECURITY
+    assert "current v5.6.0 behavior" in DOCS_INDEX
 
 
 def test_v390_release_note_is_current_and_v380_material_is_archived() -> None:
@@ -38,7 +38,7 @@ def test_v390_release_note_is_current_and_v380_material_is_archived() -> None:
     assert ARCHIVED_V380_REPORT.is_file()
     assert not (ROOT / "docs" / ARCHIVED_V380_NOTE.name).exists()
     assert CURRENT_REPORT.is_file()
-    assert "BouncyBot v5.3.0" in CURRENT_REPORT.read_text(encoding="utf-8")
+    assert "BouncyBot v5.6.0" in CURRENT_REPORT.read_text(encoding="utf-8")
     assert CURRENT_NOTE.name in README
     assert CURRENT_NOTE.name in DOCS_INDEX
     assert ARCHIVED_V380_NOTE.name in README

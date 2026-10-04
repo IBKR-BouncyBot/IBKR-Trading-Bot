@@ -4,11 +4,11 @@
   <img src="Images/BouncyBot_logo_git.png" alt="BouncyBot logo" width="640" />
 </p>
 
-**Current release: v5.3.0**
+**Current release: v5.6.0**
 
-Version 5.3.0 updates the GUI: the empty ticker display reads **N/A**, the market graph sits inside the Price data monitor below Strategy progress and above the five metric boxes in every view mode, locking hides the command bar, the flowchart uses compact equal-height cards, and Reconciliation opens from the right of the tab row.
+Version 5.6.0 corrects the fifteen GUI findings from the previous review: manual/ATR input handling, reconciliation displays and confirmation, ticker and graph identity, historical flowcharts, filtered CSV export and audit details. It retains complete-database history totals when all filters are clear and updates the support addresses in About > Info.
 
-Trading, storage, timers and dependencies retain their 5.2.0 behavior. See the [release and upgrade notes](docs/V5_3_0_GUI_LAYOUT.md) and [implementation and test report](IMPLEMENTATION_TEST_REPORT.txt) for the changes, test results and remaining platform checks.
+The correction is limited to history reporting and its read-only data path; trading, market-data subscriptions, freshness safeguards and database writes are unchanged. See the [release and upgrade notes](docs/V5_6_0_TARGETED_GUI_FIXES.md) and [implementation and test report](IMPLEMENTATION_TEST_REPORT.txt) for the changes, test results and remaining platform checks.
 
 ![Simple-view](Images/Trading-Simple-view.png)
 
@@ -148,8 +148,6 @@ The application records fills, commissions received from IBKR, gross and net P/L
 
 ## Screenshots
 
-These screenshots show earlier layouts. The current 5.3.0 arrangement is described in [Using the application](#using-the-application) and the [GUI release note](docs/V5_3_0_GUI_LAYOUT.md).
-
 <p float="left">
   <img src="Images/Trading-Simple-view.png" width="30%" />
   <img src="Images/Trading-Advanced-view-1.png" width="30%" />
@@ -190,7 +188,7 @@ A validated ready ATR estimate is checkpointed in the SQLite `app_settings` tabl
 
 ATR continues updating in memory throughout RTH. Checkpoints are saved only in the **last five minutes of the broker-reported RTH window** (at most once per minute), with a final session-close flush and an **orderly app-close save**. The five minutes control saving, not the ATR lookback. There are no routine intraday checkpoint writes. Transient RTH-status loss and midday identity/configuration edits do not force a save. After a crash before the closing window, the last previously saved valid estimate is reused, not necessarily today's latest intraday value; first use still warms up if no valid checkpoint exists. Failed final saves retry at a bounded one-minute interval. Existing v4.0.0 checkpoints remain compatible.
 
-The seed must be no more than seven calendar days old and must contain finite positive, internally consistent values observed inside its recorded RTH window. Weekends and short holidays can therefore reuse the most recent observed session; the application does not guess missing exchange sessions. First use, an expired/corrupt/mismatched checkpoint, or a changed ATR period/bar duration without a matching checkpoint retains normal warmup. A database from before ATR checkpoint support also requires normal warmup until its first valid estimate is saved. A same-session application/watchdog restart can reuse a valid checkpoint. Current market-data, opening-delay, RTH, gap, spread, two-observation SELL, and broker-reconciliation guards still apply. A saved estimate is not evidence that today's volatility is unchanged.
+The seed must be no more than 24 elapsed UTC hours old (the exact 24-hour boundary is accepted) and must contain finite positive, internally consistent values observed inside its recorded RTH window. A next-session or same-session estimate is eligible only within that age limit; weekend and longer holiday gaps require normal warmup. The application does not guess exchange holiday calendars. First use, an expired/corrupt/mismatched checkpoint, or a changed ATR period/bar duration without a matching checkpoint retains normal warmup. A database from before ATR checkpoint support also requires normal warmup until its first valid estimate is saved. A same-session application/watchdog restart can reuse a valid checkpoint. Current market-data, opening-delay, RTH, gap, spread, two-observation SELL, and broker-reconciliation guards still apply. A saved estimate is not evidence that today's volatility is unchanged.
 
 ### Gateway connectivity and quote freshness
 
@@ -205,7 +203,7 @@ A running Gateway can retain the local socket while its Internet/server connecti
 - **1101:** reconcile app-owned orders/executions and create new market-data subscriptions because the old requests were lost;
 - **1102:** reconcile app-owned orders/executions, retain the existing subscription handle, but still require a post-recovery ticker event before prices become strategy-usable again;
 - **10197:** treat a competing IBKR market-data session as a quote-delivery outage, invalidate cached values, and wait for a new streaming event without assuming that the order/API channel is disconnected;
-- **2103/2104:** invalidate quote freshness when a market-data farm disconnects or reports restored, then require the next actual ticker event before showing the feed as live again;
+- **2103/2104:** invalidate quote freshness when a market-data farm disconnects or reports restored, then require the next actual ticker event before treating the feed as fresh and usable again;
 - **1300:** treat the API socket-port reset as unavailable and require a normal local reconnect.
 
 Freshness is based on actual `ib_async` `pendingTickersEvent` deliveries and, within each delivery, on the raw price field that actually updated. Bid, ask, and Last have independent update/change sequences and callback times. Re-reading a `Ticker` object whose fields remain populated does not refresh their ages. A bid-size, ask-size, Last-size, or timestamp event cannot make an unchanged price field fresh, while a same-price bid/ask/trade price tick remains a valid field update. The selected `marketPrice` is traced back to its Last, quote, mark, or close basis, so an unchanged cached Last exposed when one quote side disappears cannot advance the strategy or enter ATR. Quote age is re-evaluated on every GUI snapshot, so a formerly green indicator changes to stale even when the worker temporarily performs no new quote read. Fields may remain visible for diagnosis, but cached, invalidated, or stale values are not tradeable. If the supported adapter cannot register ticker events or field-level evidence, the affected trading path fails closed.
@@ -413,21 +411,25 @@ The top lock button prevents accidental editing. When locked, editable configura
 
 The ten equal-width status boxes and compact lock control sit above the five-stage ribbon. Both rows remain visible while scrolling or changing tabs. Long status text wraps within its box. The top Ticker box shows **N/A** when no ticker name is available; populated labels retain their identity details.
 
+**Connection** reports the local API and upstream IBKR links, independently of quote freshness. With both links available and reconciliation complete, it stays **Connected** while data is stale or awaits an update. **Data** separates the subscription type from freshness: **Live / Stale** means the live subscription has an old last actual update, not that its price is currently tradeable. A known old update has the same stale label whether or not a recovery/farm notification also requires another event; the tooltip retains that waiting reason. Missing update evidence remains a waiting/unknown condition. Connection faults, reconciliation and worker/storage warnings retain their distinct states.
+
 Live strategy, Strategy flowchart and Trade history stay on the left of the tab row. The **Reconciliation** button on the right opens that page and indicates when it is selected. It remains reachable while locked; keyboard users can focus the button with Tab and activate it with Space. Ctrl+Tab cycles the three visible left-side tabs and skips the hidden Reconciliation tab header.
 
-The **Trading** status is the concise source for current BUY/SELL eligibility. Hover it to see all active blockers rather than only the first one. Its top-right header value is **current displayed price / minimum-profit trigger**; reaching the trigger does not imply that quote or order-safety gates have passed. The **Position** value at the top-right is the cost of app-owned shares still held, including allocated recorded BUY commission, not market value or other account holdings. Both top-right values use the same font as their top-left titles; the main status and share quantity remain below the header. When disconnected and no account is known, the Account box shows N/A; a known saved/cycle account remains visible.
+The **Trading** status is the concise source for current BUY/SELL eligibility. Hover it to see all active blockers rather than only the first one. When closed RTH is accompanied only by stale/pending market-data blockers, the compact summary leads with **RTH closed**; the data blockers remain in the tooltip. Other faults retain their priority. Its top-right header value is **current displayed price / minimum-profit trigger**; reaching the trigger does not imply that quote or order-safety gates have passed. The **Position** value at the top-right is the cost of app-owned shares still held, including allocated recorded BUY commission, not market value or other account holdings. Both top-right values use the same font as their top-left titles; the main status and share quantity remain below the header. When disconnected and no account is known, the Account box shows N/A; a known saved/cycle account remains visible.
 
 In every view mode, **Price data monitor** includes the **Market and strategy graph** directly below **Strategy progress** and above the five metric boxes. The separate graph area and the “Rolling graph buffer…” footer are removed. In Advanced and Debug, the connection/strategy configuration row comes first, followed by Price data monitor directly above **Market and strategy state**. Simple hides the configuration row, leaving Price data monitor as the first visible panel. Graph history and updates are unchanged.
 
-The Price data monitor combines Data mode with streaming-update age and combines RTH status with UTC/system time. **Show stage details** expands Current stage and Why not moving? beneath the market metrics; these diagnostics continue updating while collapsed. The top Stage status and ribbon show the current stage.
+The Price data monitor combines Data mode with streaming-update age and combines RTH status with UTC/system time. **Last market update** is the recorded receipt time of an actual market-data event; it is never substituted with the time the app reread a cached snapshot. **Cached snapshot checked** separately describes that read age. A stale or invalidated displayed price is identified as cached, and unavailable update evidence remains unavailable. **Show stage details** expands Current stage and Why not moving? beneath the market metrics; these diagnostics continue updating while collapsed. The top Stage status and ribbon show the current stage.
 
 **Total buy cost** in Order and position state and **Invested** in Trade history both show actual cumulative BUY quantity times average BUY fill plus recorded BUY commission. They remain the full entry cost after a SELL; the top Position cost falls as shares are sold. Unknown fill facts are not replaced by a budget, and pending commissions can change the displayed cost. Long OrderRefs wrap as exact copyable plain text, using the same card background and proportional value font in light and dark modes, with internal scrolling for unusually long references.
 
-The Strategy flowchart uses one text-fitting height for all five cards without shrinking their fonts. Narrower widths or longer text can increase that common height. The separate Strategy input map keeps its sixteen values and four lanes in a panel with a 420-pixel minimum height.
+The Strategy flowchart uses one text-fitting height for all five cards without shrinking their fonts. Narrower widths or longer text can increase that common height. A selected historical cycle is retained by cycle ID when history refreshes and uses that cycle's saved settings. The separate Strategy input map keeps its sixteen values and four lanes in a panel with a 420-pixel minimum height.
 
 Expanding raw API fields fills the available width: content-sized Field columns alternate with stretching Value columns.
 
-The Completed trade summary has three columns and four rows; **Average net P/L** follows **Best net P/L** and **Worst net P/L**. It is total realized net P/L divided by completed cycles, including losses and commissions. History keeps its horizontal scrollbar at the table viewport bottom even with many rows. The Invested column sorts numerically; CSV export retains its existing schema and does not gain a derived GUI-only column.
+The Completed trade summary uses the same ticker, date, outcome, ATR and Paper/live filters as the history table. A blank ticker includes all tickers; clearing all filters includes every completed cycle in the portable database. The current strategy ticker does not restrict history totals. The table displays the latest 500 matching rows, while the summary includes all matching completed cycles. Filter changes refresh both views, and an earlier request cannot replace results for newer filters.
+
+The Completed trade summary has three columns and four rows; **Average net P/L** follows **Best net P/L** and **Worst net P/L**. It is total realized net P/L divided by completed cycles, including losses and commissions. History keeps its horizontal scrollbar at the table viewport bottom even with many rows. The Invested column sorts numerically. **Export CSV** uses the same selected filters and exports all matching completed cycles without the display limit; its column schema is retained. Changes to completed-history records refresh the table and historical flowchart choices along with the summary, without repeatedly reading full history when its revision is unchanged.
 
 In Cycle audit Timeline, each plot has an independent cursor. Hovering a plot shows its local time/price crosshair and record tooltip without drawing a cursor on the other graph. Moving to the other plot clears the previous overlay; leaving the plots or moving into the gap clears all hover guides. The single-graph Summary and other charts retain independent hover behavior; existing time-axis zoom and scrolling remain. Both lower Timeline tables retain equal height.
 
@@ -435,7 +437,7 @@ Orders and Executions use the full available width with OrderRef absorbing spare
 
 Opening the audit dialog starts one read-only background worker to prepare capture data and decision display rows. Timeline and Market capture share the prepared data; Decision cells and wrapped row heights are added in bounded GUI batches. Closing the dialog cancels the work and discards late results. Other record tabs remain lazy. Timeline shows only actual changes between two recorded stages; all decision events remain available in Decisions.
 
-The Cycle audit Summary details table refits when width, font/style or content changes. If wrapped rows exceed its height cap, a vertical scrollbar keeps all details accessible. Compact table sizing also reserves space for horizontal scrollbars where enabled.
+The Cycle audit Summary details table refits when width, font/style or content changes. If wrapped rows exceed its height cap, a vertical scrollbar keeps all details accessible. Compact table sizing also reserves space for horizontal scrollbars where enabled. Zero-valued saved settings remain visible, and available order-type/timing fields supply the order details. Timeline's aggregate completion markers use the weighted average fill price; individual executions retain their actual recorded prices.
 
 **Simple** hides the connection and strategy configuration panels, **Budget and P/L** and **Recovery / audit log**. **Advanced** and **Debug** show those panels, with the audit log at full dashboard width; Debug also expands raw API fields. Reconciliation and audit recording remain available in every mode. The five workflow buttons and view-mode selector are visible when unlocked.
 
@@ -460,7 +462,7 @@ The application writes these paths beside the project or packaged executable:
 | Path | Contents |
 |---|---|
 | `bot_state.sqlite` | Settings, cycle state, orders, executions, decisions, broker events, and audit events |
-| `backups/` | Full SQLite backups, including pre-schema startup copies. Normal event-triggered backups are restore-validated and then rotate the folder to the newest 50 when deletion succeeds |
+| `backups/` | Full SQLite backups, including pre-migration copies. A new fully restore-validated backup rotates the folder to the newest 20 when deletion succeeds; startup alone does not prune |
 | `exports/` | User-requested history and audit exports |
 | `logs/` | Reserved generated-data directory; the current persistent readable audit log is under `debug_reports/` |
 | `debug_reports/` | Human-readable audit log and latest state report; the periodic latest-state file refreshes at most once per 60 seconds unless forced |
@@ -473,7 +475,9 @@ All app-generated timestamps are UTC. The GUI may also show system-local time fo
 
 Before an accepted app exit or controlled Windows shutdown, `connection`, `strategy`, the current cycle, and `last_resume_checkpoint` metadata are committed together. The checkpoint also writes an audit event and requests a restore-validated online backup. Shutdown checkpointing applies safe editable fields without re-evaluating the last quote or issuing a broker action. It does not persist current-session ATR observations or an incomplete market-data capture.
 
-Full backups are requested by lifecycle and trading events, not by a periodic full-backup timer. Restore validation makes a consistent temporary SQLite copy, exercises additive migrations on it, and validates it. Since 5.2.0, only that disposable copy skips its redundant pre-schema backup. Opening an existing real database still attempts a pre-schema backup; that startup path does not run the restore-validation or rotation steps itself. The manual-handling index is created when missing and does not change existing table rows. See [database compatibility and backup details](docs/DATABASE_SCHEMA.md).
+Full backups are requested by lifecycle and trading events, not by a periodic full-backup timer. Order/fill paths enqueue backup requests; durable trading-state writes stay synchronous. The same controller worker later copies and fully validates the database, so the backup can still delay that worker and is a snapshot taken after the request. Restore validation retains integrity, required schema, foreign-key and disposable migration checks.
+
+On first opening an unstamped or older database, the app attempts a pre-migration backup and records `PRAGMA user_version = 1` after schema work succeeds. Later openings with that current stamp skip the redundant startup copy while retaining idempotent schema checks. An unreadable or future schema stamp is rejected before migration, backup or database writes. Startup copies do not trigger retention pruning. See [database compatibility and backup details](docs/DATABASE_SCHEMA.md).
 
 ## Repository safety
 
@@ -531,7 +535,7 @@ dist\IBKRTradingBot\IBKRTradingBot.exe
 It also creates a versioned release folder and ZIP:
 
 ```text
-release\IBKRTradingBot_5.3.0_Windows\
+release\IBKRTradingBot_5.6.0_Windows\
   BouncyBot.lnk
   GUI\IBKRTradingBot.exe
   docs\
@@ -541,7 +545,7 @@ release\IBKRTradingBot_5.3.0_Windows\
   SECURITY.md
   QUICK_START.txt
 
-release\IBKRTradingBot_5.3.0_Windows.zip
+release\IBKRTradingBot_5.6.0_Windows.zip
 release\SHA256SUMS.txt
 ```
 
@@ -618,7 +622,11 @@ Superseded release-specific documents are indexed under [docs/legacy](docs/legac
 
 ## Release history
 
-- [v5.3.0 release note](docs/V5_3_0_GUI_LAYOUT.md) - GUI layout, lock-bar visibility, compact flowchart cards and release files.
+- [v5.6.0 release note](docs/V5_6_0_TARGETED_GUI_FIXES.md) - the fifteen targeted GUI corrections, support-address updates and verification boundaries.
+- [Archived v5.5.1 release note](docs/legacy/V5_5_1_HISTORY_SUMMARY.md) - matching Trade history filters and complete-database summary totals.
+- [Archived v5.5.0 release note](docs/legacy/V5_5_0_GUI_STATUS.md) - consistent connection, data and trading status; actual market-update timestamps.
+- [Archived v5.4.0 release note](docs/legacy/V5_4_0_RELIABILITY.md) - deferred backups, schema-aware startup copies, validated retention and 24-hour ATR seed age.
+- [Archived v5.3.0 release note](docs/legacy/V5_3_0_GUI_LAYOUT.md) - GUI layout, lock-bar visibility, compact flowchart cards and release files.
 - [Archived v5.2.0 release note](docs/legacy/V5_2_0_STORAGE_PERFORMANCE.md) - targeted manual-handling index and removal of the redundant temporary restore-validation backup.
 - [Archived v5.1.0 release note](docs/legacy/V5_1_0_TARGETED_TRADING_FIXES.md) - targeted fixes for all eleven reviewed defect groups, regression coverage, database compatibility and lock-button sizing.
 - [Archived v5.0.0 release note](docs/legacy/V5_0_0_TRADING_SAFETY_AND_PYTHON314.md) - the preceding trading/recovery safeguards and standard CPython 3.14 migration.
@@ -647,9 +655,11 @@ Superseded release-specific documents are indexed under [docs/legacy](docs/legac
 
 - [IBKR referral (get up to $1000 in IBKR stock)](https://ibkr.com/referral/gerrit585)
 - Cardano / ADA: `addr1q85w2v474ywzx868s69pghygek3vrhxm69e7c6ysuf28qhv8kmj5wd059grxl82f8h5mtyzl87cvqj8ldv2e0las7tnsdej9ax`
-- Midnight / NIGHT: `addr1qyre4dsc3xdgcr8w3lmfdy038f9w0statt7q7d8urfvgyh58kmj5wd059grxl82f8h5mtyzl87cvqj8ldv2e0las7tnsu66x8a`
-- Ethereum / ETH: `0xe1283022e1166df70092ff3094a1d2bd79102c3a`
-- Solana / SOL: `78EG5myV7Xjx4iNWt7mnn3BHULMNhLchFAcggnyeiiyb`
+- Midnight / NIGHT: `addr1qyrzra5qhupeleruc3jezmswkfad32h9qz5lxa88ry2egm8686pww4mw030q7jrf05mjc20ez9ya0nyvuvjvs8v36tlsnhr5nd`
+- Ethereum / ETH: `0x78bDC85a97e2d87812Cc37e49936102d897B32d1`
+- Solana / SOL: `3S69hjpdnkHgsdeBBQwHY9oLjHuqvw8rLzuAC2jc7CUY`
+- XRP: `rJfnMVkbCfVUsyyTxWaeE6b3LVFgqasitw`
+- Zcash / ZEC: `t1aDkPkv8n8jJiWFtueANZS2b89x1BsHmFq`
 
 ## License
 

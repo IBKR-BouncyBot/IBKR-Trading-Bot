@@ -74,6 +74,8 @@ The fixed five-button command bar is the dashboard workflow control surface. The
 - reconcile stored state with broker facts;
 - initiate backups, reports, and market-data captures.
 
+Order/fill paths defer their full database backups through the existing controller command queue. Immediate durable order/fill writes and broker-side sequencing remain in those paths. A queued backup runs on this same worker after the current operation, retains full restore validation, and can still block worker progress while it runs. No backup thread is added.
+
 The worker uses one serialized thread but schedules responsibilities from independent monotonic deadlines:
 
 | Responsibility | Default cadence | Behavior |
@@ -144,7 +146,7 @@ SQLite connections are short-lived and scoped to each storage operation. Schema 
 
 The existing `app_settings` key/value table also stores the portable database contract-currency claim. A new database can change its draft USD/EUR selection before the first cycle. The first persisted cycle makes the single-currency boundary final. Existing USD databases infer the claim from historical cycles, while mixed or conflicting currency evidence fails closed because the application does not convert P/L, risk totals, budgets, reinvestment, or commissions between currencies.
 
-The controller’s database snapshot cadence reduces repeated read-only connections used for recent events, history totals, and top-bar guard display. This cache is diagnostic only and can be up to one cadence old. Trading-state writes and order authorization checks are not deferred to it.
+The controller’s database snapshot cadence reduces repeated read-only connections used for recent events, history totals, and top-bar guard display. This cache is diagnostic only and can be up to one cadence old. Trade history summary filters are independent of the strategy ticker and participate in the cached result identity. History row requests apply the same filters before the 500-row display limit; completed-summary totals are not capped at 500. The GUI rejects results for superseded filters. Trading-state writes and order authorization checks are not deferred to it.
 
 A SQLite exception activates an in-memory storage-fault boundary. Event reporting falls back to a plain file outside SQLite, all broker mutations and strategy advancement are blocked, and only IBKR transport servicing plus GUI health snapshots continue. A short independent write transaction is rolled back after proving main-database write access; successful recovery requests process replacement rather than resuming inside potentially compromised storage state.
 

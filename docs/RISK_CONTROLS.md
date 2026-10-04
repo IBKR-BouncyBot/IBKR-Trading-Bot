@@ -2,6 +2,8 @@
 
 Risk controls are layered. Some are always part of safe order submission, some are enabled by default, and some are optional hard limits. The GUI’s **Trading** status summarizes current BUY/SELL eligibility and provides a tooltip with the complete blocker list.
 
+When the only blockers are closed RTH and stale/pending market data, the GUI leads with **RTH closed** while retaining every blocker in the tooltip. This is presentation order only: it does not bypass data guards or weaken other faults. A **Connected** link or **Live** subscription label alone does not establish quote freshness or permission to trade.
+
 These controls reduce specific risks; none guarantees safety or profitability.
 
 ## Optional Stage-3/Stage-4 liquidation before RTH close
@@ -216,7 +218,7 @@ Stop, exit, and Reconciliation derive market-close quantity from the persisted a
 
 A validated ready ATR estimate is checkpointed in the existing SQLite `app_settings` table for the exact confirmed contract, currency, venue, trading/data profile, ATR period, and bar duration. At a verified open RTH session, that estimate can supply the starting ATR/ATR% while current-session bars warm up. It does not insert synthetic observations or make a quote fresh. The first ready current-session calculation replaces it. The GUI identifies the saved session and today's observed bar count.
 
-The seed must be no more than seven calendar days old and must contain finite positive, internally consistent values observed inside its recorded RTH window. Weekends and short holidays can therefore reuse the most recent observed session; the application does not guess missing exchange sessions. First use, an expired/corrupt/mismatched checkpoint, or a changed ATR period/bar duration without a matching checkpoint retains normal warmup. A database from before checkpoint support also needs normal warmup until a valid estimate has been saved. A same-session application/watchdog restart can also reuse a valid checkpoint. Current market-data, opening-delay, RTH, gap, spread, two-observation SELL, and broker-reconciliation guards still apply. A saved estimate is not evidence that today's volatility is unchanged.
+The seed must be no more than 24 elapsed UTC hours old (the exact 24-hour boundary is accepted) and must contain finite positive, internally consistent values observed inside its recorded RTH window. A next-session or same-session estimate is eligible only within that age limit; weekend and longer holiday gaps require normal warmup. The application does not guess exchange holiday calendars. First use, an expired/corrupt/mismatched checkpoint, or a changed ATR period/bar duration without a matching checkpoint retains normal warmup. A database from before checkpoint support also needs normal warmup until a valid estimate has been saved. A same-session application/watchdog restart can also reuse a valid checkpoint. Current market-data, opening-delay, RTH, gap, spread, two-observation SELL, and broker-reconciliation guards still apply. A saved estimate is not evidence that today's volatility is unchanged.
 
 ## Risk and Timing edits before the next order
 
@@ -239,7 +241,7 @@ The weekday RTH fallback and timezone substitution have been removed. Missing au
 
 ## v5.1.0 entry and accounting boundaries
 
-Production quote age is the adapter's measured age plus elapsed monotonic observation time. Rounded audit timestamps and wall-clock corrections do not make a price fresher or prematurely expire it. Enabled time-sensitive BUY checks are repeated after backup and intent persistence, immediately before transmission. If they fail, the untransmitted intent is recorded as failed and the entry state is restored.
+Production quote age is the adapter's measured age plus elapsed monotonic observation time. Rounded audit timestamps and wall-clock corrections do not make a price fresher or prematurely expire it. Enabled time-sensitive BUY checks are repeated after intent persistence, immediately before transmission. If they fail, the untransmitted intent is recorded as failed and the entry state is restored.
 
 Changing ATR period or interval invalidates readiness before edit-triggered evaluation. A warmup-guarded entry requires readiness for the active period/bar duration. Valid unchanged saved estimates retain their existing rules.
 

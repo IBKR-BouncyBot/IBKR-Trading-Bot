@@ -1,6 +1,6 @@
 # Configuration reference
 
-This document describes the persisted connection and strategy settings in v5.3.0. Values shown as defaults are the dataclass defaults used for a new configuration. Saved SQLite settings override them after the first run.
+This document describes the persisted connection and strategy settings in v5.6.0. Values shown as defaults are the dataclass defaults used for a new configuration. Saved SQLite settings override them after the first run.
 
 ## Connection settings
 
@@ -64,6 +64,8 @@ When a marketable BUY reports a positive partial fill, BouncyBot uses a fixed ru
 
 ATR is calculated from actual ticker-update events observed by this running application, but only when the raw Last, bid/ask quote, mark, or close basis behind the selected price updated in that event. Repeated reads and an unchanged cached Last surfaced by another field, size, or timestamp event are excluded. Usable events are collected only while the regular session is open, bucketed by the broker callback arrival time into fixed-time OHLC bars, and converted to ATR%. Observation/bar collection continues when **Use ATR adaptive percentages** is off; disabling adaptation only prevents calculated values from changing strategy percentages. The buffer is in memory, resets when the process restarts, and is not a separate broker historical-bar feed.
 
+Turning an adaptation option off returns its percentage input to manual control. A queued snapshot calculated under the previous selection must not overwrite or autosave over that manual value. Snapshot-driven percentage updates respect the current master and per-field adaptation selections.
+
 | Setting | Default | Meaning |
 |---|---:|---|
 | Use ATR adaptive percentages | on | Enables ATR-derived strategy percentages when enough data exists. Turning it off does not stop current-session RTH observation/bar collection. |
@@ -96,7 +98,7 @@ If the warmup blocker is off, the strategy can use the currently configured perc
 
 A validated ready ATR estimate is checkpointed in the existing SQLite `app_settings` table for the exact confirmed contract, currency, venue, trading/data profile, ATR period, and bar duration. At a verified open RTH session, that estimate can supply the starting ATR/ATR% while current-session bars warm up. It does not insert synthetic observations or make a quote fresh. The first ready current-session calculation replaces it. The GUI identifies the saved session and today's observed bar count.
 
-The seed must be no more than seven calendar days old and must contain finite positive, internally consistent values observed inside its recorded RTH window. Weekends and short holidays can therefore reuse the most recent observed session; the application does not guess missing exchange sessions. First use, an expired/corrupt/mismatched checkpoint, or a changed ATR period/bar duration without a matching checkpoint retains normal warmup. A database from before checkpoint support also needs normal warmup until a valid estimate has been saved. A same-session application/watchdog restart can also reuse a valid checkpoint. Current market-data, opening-delay, RTH, gap, spread, two-observation SELL, and broker-reconciliation guards still apply. A saved estimate is not evidence that today's volatility is unchanged.
+The seed must be no more than 24 elapsed UTC hours old (the exact 24-hour boundary is accepted) and must contain finite positive, internally consistent values observed inside its recorded RTH window. A next-session or same-session estimate is eligible only within that age limit; weekend and longer holiday gaps require normal warmup. The application does not guess exchange holiday calendars. First use, an expired/corrupt/mismatched checkpoint, or a changed ATR period/bar duration without a matching checkpoint retains normal warmup. A database from before checkpoint support also needs normal warmup until a valid estimate has been saved. A same-session application/watchdog restart can also reuse a valid checkpoint. Current market-data, opening-delay, RTH, gap, spread, two-observation SELL, and broker-reconciliation guards still apply. A saved estimate is not evidence that today's volatility is unchanged.
 
 ## Protective SELL
 
@@ -106,6 +108,8 @@ The seed must be no more than seven calendar days old and must contain finite po
 | Protective SELL trailing stop | `3.00%` | Manual trail unless protective ATR adaptation is enabled and ready. |
 
 The protective order is a loss-limiting mechanism, not a guaranteed stop. While a partially filled BUY remains nonterminal, the controller supervises its remainder before placing protection. If the normal profit exit becomes eligible, the controller first checks replacement feasibility, then cancels the protective SELL and waits until it is no longer working before revalidating and submitting the final SELL.
+
+For an inactive cycle, the manual protective percentage is available as a next-cycle draft when protective SELL is enabled, its ATR adaptation is off and the GUI is unlocked. This does not modify the inactive cycle or its broker orders. Existing active-cycle and order-edit permissions still apply.
 
 ## Slippage planning
 
@@ -168,8 +172,8 @@ The hard-risk master is off by default. It controls the loss, cycle-count, minim
 | Setting | Default | Scope |
 |---|---:|---|
 | Enable hard risk limits | off | Master for the numeric loss/count/minimum-price/gap checks below; Maximum spread is independent. |
-| Maximum daily loss for ticker | `0` | Completed application net P/L for the selected ticker/conId, using the UTC date of each cycle’s `updated_at` field. |
-| Maximum total daily loss | `0` | Completed application net P/L across stored tickers, using the UTC date of each cycle’s `updated_at` field. |
+| Maximum daily loss for ticker | `0` | Completed application net P/L for the selected ticker/conId, using each cycle’s stable UTC `completed_at` date (one-time legacy backfill from `updated_at`). |
+| Maximum total daily loss | `0` | Completed application net P/L across stored tickers, using each cycle’s stable UTC `completed_at` date (one-time legacy backfill from `updated_at`). |
 | Maximum completed cycles | `0` | Total completed-cycle cap for the selected ticker/conId. The persisted field retains the historical name `max_cycles_per_ticker_day`, but runtime behavior is not per-day. |
 | Maximum consecutive losses | `0` | Consecutive completed losing application cycles for the selected ticker/conId; storage examines up to the latest 100 completed cycles. |
 | Maximum spread | `1.00%` | Fixed user-configured bid/ask spread limit at BUY preflight and at the normal Stage-3 final-SELL/Stage-3 close-before-RTH quote gate. Live bid/ask values are compared with it but never rewrite it. It changes only through explicit user edits or loading the persisted setting. Set zero to disable the percentage ceiling; Stage-3 quote completeness and per-side freshness remain required. |

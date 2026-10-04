@@ -32,7 +32,7 @@ Simple mode hides the explanatory paragraph above the flowchart. It keeps the da
 
 The **Flowchart data** selector is available in Simple, Advanced, and Debug GUI modes. It can display either the current strategy/active cycle or a completed cycle supplied by Trade history.
 
-Selecting a completed cycle is stable while a live strategy is running: incoming live snapshots update the cached current-cycle data but do not force the selector back to the active cycle. Selecting **Current strategy / active cycle** later displays the latest cached live state.
+Selecting a completed cycle is stable while a live strategy is running: incoming live snapshots update the cached current-cycle data but do not force the selector back to the active cycle. The selection is retained by cycle ID, so inserted or reordered history rows cannot silently select a different trade. Selecting **Current strategy / active cycle** later displays the latest cached live state.
 
 ## Current versus projected values
 
@@ -61,6 +61,6 @@ Color and active-card emphasis are operator aids. The authoritative eligibility 
 
 ## Audit limitation
 
-The flowchart describes current strategy logic. For a completed cycle, use Trade history and the cycle audit dialog to inspect actual stored inputs, orders, executions, events, and timeline. Later draft edits do not rewrite the completed cycle snapshot. Historical flowchart values use the saved fields where present; a missing older field can fall back to the current strategy setting, so the flowchart is not a substitute for the stored audit evidence.
+The flowchart describes strategy logic. For a completed cycle, use Trade history and the cycle audit dialog to inspect actual stored inputs, orders, executions, events, and timeline. Historical flowcharts use the selected cycle's saved settings, including ATR, repetition, reinvestment and guards where persisted. Later draft edits do not rewrite its snapshot or substitute current settings for its historical configuration. Missing older fields use fixed defaults and are disclosed in the flowchart explanation and tooltip. Some values, including `auto_repeat`, `sec_type` and `tif`, were not persisted with historical cycles. Those defaults cannot establish what the operator selected at that time, so the flowchart is not a substitute for the stored audit evidence.
 
 The audit dialog prepares decision rows and capture data in one background worker. Its Timeline shows only actual changes between recorded stages; unchanged-stage decisions remain available in Decision events. Verified fill-capture windows can show same-instrument context after a SELL even when Auto-repeat has moved to the next cycle.

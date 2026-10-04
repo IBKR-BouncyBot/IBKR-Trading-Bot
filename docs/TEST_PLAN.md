@@ -34,6 +34,15 @@ For Gateway paper/live and TWS paper/live as available:
 - enter an invalid explicit live account and verify BUY preflight blocks;
 - enter a reported managed account and verify explicit routing is accepted.
 
+### Connection, data and trading presentation
+
+- With both broker links ready and reconciliation complete, compare a known old update before a farm-restored notification against an equally old update after that notification. Both Connection boxes must stay **Connected**, and both Data boxes must report the applicable subscription type and **Stale** age. The pending-event reason must remain available in the first tooltip.
+- With only closed-RTH and stale/pending data blockers, verify **BUY blocked: RTH closed** or **SELL blocked: RTH closed** and the complete tooltip. Add another risk/recovery/connectivity/worker/storage fault and verify its warning remains prominent.
+- Verify delayed and frozen modes remain identified; missing, invalid or future actual-update timestamps must not become a fresh display through a cached read.
+- Verify **Last market update** remains the actual event receipt time while **Cached snapshot checked** advances on reads. A new actual update should advance the former; rereading populated cached fields must not. Check stale/pending cached-price wording and unavailable-price wording separately.
+- Observe the next valid update during an active session and verify the Data presentation recovers only with the existing controller evidence. Check that GUI rendering itself sends no command and does not change snapshot data or button permissions.
+- Check Simple, Advanced and Debug, light/dark themes and 100/125/150/200% Windows scaling. Confirm ribbon text wraps, tooltips remain available and long actual-update/source text remains readable.
+
 ## 4. Contract search and qualification
 
 - Search and select one exact USD ordinary stock result with a positive conId, such as a Nasdaq listing.
@@ -91,6 +100,8 @@ With ATR mode and warmup blocking enabled:
 - verify a later ATR-derived drop can initiate entry.
 
 Repeat with warmup blocking disabled and verify currently configured percentages can drive Stage 1 before readiness.
+
+Using controlled saved-checkpoint fixtures, verify that an otherwise valid estimate at exactly 24 elapsed UTC hours is accepted and one just beyond that age is rejected. Check next-day reuse within the limit and normal warmup after a weekend or a longer holiday gap. Verify that profile/contract/configuration mismatches, future observations and invalid RTH boundaries remain rejected.
 
 Turn ATR adaptation off during open RTH and verify the observed bar count/readiness continues to advance while Initial drop, BUY rebound, Minimum profit, SELL trail, and protective settings are not rewritten. Restart the application and verify the live observation buffer begins empty again; a validated same-contract persisted ATR estimate may be restored separately as a starting estimate. It does not restore old ticks as fresh market data.
 
@@ -210,7 +221,9 @@ In paper mode, induce or simulate a Gateway/TWS upstream outage while keeping th
 - Upgrade a representative v3.1.2 USD database and verify the currency lock is inferred as USD, existing cycle/order/execution values are preserved, and any needed schema additions are additive and idempotent. Repeat with a representative v4.0.0 database.
 - Attempt to select/store the opposite currency after a cycle exists and verify it fails closed; use a separate database for the EUR run.
 - Inject or simulate a commission in the wrong currency and verify it remains in audit data, is excluded from local net P/L, emits `COMMISSION_CURRENCY_MISMATCH`, and disables Auto-repeat.
-- Run through multiple fills and confirm backups are created and `latest_restore_validation.json` reports success.
+- Run through multiple fills and confirm queued backups are eventually created and `latest_restore_validation.json` reports success. Confirm immediate order/fill persistence is present before the queue drains; the backup is a later snapshot and may still hold up the single controller worker while copying/validating.
+- With a disposable unstamped legacy database, verify a pre-migration copy is created and successful opening records `PRAGMA user_version = 1`. Reopen it and verify no new startup copy. With separate future-stamped and unreadable-stamp fixtures, verify opening is rejected without backing up or changing the database.
+- Populate a disposable backup directory above 20 files. Verify startup preserves them, failed backup validation preserves them, and a successful fully validated backup trims to the newest 20 when deletion succeeds.
 - Open a backup read-only with SQLite tooling after shutdown and run `PRAGMA integrity_check`.
 - Export trade history and inspect columns/UTC timestamps.
 - Export an audit bundle and verify manifest, snapshot, database backup, reports, and JSON table exports.
@@ -299,3 +312,36 @@ Use isolated paper-broker instances and the actual Windows/Python 3.14 build. Ke
 - Lock-button geometry: same top/height as all ten status boxes at 100%, 150% and 200% scaling, both themes, narrow/wide window and locked/unlocked states. The native automated geometry test complements a visual check on Windows.
 
 These are qualification cases, not instructions to provoke failures in a live account. The current source release does not claim these native/broker checks ran on the development host.
+
+
+## Completed trade summary and history filters
+
+- Use a database with completed cycles for at least two tickers, then configure a different strategy ticker with no completed trades. Clear all Trade history filters and verify the summary includes both historical tickers. Changing only the strategy ticker must not change those totals.
+- Select one history ticker and verify its count, commissions and net totals; clear it and verify the combined totals return. Repeat with date, outcome, ATR and Paper/live filters and combinations. Confirm no-match filters and tables containing only noncompleted rows have no completed-trade totals.
+- Use more than 500 matching completed cycles. Verify the table displays 500 matching rows while the summary includes all matching completed cycles. Use a filter whose matches are older than 500 unrelated rows and verify those matches can still be displayed.
+- Change filters rapidly while a worker response is delayed. Verify a result for the earlier selection does not overwrite the current selection's rows or summary. Repeat after Refresh and after switching away from and back to Trade history.
+- Complete a cycle in a controlled test and verify its row and resulting totals refresh without pressing Refresh. Update its commission and confirm the displayed net amount changes. Check numeric sorting, audit opening from sorted/filtered rows, and CSV export using the same filter combination.
+
+## Targeted GUI corrections in 5.6.0
+
+Use deterministic fixtures or a paper account for these checks. Keep native rendering checks at 100%, 150% and 200% scaling separate from headless logic tests.
+
+| Finding | Manual verification |
+|---|---|
+| G01 | Disable one ATR adaptation option, enter a manual percentage, and deliver a queued snapshot from before the edit. Verify both the visible value and saved configuration retain the manual input. Repeat for the global ATR toggle and the other per-field adaptation controls. |
+| G02 | Select Reconciliation's market-sell action. Verify the potential-loss confirmation defaults to Cancel, cancellation issues no SELL request, and explicit confirmation still requires a current valid probe. |
+| G03 | Compare a local unsold quantity of 100 with broker quantities of 0, 1, 99, 100 and 101. Quantities below 100 must show the shortage; unrelated excess holdings must not become app-owned. |
+| G04 | Present a partially filled Submitted/PendingCancel order, then a terminal fill/cancellation. Verify the order stays working until terminal and cancellation controls follow the current broker evidence. |
+| G05 | After a flat completed/stopped cycle, confirm a different instrument and receive its first tick. Verify the ribbon, monitor and graph use one instrument and contain no previous-ticker price series. |
+| G06 | Use a cycle with a large pre-order high/low and start a trailing order later. Verify only prices inside that order's lifetime affect its estimated stop; repeat for a replacement order and restart/missing-time evidence. |
+| G07 | Select a historical cycle, refresh after a newer cycle appears, and reorder/filter the rows. Verify the same cycle ID remains selected while available and a missing selection is handled explicitly. |
+| G08 | Select a completed cycle whose ATR, repeat, reinvestment and guard settings differ from the current draft. Verify its saved settings remain visible after changing the draft and after another live snapshot. |
+| G09 | With an inactive cycle, protective SELL enabled and protective ATR adaptation off, verify the manual protective percentage is editable as a next-cycle draft when unlocked. Verify it does not alter the inactive cycle or its broker orders; active-cycle and manual-lock restrictions must still hold. |
+| G10 | Compare CSV exports against ticker-substring, date, outcome, ATR and Paper/live filter combinations. Export more than 500 matching cycles and verify all matches appear with the retained column schema. |
+| G11 | Complete an ordinary SELL after cancelling an unfilled protective order. Verify normal-exit classification; compare with a cycle that has actual protective fills. |
+| G12 | Complete an order in several fills at different prices. Verify the Timeline completion marker uses the weighted average while each individual execution keeps its own price. |
+| G13 | Open audit data containing legitimate zero-valued percentages. Verify Summary displays zero rather than another fallback value or N/A. |
+| G14 | Open an audit with broker-style orderType and placement/fill timestamps. Verify available type and duration are shown; missing evidence must not be invented. |
+| G15 | Complete a cycle and update its commission without using Refresh. Verify rows, summary and flowchart choices update together; an unchanged history must not trigger repeated full-table loads. |
+
+Open About > Info and verify all six support address labels and exact strings match README. Check copying the long ADA/NIGHT strings, window resizing, keyboard navigation and both themes.
