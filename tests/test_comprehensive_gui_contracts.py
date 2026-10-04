@@ -270,10 +270,14 @@ def test_recovery_refresh_status_fails_closed_for_age_cycle_order_and_failed_pro
     assert status["last_successful_checked_at"] == "2026-07-11T11:59:00+00:00"
 
 
-def test_recovery_refresh_click_gate_and_broker_action_handlers(gui_module):
+def test_recovery_refresh_click_gate_and_broker_action_handlers(gui_module, monkeypatch):
     window = object.__new__(gui_module.MainWindow)
     window.current_snapshot = _current_recovery_snapshot(checked_at=datetime.now(timezone.utc).isoformat())
+    cycle = window.current_snapshot["active_cycle"]
+    cycle.update(stage=Stage.WAIT_RISE_TRIGGER.value, buy_filled_qty=3, buy_status="Filled")
+    window.current_snapshot["broker_recovery"]["local_cycle_signature"] = recovery_cycle_signature(cycle)
     window.controller = ControllerStub()
+    monkeypatch.setattr(gui_module.QMessageBox, "question", lambda *_args: gui_module.QMessageBox.Ok)
 
     assert window._recovery_refresh_is_current_or_warn("testing") is True
     window._recovery_sell_market_clicked()

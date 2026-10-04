@@ -28,8 +28,8 @@ def test_blank_account_requires_one_unambiguous_managed_account():
 
 
 def test_v306_version_and_documentation():
-    assert "BouncyBot - IBKR Portable Trading Bot v5.3.0" in GUI
+    assert "BouncyBot - IBKR Portable Trading Bot v5.6.0" in GUI
     assert "# BouncyBot - an IBKR Trading Bot" in README
-    assert 'version = "5.3.0"' in PYPROJECT
+    assert 'version = "5.6.0"' in PYPROJECT
     assert "v3.0.6 optional IBKR account routing" in ARCHIVE
     assert "v3.0.6 optional IBKR account routing" in DOC

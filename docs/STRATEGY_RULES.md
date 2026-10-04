@@ -1,6 +1,6 @@
 # Strategy rules
 
-This document is the current functional description of the five-stage strategy in v5.3.0. It describes application decisions; IBKR remains authoritative for accepted order state and execution.
+This document is the current functional description of the five-stage strategy in v5.6.0. It describes application decisions; IBKR remains authoritative for accepted order state and execution.
 
 ## Scope and invariants
 
@@ -191,7 +191,7 @@ A period of `N` requires at least `N + 1` observed bar buckets to calculate `N` 
 
 A validated ready ATR estimate is checkpointed in the existing SQLite `app_settings` table for the exact confirmed contract, currency, venue, trading/data profile, ATR period, and bar duration. At a verified open RTH session, that estimate can supply the starting ATR/ATR% while current-session bars warm up. It does not insert synthetic observations or make a quote fresh. The first ready current-session calculation replaces it. The GUI identifies the saved session and today's observed bar count.
 
-The seed must be no more than seven calendar days old and must contain finite positive, internally consistent values observed inside its recorded RTH window. Weekends and short holidays can therefore reuse the most recent observed session; the application does not guess missing exchange sessions. First use, an expired/corrupt/mismatched checkpoint, or a changed ATR period/bar duration without a matching checkpoint retains normal warmup. A database from before checkpoint support also needs normal warmup until a valid estimate has been saved. A same-session application/watchdog restart can also reuse a valid checkpoint. Current market-data, opening-delay, RTH, gap, spread, two-observation SELL, and broker-reconciliation guards still apply. A saved estimate is not evidence that today's volatility is unchanged.
+The seed must be no more than 24 elapsed UTC hours old (the exact 24-hour boundary is accepted) and must contain finite positive, internally consistent values observed inside its recorded RTH window. A next-session or same-session estimate is eligible only within that age limit; weekend and longer holiday gaps require normal warmup. The application does not guess exchange holiday calendars. First use, an expired/corrupt/mismatched checkpoint, or a changed ATR period/bar duration without a matching checkpoint retains normal warmup. A database from before checkpoint support also needs normal warmup until a valid estimate has been saved. A same-session application/watchdog restart can also reuse a valid checkpoint. Current market-data, opening-delay, RTH, gap, spread, two-observation SELL, and broker-reconciliation guards still apply. A saved estimate is not evidence that today's volatility is unchanged.
 
 ### Derived values
 

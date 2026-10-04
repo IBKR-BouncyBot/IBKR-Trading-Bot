@@ -33,10 +33,18 @@ from .models import (
 )
 
 DATABASE_CONTRACT_CURRENCY_KEY = "database_contract_currency"
+# Increase this whenever _ensure_schema gains a migration. Unstamped legacy
+# databases use zero; stamp only after this build's migrations have succeeded.
+SCHEMA_VERSION = 1
+BACKUP_KEEP_DEFAULT = 20
 
 
 class DatabaseCurrencyError(ValueError):
     """Raised when a contract currency conflicts with the portable database."""
+
+
+class DatabaseSchemaError(sqlite3.DatabaseError):
+    """Raised before modifying a database created by a newer schema version."""
 
 
 class _ClosingSqliteConnection(sqlite3.Connection):
@@ -81,6 +89,10 @@ class BotStorage:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._history_summary_cache: dict[str, tuple[int, str, dict[str, Any]]] = {}
+        self._history_filtered_summary_cache: Optional[tuple[tuple[str, ...], int, str, dict[str, Any]]] = None
+        # Reuse the summary metadata query for change-driven row refreshes.
+        self.history_summary_revision: Optional[tuple[int, str, int]] = None
+        self._history_write_revision = 0
         self._ensure_schema(_backup_before_schema=_backup_before_schema)
 
     def connect(self) -> sqlite3.Connection:
@@ -134,10 +146,27 @@ class BotStorage:
         The app ships as a portable folder, so an existing bot_state.sqlite
         can be opened by a later build. Schema updates must be additive
         and idempotent. A best-effort backup is made before migrations touch an
-        existing database file. Only an internally created disposable restore
-        candidate skips that redundant backup; its migrations still run.
+        unstamped or older database. A current schema stamp avoids a redundant
+        startup copy. An internally created disposable restore candidate also
+        skips the backup; its migrations still run. Newer or unreadable schema
+        versions are rejected before any migration or write.
         """
-        if _backup_before_schema and self.db_path.exists():
+        exists = self.db_path.exists()
+        stored_version = self._stored_schema_version() if exists else 0
+        if stored_version is None:
+            raise DatabaseSchemaError(
+                "Could not read the database schema version, so this application cannot safely "
+                "open it. Resolve the database read error and retry; this database has not "
+                "been migrated or modified."
+            )
+        if stored_version > SCHEMA_VERSION:
+            raise DatabaseSchemaError(
+                f"Database schema {stored_version} is newer than this application's supported "
+                f"schema {SCHEMA_VERSION}. Use a compatible newer application; this database "
+                "has not been migrated or modified."
+            )
+        migration_pending = stored_version < SCHEMA_VERSION
+        if _backup_before_schema and exists and migration_pending:
             try:
                 backup_dir = self.db_path.parent / "backups"
                 backup_dir.mkdir(parents=True, exist_ok=True)
@@ -384,6 +413,18 @@ class BotStorage:
                 "UPDATE cycles SET completed_at=updated_at WHERE stage=? AND completed_at IS NULL",
                 (Stage.CYCLE_COMPLETE.value,),
             )
+            if stored_version != SCHEMA_VERSION:
+                con.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+
+    def _stored_schema_version(self) -> Optional[int]:
+        """Read the version without creating or modifying the database."""
+        try:
+            uri = self.db_path.resolve().as_uri() + "?mode=ro"
+            with sqlite3.connect(uri, uri=True, factory=_ClosingSqliteConnection) as con:
+                row = con.execute("PRAGMA user_version").fetchone()
+            return int(row[0]) if row else 0
+        except Exception:
+            return None
 
     @staticmethod
     def _add_column_if_missing(con: sqlite3.Connection, table: str, column: str, definition: str) -> None:
@@ -933,6 +974,12 @@ class BotStorage:
             self._write_database_currency_in_connection(con, requested)
         sql, columns, data = self._cycle_upsert_statement(cycle)
         con.execute(sql, tuple(data[col] for col in columns))
+        if cycle.stage == Stage.CYCLE_COMPLETE:
+            # Late commissions can arrive within the same updated_at second.
+            # Invalidate reporting in memory; no extra query or disk write.
+            self._history_write_revision += 1
+            self._history_summary_cache.clear()
+            self._history_filtered_summary_cache = None
 
     def upsert_cycle(self, cycle: CycleState) -> None:
         with self.connect() as con:
@@ -2194,7 +2241,7 @@ class BotStorage:
                 ),
             )
 
-    def backup_database(self, reason: str = "manual", keep: int = 50) -> Optional[Path]:
+    def backup_database(self, reason: str = "manual", keep: int = BACKUP_KEEP_DEFAULT) -> Optional[Path]:
         """Create a consistent SQLite backup and prune older backups.
 
         The application runs SQLite in WAL mode. Copying only the main .sqlite
@@ -2366,7 +2413,7 @@ class BotStorage:
                     with sqlite3.connect(candidate, factory=_ClosingSqliteConnection) as destination:
                         source.backup(destination)
                 # Exercise migrations on the disposable copy without backing it
-                # up again. Normal database opens retain their pre-schema backup.
+                # up again. Legacy database opens retain their pre-schema backup.
                 BotStorage(candidate, _backup_before_schema=False)
                 copied = self._validate_sqlite_database_file(candidate)
                 result["restore_copy_validated"] = bool(copied.get("ok"))
@@ -2452,13 +2499,90 @@ class BotStorage:
             zf.writestr("recent_events.json", json.dumps(recent_events, indent=2, sort_keys=True, default=self._json_default))
         return target
 
-    def history_summary(self, ticker: str = "") -> dict[str, Any]:
-        ticker_key = str(ticker or "").strip().upper()
+    @staticmethod
+    def _history_filter_key(filters: dict[str, str]) -> tuple[str, ...]:
+        """Normalize the history controls without changing strategy settings."""
+        return (
+            str(filters.get("ticker") or "").strip().upper(),
+            str(filters.get("date_from") or "").strip(),
+            str(filters.get("date_to") or "").strip(),
+            str(filters.get("outcome") or "All outcomes"),
+            str(filters.get("atr") or "ATR all"),
+            str(filters.get("mode") or "Paper/live all"),
+        )
+
+    @classmethod
+    def _history_where(
+        cls, ticker: str = "", *, filters: Optional[dict[str, str]] = None,
+    ) -> tuple[str, list[Any]]:
+        """Use the same completed-cycle selection for summary and bounded table.
+
+        Legacy callers retain exact ticker matching. The GUI's filter is a
+        literal substring; applying it before LIMIT also finds older matches.
+        All user-entered values are SQL parameters.
+        """
+        parts = ["stage=?"]
         params: list[Any] = [Stage.CYCLE_COMPLETE.value]
-        where = "stage=?"
+        if filters is None:
+            ticker_key = str(ticker or "").strip().upper()
+            if ticker_key:
+                parts.append("ticker=?")
+                params.append(ticker_key)
+            return " AND ".join(parts), params
+
+        ticker_key, date_from, date_to, outcome, atr, mode = cls._history_filter_key(filters)
         if ticker_key:
-            where += " AND ticker=?"
+            parts.append("instr(upper(COALESCE(ticker, '')), ?) > 0")
             params.append(ticker_key)
+        row_date = (
+            "substr(COALESCE(NULLIF(sell_filled_at, ''), NULLIF(buy_filled_at, ''), "
+            "NULLIF(updated_at, ''), NULLIF(created_at, ''), ''), 1, 10)"
+        )
+        if date_from:
+            parts.append(f"({row_date} = '' OR {row_date} >= ?)")
+            params.append(date_from)
+        if date_to:
+            parts.append(f"({row_date} = '' OR {row_date} <= ?)")
+            params.append(date_to)
+        if outcome == "Profitable":
+            parts.append("net_pnl >= 0")
+        elif outcome == "Losing":
+            parts.append("net_pnl < 0")
+        elif outcome in {"Profit exit", "Protective exit", "Manual/error", "Cancelled"}:
+            # A cancelled/unfilled protective reference is not an exit.
+            # Match actual fills or the filled SELL's executing reference.
+            badge = (
+                "CASE WHEN COALESCE(protective_sell_filled_qty, 0) > 0 "
+                "OR (COALESCE(sell_filled_qty, 0) > 0 "
+                "AND instr(upper(COALESCE(sell_order_ref, '')), 'PROTECT') > 0) "
+                "THEN 'PROTECTIVE EXIT' "
+                "WHEN net_pnl >= 0 OR (net_pnl IS NULL AND gross_pnl >= 0) THEN 'PROFIT EXIT' "
+                "WHEN net_pnl IS NOT NULL OR gross_pnl IS NOT NULL THEN 'LOSS EXIT' "
+                "WHEN COALESCE(error_message, '') != '' THEN 'ERROR STOP' ELSE 'COMPLETED' END"
+            )
+            wanted = {
+                "Profit exit": "PROFIT EXIT", "Protective exit": "PROTECTIVE EXIT",
+                "Manual/error": "ERROR STOP", "Cancelled": "CANCELLED",
+            }[outcome]
+            parts.append(f"({badge}) = ?")
+            params.append(wanted)
+        if atr == "ATR on":
+            parts.append("COALESCE(atr_adaptive_enabled, 0) NOT IN (0, '')")
+        elif atr == "ATR off":
+            parts.append("COALESCE(atr_adaptive_enabled, 0) IN (0, '')")
+        paper = "(instr(lower(COALESCE(account, '')), 'paper') > 0 OR substr(lower(COALESCE(account, '')), 1, 2) = 'du')"
+        if mode == "Paper":
+            parts.append(f"(COALESCE(account, '') = '' OR {paper})")
+        elif mode == "Live":
+            parts.append(f"(COALESCE(account, '') = '' OR NOT {paper})")
+        return " AND ".join(parts), params
+
+    def history_summary(
+        self, ticker: str = "", *, filters: Optional[dict[str, str]] = None,
+    ) -> dict[str, Any]:
+        ticker_key = str(ticker or "").strip().upper()
+        filter_key = self._history_filter_key(filters) if filters is not None else None
+        where, params = self._history_where(ticker, filters=filters)
         with self.connect() as con:
             meta = con.execute(
                 f"SELECT COUNT(*) AS n, COALESCE(MAX(updated_at), '') AS max_updated FROM cycles WHERE {where}",
@@ -2466,7 +2590,12 @@ class BotStorage:
             ).fetchone()
             count = int(meta["n"] or 0) if meta else 0
             max_updated = str(meta["max_updated"] or "") if meta else ""
-            cached = self._history_summary_cache.get(ticker_key)
+            self.history_summary_revision = (count, max_updated, self._history_write_revision)
+            if filter_key is None:
+                cached = self._history_summary_cache.get(ticker_key)
+            else:
+                filtered_cache = self._history_filtered_summary_cache
+                cached = filtered_cache[1:] if filtered_cache and filtered_cache[0] == filter_key else None
             if cached and cached[0] == count and cached[1] == max_updated:
                 return dict(cached[2])
             if count <= 0:
@@ -2483,7 +2612,10 @@ class BotStorage:
                     "avg_holding_minutes": None,
                     "max_completed_drawdown": 0.0,
                 }
-                self._history_summary_cache[ticker_key] = (count, max_updated, dict(result))
+                if filter_key is None:
+                    self._history_summary_cache[ticker_key] = (count, max_updated, dict(result))
+                else:
+                    self._history_filtered_summary_cache = (filter_key, count, max_updated, dict(result))
                 return result
             rows = con.execute(
                 f"""
@@ -2548,23 +2680,23 @@ class BotStorage:
             "avg_holding_minutes": sum(hold_minutes) / len(hold_minutes) if hold_minutes else None,
             "max_completed_drawdown": max_drawdown,
         }
-        self._history_summary_cache[ticker_key] = (count, max_updated, dict(result))
+        if filter_key is None:
+            self._history_summary_cache[ticker_key] = (count, max_updated, dict(result))
+        else:
+            self._history_filtered_summary_cache = (filter_key, count, max_updated, dict(result))
         return result
 
-    def history_cycles(self, ticker: str = "", limit: int = 500) -> list[dict[str, Any]]:
+    def history_cycles(
+        self, ticker: str = "", limit: int = 500, *, filters: Optional[dict[str, str]] = None,
+    ) -> list[dict[str, Any]]:
         """Return completed cycles with derived percentage metrics for the UI.
 
         The raw cycle table stores prices/P&L. This method adds display-only
         percentages so the history table and CSV exports can show both absolute
         and normalized performance.
         """
-        params: list[Any] = []
-        query = "SELECT * FROM cycles WHERE stage=?"
-        params.append(Stage.CYCLE_COMPLETE.value)
-        if ticker.strip():
-            query += " AND ticker=?"
-            params.append(ticker.strip().upper())
-        query += " ORDER BY sell_filled_at DESC, updated_at DESC LIMIT ?"
+        where, params = self._history_where(ticker, filters=filters)
+        query = f"SELECT * FROM cycles WHERE {where} ORDER BY sell_filled_at DESC, updated_at DESC LIMIT ?"
         params.append(int(limit))
         with self.connect() as con:
             rows = con.execute(query, tuple(params)).fetchall()
@@ -2594,8 +2726,11 @@ class BotStorage:
             "decision_events": [dict(row) for row in decisions],
         }
 
-    def export_history_csv(self, target: Path, ticker: str = "") -> Path:
-        rows = self.history_cycles(ticker=ticker, limit=100000)
+    def export_history_csv(
+        self, target: Path, ticker: str = "", *, filters: Optional[dict[str, str]] = None,
+    ) -> Path:
+        # SQLite LIMIT -1 is unbounded: export all matches with table predicates.
+        rows = self.history_cycles(ticker=ticker, limit=-1, filters=filters)
         target.parent.mkdir(parents=True, exist_ok=True)
         fieldnames = [
             "ticker",

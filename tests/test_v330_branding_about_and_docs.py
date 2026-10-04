@@ -1,4 +1,4 @@
-"""v5.3.0 branding, About layout, packaging, and documentation cleanup."""
+"""v5.6.0 branding, About layout, packaging, and documentation cleanup."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ README = (ROOT / "README.md").read_text(encoding="utf-8")
 GUI_SOURCE = (ROOT / "app" / "gui.py").read_text(encoding="utf-8")
 MAIN_SOURCE = (ROOT / "main.py").read_text(encoding="utf-8")
 BUILD_SOURCE = (ROOT / "scripts" / "build_windows.ps1").read_text(encoding="utf-8")
-CURRENT_NOTE = ROOT / "docs" / "V5_3_0_GUI_LAYOUT.md"
+CURRENT_NOTE = ROOT / "docs" / "V5_6_0_TARGETED_GUI_FIXES.md"
 LEGACY_DIR = ROOT / "docs" / "legacy"
 LOGO_PATH = ROOT / "Images" / "BouncyBot_logo.png"
 ICON_PNG_PATH = ROOT / "Images" / "BouncyBot_app_icon.png"
@@ -60,7 +60,7 @@ def test_about_dialog_contains_logo_links_version_and_readme_support_data(gui_mo
     dialog = gui_module.AboutInfoDialog()
 
     assert dialog.title_label.text() == "BouncyBot - IBKR Portable Trading Bot"
-    assert dialog.version_label.text() == "Version 5.3.0"
+    assert dialog.version_label.text() == "Version 5.6.0"
     assert gui_module.BOUNCYBOT_GITHUB_URL in dialog.repository_link.text()
     assert gui_module.BOUNCYBOT_REFERRAL_URL in dialog.referral_link.text()
     assert set(dialog.support_address_fields) == {
@@ -68,6 +68,8 @@ def test_about_dialog_contains_logo_links_version_and_readme_support_data(gui_mo
         "Midnight / NIGHT",
         "Ethereum / ETH",
         "Solana / SOL",
+        "XRP",
+        "Zcash / ZEC",
     }
     for label, address in gui_module.BOUNCYBOT_SUPPORT_ADDRESSES:
         assert dialog.support_address_fields[label].text() == address

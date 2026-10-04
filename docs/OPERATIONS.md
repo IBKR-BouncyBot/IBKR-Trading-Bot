@@ -1,6 +1,6 @@
 # Operations guide
 
-This guide describes the normal operator workflow for v5.3.0. It does not replace the broker’s API documentation or account controls.
+This guide describes the normal operator workflow for v5.6.0. It does not replace the broker’s API documentation or account controls.
 
 ## Before starting
 
@@ -77,6 +77,10 @@ Monitor:
 - app-owned order status and fill quantities;
 - warning/error events;
 - Reconciliation state after any disconnect.
+
+The top **Connection** box describes the two broker links, not the age of the displayed price. Once both links and reconciliation are ready, it remains **Connected** while data is stale or awaiting a new event. **Data** shows subscription type and freshness separately: **Live / Stale** is an old update on a live subscription. A known old update remains visibly stale after a farm/recovery notification; its tooltip retains the requirement for another actual event. No actual update remains a waiting/unknown state.
+
+For a normal BUY/SELL wait with only closed RTH and stale/pending data blockers, **Trading** leads with **RTH closed** and retains all reasons in its tooltip. Other faults retain their priority. **Last market update** in Price data monitor is the actual event receipt time; **Cached snapshot checked** is a separate read age. A cached-price status does not authorize trading, and the display never replaces missing actual-update evidence with the cached-read timestamp.
 
 The top lock button is an accidental-edit guard. When engaged, editable settings remain disabled and the Live strategy bottom bar containing all five workflow buttons and the view-mode selector is hidden. Unlocking restores the bar and reapplies each button's current permissions. The top lock and tab navigation remain available. Locking does not stop the worker or cancel an order.
 
@@ -160,6 +164,8 @@ Requests cancellation of app-owned open orders and stops the local cycle state a
 
 ### Sell application position at market
 
+The Reconciliation action **Sell app-bought unsold position** presents the same market-SELL/potential-loss confirmation as the Stop workflow. Cancel is the default and sends no SELL request. The worker still validates the current probe, app-owned quantity, session and existing-order state after confirmation.
+
 Clicking this action opens a second potential-loss confirmation. **Cancel** is the default. Pressing **OK** confirms that the entire app-bought unsold quantity for the active cycle may be sold immediately at an unfavorable price and may realize a loss. Unrelated account positions are not included.
 
 After confirmation, the controller first requests cancellation of any working app-created protective/final SELL and waits until it is no longer working. It then submits one market SELL for the quantity reconstructed from the persisted app fill ledger. External account holdings are not included.
@@ -208,7 +214,7 @@ After any outage or restart:
 
 1. Inspect app-owned orders, fills, and positions directly in TWS/Gateway.
 2. Confirm the Connection indicator no longer shows **Gateway only** or **Reconciling**.
-3. Confirm the Data indicator receives a new actual update rather than showing cached-only/data-pending state.
+3. Confirm a new actual market update has arrived and the Data tooltip no longer reports a pending post-recovery update. A green Connection box alone does not establish data readiness.
 4. Open Reconciliation and press **Refresh from IBKR/TWS**.
 5. Confirm the status says **Current**, then compare the local cycle, order references, fills, position, and executions.
 6. Use **Reconcile and resume** only when the comparison is understood. Broker-dependent resolution actions disable again when the probe becomes stale.
@@ -255,7 +261,17 @@ Do not publish audit bundles or databases without reviewing them for account ide
 
 A validated ready ATR estimate is checkpointed in the existing SQLite `app_settings` table for the exact confirmed contract, currency, venue, trading/data profile, ATR period, and bar duration. At a verified open RTH session, that estimate can supply the starting ATR/ATR% while current-session bars warm up. It does not insert synthetic observations or make a quote fresh. The first ready current-session calculation replaces it. The GUI identifies the saved session and today's observed bar count.
 
-The seed must be no more than seven calendar days old and must contain finite positive, internally consistent values observed inside its recorded RTH window. Weekends and short holidays can therefore reuse the most recent observed session; the application does not guess missing exchange sessions. First use, an expired/corrupt/mismatched checkpoint, or a changed ATR period/bar duration without a matching checkpoint retains normal warmup. Upgrading from a version without ATR checkpoints also requires ordinary warmup until a valid estimate has been saved. A same-session application/watchdog restart can reuse a valid checkpoint. Current market-data, opening-delay, RTH, gap, spread, two-observation SELL, and broker-reconciliation guards still apply. A saved estimate is not evidence that today's volatility is unchanged.
+The seed must be no more than 24 elapsed UTC hours old (the exact 24-hour boundary is accepted) and must contain finite positive, internally consistent values observed inside its recorded RTH window. A next-session or same-session estimate is eligible only within that age limit; weekend and longer holiday gaps require normal warmup. The application does not guess exchange holiday calendars. First use, an expired/corrupt/mismatched checkpoint, or a changed ATR period/bar duration without a matching checkpoint retains normal warmup. Upgrading from a version without ATR checkpoints also requires ordinary warmup until a valid estimate has been saved. A same-session application/watchdog restart can reuse a valid checkpoint. Current market-data, opening-delay, RTH, gap, spread, two-observation SELL, and broker-reconciliation guards still apply. A saved estimate is not evidence that today's volatility is unchanged.
+
+## Completed trade summary and history filters
+
+The Completed trade summary follows the Trade history ticker, date, outcome, ATR and Paper/live filters. Leave the ticker blank and clear the other filters to total all completed cycles in the portable database, regardless of the current strategy ticker. A selected filter applies to both history queries and the completed-cycle summary.
+
+The table displays the latest 500 matching rows; the summary includes every matching completed cycle, including older rows beyond that display limit. The synthetic example shown for an empty unfiltered history is excluded from those metrics. Filter changes request matching data. Completed-history changes also refresh the rows and flowchart choices; unchanged history does not cause repeated full reads. **Refresh** remains available to request a reload. **Export CSV** applies the same filters and exports every matching completed cycle, without the table limit.
+
+Historical flowchart selections remain attached to their cycle ID across those refreshes. Historical cards use that cycle's saved settings; live draft edits do not alter its displayed ATR, repetition, reinvestment or guard choices. Missing legacy settings use fixed defaults and are disclosed in the explanation and tooltip. Protective-exit labels require execution evidence, rather than the mere presence of a protective-order reference.
+
+Refresh detection uses the existing summary metadata query plus an in-memory revision for completed-cycle writes, including late commission changes within one timestamp second. This adds no recurring disk writes or query cadence. An update to another ticker can cause one refresh of the current filtered view; subsequent unchanged snapshots reuse its rows.
 
 ## Cycle audit and market context
 

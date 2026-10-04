@@ -2,9 +2,21 @@
 
 These files document superseded releases and implementation history. They are retained for traceability, but they may describe old labels, defaults, layouts, tests, or limitations.
 
-For current behavior, use the [project README](../../README.md), the [current documentation index](../README.md), the [changelog](../../CHANGELOG.md), and the current [`v5.3.0 release note`](../V5_3_0_GUI_LAYOUT.md).
+For current behavior, use the [project README](../../README.md), the [current documentation index](../README.md), the [changelog](../../CHANGELOG.md), and the current [`v5.6.0 release note`](../V5_6_0_TARGETED_GUI_FIXES.md).
 
 ## Version 5 release notes
+
+- [`V5_5_1_HISTORY_SUMMARY.md`](V5_5_1_HISTORY_SUMMARY.md) - archived full-database history summary and shared filter changes.
+- [`V5_5_1_IMPLEMENTATION_TEST_REPORT.txt`](V5_5_1_IMPLEMENTATION_TEST_REPORT.txt) - preserved final 5.5.1 verification record.
+
+- [`V5_5_0_GUI_STATUS.md`](V5_5_0_GUI_STATUS.md) - archived connection/freshness separation, RTH summary priority and actual market-update timestamps.
+- [`V5_5_0_IMPLEMENTATION_TEST_REPORT.txt`](V5_5_0_IMPLEMENTATION_TEST_REPORT.txt) - preserved final 5.5.0 verification record.
+
+- [`V5_4_0_RELIABILITY.md`](V5_4_0_RELIABILITY.md) - archived deferred backups, schema-aware startup copies, validated retention and 24-hour ATR seed age limit.
+- [`V5_4_0_IMPLEMENTATION_TEST_REPORT.txt`](V5_4_0_IMPLEMENTATION_TEST_REPORT.txt) - preserved final 5.4.0 verification record.
+
+- [`V5_3_0_GUI_LAYOUT.md`](V5_3_0_GUI_LAYOUT.md) - archived GUI layout, labels and release-file changes.
+- [`V5_3_0_IMPLEMENTATION_TEST_REPORT.txt`](V5_3_0_IMPLEMENTATION_TEST_REPORT.txt) - preserved final 5.3.0 verification record.
 
 - [`V5_2_0_STORAGE_PERFORMANCE.md`](V5_2_0_STORAGE_PERFORMANCE.md) - archived partial-index and redundant temporary backup-copy changes.
 - [`V5_2_0_IMPLEMENTATION_TEST_REPORT.txt`](V5_2_0_IMPLEMENTATION_TEST_REPORT.txt) - preserved 5.2.0 verification record.

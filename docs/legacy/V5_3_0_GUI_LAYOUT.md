@@ -44,6 +44,6 @@ The focused regression modules cover:
 
 Release consistency checks cover the version and current documentation. Retained strategy, recovery and storage tests check for unintended changes outside the requested presentation scope.
 
-The root [implementation and test report](../IMPLEMENTATION_TEST_REPORT.txt) records the tests actually run, their results and any remaining native Qt, Windows, DPI or build checks. Test definitions and headless widget checks alone do not establish native rendering results. The [manual test plan](TEST_PLAN.md) includes resize, theme, scaling, keyboard/navigation and lock checks. No live broker order is needed for these GUI checks.
+The root [implementation and test report](V5_3_0_IMPLEMENTATION_TEST_REPORT.txt) records the tests actually run, their results and any remaining native Qt, Windows, DPI or build checks. Test definitions and headless widget checks alone do not establish native rendering results. The [manual test plan](../TEST_PLAN.md) includes resize, theme, scaling, keyboard/navigation and lock checks. No live broker order is needed for these GUI checks.
 
-The [archived 5.2.0 release note](legacy/V5_2_0_STORAGE_PERFORMANCE.md) and [verification report](legacy/V5_2_0_IMPLEMENTATION_TEST_REPORT.txt) preserve the preceding storage changes and their measured scope.
+The [archived 5.2.0 release note](V5_2_0_STORAGE_PERFORMANCE.md) and [verification report](V5_2_0_IMPLEMENTATION_TEST_REPORT.txt) preserve the preceding storage changes and their measured scope.

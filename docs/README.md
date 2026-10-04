@@ -1,6 +1,6 @@
 # Documentation index
 
-The files in this directory describe the current v5.3.0 behavior unless explicitly marked otherwise. The root of `docs/` is intentionally limited to current operating, design, recovery, and verification material. Superseded release notes are stored under [`legacy/`](legacy/README.md).
+The files in this directory describe the current v5.6.0 behavior unless explicitly marked otherwise. The root of `docs/` is intentionally limited to current operating, design, recovery, and verification material. Superseded release notes are stored under [`legacy/`](legacy/README.md).
 
 When documents disagree, use this source-of-truth order:
 
@@ -17,7 +17,7 @@ When documents disagree, use this source-of-truth order:
 | [`../CHANGELOG.md`](../CHANGELOG.md) | Consolidated release history |
 | [`../SECURITY.md`](../SECURITY.md) | Private vulnerability reporting and sensitive-artifact guidance |
 | [`../LICENSE`](../LICENSE) | PolyForm Noncommercial License 1.0.0 terms |
-| [`../IMPLEMENTATION_TEST_REPORT.txt`](../IMPLEMENTATION_TEST_REPORT.txt) | Measured 5.3.0 verification, source scope and outstanding platform gates |
+| [`../IMPLEMENTATION_TEST_REPORT.txt`](../IMPLEMENTATION_TEST_REPORT.txt) | Measured 5.6.0 verification, source scope and outstanding platform gates |
 
 ## Current guides
 
@@ -46,17 +46,18 @@ When documents disagree, use this source-of-truth order:
 | [`AUTOMATED_TEST_COVERAGE.md`](AUTOMATED_TEST_COVERAGE.md) | Per-module callable coverage, test layers, artifacts, and gate semantics |
 | [`OFFLINE_BEHAVIOR_TESTS.md`](OFFLINE_BEHAVIOR_TESTS.md) | Replay, generated-state, crash, fault, soak, mutation, and isolation tests |
 | [`PRODUCTION_INCIDENT_REPLAY_TESTS.md`](PRODUCTION_INCIDENT_REPLAY_TESTS.md) | Sanitized production-incident replays, privacy controls, historical migration corpus, and resolved-incident regressions |
+| [`GUI_REVIEW_5_5_1.md`](GUI_REVIEW_5_5_1.md) | Original fifteen GUI findings from 5.5.1, with their 5.6.0 resolution link |
 | [`TEST_PLAN.md`](TEST_PLAN.md) | Manual verification checklist, especially for Windows and IBKR integration |
 | [`CODE_REVIEW_NOTES.md`](CODE_REVIEW_NOTES.md) | Maintainer review boundaries and documentation-maintenance rules |
 
 ## Current release note
 
-[`V5_3_0_GUI_LAYOUT.md`](V5_3_0_GUI_LAYOUT.md) describes the ticker placeholder, Live strategy layout, lock visibility, compact flowchart cards, Reconciliation navigation and release files. The current [README](../README.md) documents the retained trading and GUI behavior. Earlier release notes are implementation history, not additional operating instructions.
+[`V5_6_0_TARGETED_GUI_FIXES.md`](V5_6_0_TARGETED_GUI_FIXES.md) maps the fifteen reviewed GUI findings to their corrections, support-address updates, upgrade instructions and verification boundaries. The current [README](../README.md) documents the retained trading and GUI behavior. Earlier release notes are implementation history, not additional operating instructions.
 
 ## Archived documentation
 
-The [`legacy/`](legacy/README.md) directory contains all superseded release-specific notes and retained historical reports. Only the current v5.3.0 release note remains in the root of `docs/`. Archived files may accurately describe the release that introduced a feature, but labels, defaults, layouts, tests, and limitations in them can be obsolete. They are not the current operating specification.
+The [`legacy/`](legacy/README.md) directory contains all superseded release-specific notes and retained historical reports. Only the current v5.6.0 release note remains in the root of `docs/`. Archived files may accurately describe the release that introduced a feature, but labels, defaults, layouts, tests, and limitations in them can be obsolete. They are not the current operating specification.
 
 The [v4.0.0 ATR and order-editing note](legacy/V4_0_0_ATR_SESSION_MEMORY_AND_ORDER_EDITING.md) records the origin of the saved ATR estimates and next-order edit policy. Consult the current configuration and strategy guides for their present behavior.
 
-Other recent history: [v5.2.0 storage performance](legacy/V5_2_0_STORAGE_PERFORMANCE.md), [v5.1.0 targeted trading fixes](legacy/V5_1_0_TARGETED_TRADING_FIXES.md), [v5.0.0 safeguards and Python 3.14](legacy/V5_0_0_TRADING_SAFETY_AND_PYTHON314.md), [v4.2.0 headers and independent cursors](legacy/V4_2_0_HEADER_AND_INDEPENDENT_TIMELINE.md), [v4.1.0 GUI metrics and audit layout](legacy/V4_1_0_GUI_METRICS_AND_AUDIT_LAYOUT.md), and [v3.9.0 diagnostic coalescing](legacy/V3_9_0_AUDIT_DIAGNOSTIC_COALESCING.md).
+Other recent history: [v5.5.1 history totals](legacy/V5_5_1_HISTORY_SUMMARY.md), [v5.5.0 GUI status](legacy/V5_5_0_GUI_STATUS.md), [v5.4.0 reliability](legacy/V5_4_0_RELIABILITY.md), [v5.3.0 GUI layout](legacy/V5_3_0_GUI_LAYOUT.md), [v5.2.0 storage performance](legacy/V5_2_0_STORAGE_PERFORMANCE.md), [v5.1.0 targeted trading fixes](legacy/V5_1_0_TARGETED_TRADING_FIXES.md), [v5.0.0 safeguards and Python 3.14](legacy/V5_0_0_TRADING_SAFETY_AND_PYTHON314.md), [v4.2.0 headers and independent cursors](legacy/V4_2_0_HEADER_AND_INDEPENDENT_TIMELINE.md), [v4.1.0 GUI metrics and audit layout](legacy/V4_1_0_GUI_METRICS_AND_AUDIT_LAYOUT.md), and [v3.9.0 diagnostic coalescing](legacy/V3_9_0_AUDIT_DIAGNOSTIC_COALESCING.md).

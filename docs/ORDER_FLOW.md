@@ -38,7 +38,7 @@ An account-wide external stock position is not part of this BUY block. Only the 
 
 ## Connectivity boundary for every order
 
-BUY, final SELL, protective SELL, and market-close paths check connectivity before preflight/construction and again immediately before the database backup and broker call. A local socket alone is insufficient: upstream IBKR connectivity must be confirmed and post-restoration reconciliation must be complete. After an enabled local socket is lost, BouncyBot retries every ten seconds indefinitely until success, manual Disconnect, or shutdown.
+BUY, final SELL, protective SELL, and market-close paths check connectivity before preflight/construction and again immediately before the broker call. A local socket alone is insufficient: upstream IBKR connectivity must be confirmed and post-restoration reconciliation must be complete. After an enabled local socket is lost, BouncyBot retries every ten seconds indefinitely until success, manual Disconnect, or shutdown.
 
 During code 1100/2110, no new order is sent and normal app-order polling is paused. Code 1101 recreates market-data subscriptions; code 1102 keeps them but requires a new event. Existing native orders are not cancelled merely because connectivity is lost and can continue at IBKR. Their later status/fills are recovery facts, not evidence that the application was monitoring continuously.
 
@@ -70,7 +70,7 @@ When BUY trail is zero, the drop condition produces a market BUY rather than a n
 
 ### Acceptance and persistence
 
-Before transmission the application durably records the order intent and creates a database backup. After the adapter returns a submission handle, the controller records the reported IDs, reference, status, payload, and cycle stage. A definite pre-transmission failure may roll the logical cycle back to its waiting stage. An exception during or after `placeOrder` leaves the exact reference and any returned IDs stored as `SUBMISSION_UNKNOWN`, with the cycle in `MANUAL_REVIEW` and recovery required. An empty open-order response does not prove that the order was never sent; automatic retry remains blocked until the uncertainty is resolved.
+Before transmission the application durably records the order intent and enqueues an `order_submission` backup request. That backup runs later on the same controller worker and is not a pre-transmission snapshot. After the adapter returns a submission handle, the controller records the reported IDs, reference, status, payload, and cycle stage. A definite pre-transmission failure may roll the logical cycle back to its waiting stage. An exception during or after `placeOrder` leaves the exact reference and any returned IDs stored as `SUBMISSION_UNKNOWN`, with the cycle in `MANUAL_REVIEW` and recovery required. An empty open-order response does not prove that the order was never sent; automatic retry remains blocked until the uncertainty is resolved.
 
 ### What-if validation
 
@@ -196,6 +196,6 @@ Manual cancellation or selling in TWS can be operationally necessary, but it can
 
 The established host/port/client/profile identity is separate from editable connection drafts. A draft/session mismatch blocks Start, quote confirmation/search and trading mutations until a matching session is established. Cycle account/contract identity remains pinned independently.
 
-A BUY repeats enabled freshness and session checks after potentially slow local backup/intent writes and immediately before the broker call. Definite pre-transmission failure records the intent and rolls back; a possibly transmitted order still uses the existing SUBMISSION_UNKNOWN recovery path.
+A BUY repeats enabled freshness and session checks after potentially slow local intent writes and immediately before the broker call. Definite pre-transmission failure records the intent and rolls back; a possibly transmitted order still uses the existing SUBMISSION_UNKNOWN recovery path.
 
 Recovery rejects contradictory available account, contract and permanent-order identifiers. A numeric order ID by itself is insufficient to claim an otherwise unproven execution. Exact owned references retain their safeguards. Commission projections consistently use currency-validated signed amounts; authoritative later zero/downward corrections are not replaced by stale larger cumulative fees.

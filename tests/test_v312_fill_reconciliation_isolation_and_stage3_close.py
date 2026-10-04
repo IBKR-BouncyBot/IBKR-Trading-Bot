@@ -887,6 +887,8 @@ def test_terminal_zero_poll_preserves_callback_buy_fill_and_enters_stage3(tmp_pa
     assert partial.stage == Stage.BUY_TRAIL_ACTIVE
     assert partial.buy_filled_qty == 4
     assert captures == [("BUY_FILL", 4)]
+    assert backups == []
+    controller._drain_commands()
     assert backups == ["after_buy_partial_fill"]
 
     terminal = PolledOrderState(
@@ -908,6 +910,8 @@ def test_terminal_zero_poll_preserves_callback_buy_fill_and_enters_stage3(tmp_pa
     assert settled.buy_filled_qty == 4
     assert settled.avg_buy_price == pytest.approx(99.0)
     assert captures == [("BUY_FILL", 4)]
+    assert backups == ["after_buy_partial_fill"]
+    controller._drain_commands()
     assert backups == ["after_buy_partial_fill", "after_buy_fill"]
 
 

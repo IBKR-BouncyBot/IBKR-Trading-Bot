@@ -1,6 +1,6 @@
 # Worker watchdog and automatic recovery
 
-This document defines the current v5.3.0 worker/storage supervision behavior. It preserves BouncyBot's single-controller-worker design. The watchdog does not add a broker worker, database-writer worker, service, daemon, or second trading process. The separate read-only Cycle audit reader and market-capture ZIP writer do not perform broker actions or replace the controller worker.
+This document defines the current v5.6.0 worker/storage supervision behavior. It preserves BouncyBot's single-controller-worker design. The watchdog does not add a broker worker, database-writer worker, service, daemon, or second trading process. The separate read-only Cycle audit reader and market-capture ZIP writer do not perform broker actions or replace the controller worker.
 
 ## Failure class addressed
 

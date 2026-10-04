@@ -1,6 +1,6 @@
 # Limitations and non-goals
 
-This document states the boundaries of v5.3.0. Treat each limitation as an operational constraint, not as a future guarantee.
+This document states the boundaries of v5.6.0. Treat each limitation as an operational constraint, not as a future guarantee.
 
 ## Strategy scope
 
@@ -83,7 +83,7 @@ Use separate accounts or deliberate operating procedures when strict position se
 
 - P/L is based on recorded application fills and commissions that IBKR reports to this client. It is not a complete account statement.
 - The application does not calculate tax, regulatory reporting, wash sales, FX conversion, corporate actions, dividends, financing, borrow fees, or portfolio margin.
-- Daily and historical guard calculations are local SQLite calculations and do not replace broker account-level risk limits. Daily P/L uses the UTC date of completed cycles’ `updated_at` fields. The consecutive-loss query examines at most the latest 100 completed cycles for the selected ticker/conId, including legacy same-ticker rows without a conId.
+- Daily and historical guard calculations are local SQLite calculations and do not replace broker account-level risk limits. Daily P/L uses the stable UTC `completed_at` date; existing completed rows receive a one-time legacy backfill from `updated_at`. Later commission updates do not move a cycle to another day. The consecutive-loss query examines at most the latest 100 completed cycles for the selected ticker/conId, including legacy same-ticker rows without a conId.
 - The project does not provide legal, tax, or investment advice.
 
 ## Platform limits
@@ -110,7 +110,7 @@ Multiple BouncyBot copies can share a Master API feed. v5.0.0 rejects attributio
 
 A validated ready ATR estimate is checkpointed in the existing SQLite `app_settings` table for the exact confirmed contract, currency, venue, trading/data profile, ATR period, and bar duration. At a verified open RTH session, that estimate can supply the starting ATR/ATR% while current-session bars warm up. It does not insert synthetic observations or make a quote fresh. The first ready current-session calculation replaces it. The GUI identifies the saved session and today's observed bar count.
 
-The seed must be no more than seven calendar days old and must contain finite positive, internally consistent values observed inside its recorded RTH window. Weekends and short holidays can therefore reuse the most recent observed session; the application does not guess missing exchange sessions. First use, an expired/corrupt/mismatched checkpoint, or a changed ATR period/bar duration without a matching checkpoint retains normal warmup. A database from before checkpoint support also needs normal warmup until a valid estimate has been saved. A same-session application/watchdog restart can also reuse a valid checkpoint. Current market-data, opening-delay, RTH, gap, spread, two-observation SELL, and broker-reconciliation guards still apply. A saved estimate is not evidence that today's volatility is unchanged.
+The seed must be no more than 24 elapsed UTC hours old (the exact 24-hour boundary is accepted) and must contain finite positive, internally consistent values observed inside its recorded RTH window. A next-session or same-session estimate is eligible only within that age limit; weekend and longer holiday gaps require normal warmup. The application does not guess exchange holiday calendars. First use, an expired/corrupt/mismatched checkpoint, or a changed ATR period/bar duration without a matching checkpoint retains normal warmup. A database from before checkpoint support also needs normal warmup until a valid estimate has been saved. A same-session application/watchdog restart can also reuse a valid checkpoint. Current market-data, opening-delay, RTH, gap, spread, two-observation SELL, and broker-reconciliation guards still apply. A saved estimate is not evidence that today's volatility is unchanged.
 
 ATR memory does not detect every corporate action or guarantee suitability of the previous estimate after an overnight event. Retain gap and quote guards and inspect the saved/current source indicator. Only observed sessions can be reused; no historical data request is added.
 

@@ -89,14 +89,14 @@ class LiveLayoutTests(unittest.TestCase):
                 self.assertEqual(bar.pills["Ticker"]._state, "waiting")
                 self.assertEqual(snapshot, before)
 
-    def test_ticker_source_precedence_and_contract_details_are_preserved(self):
+    def test_confirmed_contract_precedes_retained_cycle_and_strategy_tickers(self):
         snapshot = {
             "strategy": {"ticker": "STRATEGY", "exchange": "SMART", "currency": "USD"},
             "price_snapshot": {"contract": {"ticker": "CONTRACT", "exchange": "IBIS2", "currency": "EUR"}},
             "active_cycle": {"ticker": "CYCLE", "exchange": "NASDAQ", "currency": "USD"},
         }
         bar = self.gui.LiveStatusBar()
-        for expected in ("CYCLE / NASDAQ / USD", "CONTRACT / IBIS2 / EUR", "STRATEGY / SMART / USD"):
+        for expected in ("CONTRACT / IBIS2 / EUR", "CONTRACT / IBIS2 / EUR", "STRATEGY / SMART / USD"):
             with self.subTest(expected=expected):
                 bar.update_data(snapshot)
                 self.assertEqual(bar.pills["Ticker"].value.text(), expected)

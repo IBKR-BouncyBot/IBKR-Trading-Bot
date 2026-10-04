@@ -153,7 +153,7 @@ CURRENCY_SYMBOLS = {"USD": "$", "EUR": "€"}
 ACTIVE_CONTRACT_CURRENCY = "USD"
 CURRENCY_SYMBOL = CURRENCY_SYMBOLS[ACTIVE_CONTRACT_CURRENCY]
 
-APP_VERSION = "5.3.0"
+APP_VERSION = "5.6.0"
 DARK_MODE_APP_PROPERTY = "bouncybotDarkMode"
 
 LIGHT_FUSION_PALETTE_COLORS = {
@@ -200,10 +200,12 @@ BOUNCYBOT_SUPPORT_ADDRESSES = (
     ),
     (
         "Midnight / NIGHT",
-        "addr1qyre4dsc3xdgcr8w3lmfdy038f9w0statt7q7d8urfvgyh58kmj5wd059grxl82f8h5mtyzl87cvqj8ldv2e0las7tnsu66x8a",
+        "addr1qyrzra5qhupeleruc3jezmswkfad32h9qz5lxa88ry2egm8686pww4mw030q7jrf05mjc20ez9ya0nyvuvjvs8v36tlsnhr5nd",
     ),
-    ("Ethereum / ETH", "0xe1283022e1166df70092ff3094a1d2bd79102c3a"),
-    ("Solana / SOL", "78EG5myV7Xjx4iNWt7mnn3BHULMNhLchFAcggnyeiiyb"),
+    ("Ethereum / ETH", "0x78bDC85a97e2d87812Cc37e49936102d897B32d1"),
+    ("Solana / SOL", "3S69hjpdnkHgsdeBBQwHY9oLjHuqvw8rLzuAC2jc7CUY"),
+    ("XRP", "rJfnMVkbCfVUsyyTxWaeE6b3LVFgqasitw"),
+    ("Zcash / ZEC", "t1aDkPkv8n8jJiWFtueANZS2b89x1BsHmFq"),
 )
 
 
@@ -957,6 +959,53 @@ def _format_utc_timestamp(value: Any, *, compact: bool = False) -> str:
     return datetime.fromtimestamp(float(parsed), timezone.utc).strftime(fmt)
 
 
+def _last_market_update(snapshot: dict[str, Any]) -> Any:
+    """Display actual API receipt time, never the time of a cached read."""
+    return (
+        snapshot.get("api_last_data_received_at")
+        or snapshot.get("api_data_last_received_at")
+        or snapshot.get("market_data_update_received_at")
+    )
+
+
+def _format_market_data_age(value: Any) -> str:
+    seconds = _float_or_none(value)
+    if seconds is None:
+        return "-"
+    seconds = max(0.0, seconds)
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    if seconds < 3600:
+        return f"{seconds / 60.0:.1f}m"
+    return f"{seconds / 3600.0:.1f}h"
+
+
+def _display_data_is_stale(snapshot: dict[str, Any], max_age: Any = 3.0) -> bool:
+    """Normalize old invalidated and old ordinary quotes for display only."""
+    age = _float_or_none(snapshot.get("api_data_age_seconds"))
+    if age is None and not snapshot.get("market_data_event_tracking"):
+        age = _float_or_none(snapshot.get("age_seconds"))
+    limit = max(0.1, _float_or_none(max_age) or 3.0)
+    return str(snapshot.get("api_data_state") or "") == "stale" or (
+        age is not None and age > limit
+    )
+
+
+def _price_feed_display_status(snapshot: dict[str, Any], max_age: Any = 3.0) -> tuple[str, str]:
+    data_state = str(snapshot.get("api_data_state") or "")
+    if snapshot.get("upstream_connected") is False or data_state == "upstream_disconnected":
+        return "IBKR server link lost; cached quotes invalid", "risk"
+    if snapshot.get("market_data_event_tracking") and snapshot.get("market_data_event_tracking_available") is False:
+        return "Market-data update tracking unavailable", "risk"
+    if snapshot.get("price") is None:
+        return str(snapshot.get("status") or "No usable price"), "risk"
+    if _display_data_is_stale(snapshot, max_age):
+        return "Cached price — market data stale", "waiting"
+    if snapshot.get("api_data_invalidated") or data_state in {"invalidated", "cached_only"}:
+        return "Cached price — awaiting a new market update", "waiting"
+    return str(snapshot.get("status") or "Price available"), "success"
+
+
 
 def _rth_zone(zone_name: Any) -> tuple[Optional[ZoneInfo], str]:
     """Return the supplied contract timezone without guessing a replacement."""
@@ -1679,6 +1728,20 @@ class StatusPill(QFrame):
         self.set_state(state)
 
 
+def _display_cycle_matches_contract(cycle: dict[str, Any], contract: dict[str, Any]) -> bool:
+    """Keep retained cycle levels separate from a newly confirmed instrument."""
+    cycle_id = _float_or_none(cycle.get("con_id"))
+    contract_id = _float_or_none(contract.get("con_id"))
+    if cycle_id and contract_id:
+        return cycle_id == contract_id
+    for field in ("ticker", "currency", "primary_exchange"):
+        previous = str(cycle.get(field) or "").strip().upper()
+        current = str(contract.get(field) or "").strip().upper()
+        if previous and current and previous != current:
+            return False
+    return True
+
+
 class LiveStatusBar(QFrame):
     DATA_MODE_LABELS = {0: "Auto", 1: "Live", 2: "Frozen", 3: "Delayed", 4: "Delayed frozen"}
 
@@ -1738,7 +1801,6 @@ class LiveStatusBar(QFrame):
             upstream_connected = bool(upstream_connected)
         upstream_recovery_pending = bool(snapshot.get("upstream_recovery_pending"))
         awaiting_fresh_data = bool(broker_connectivity.get("awaiting_fresh_market_data"))
-        has_market_data_context = bool(price_snapshot or cycle)
         connectivity_message = str(broker_connectivity.get("message") or snapshot.get("status") or "")
         connectivity_code = broker_connectivity.get("error_code")
         code_text = f"IBKR code {connectivity_code}. " if connectivity_code not in (None, "") else ""
@@ -1749,12 +1811,12 @@ class LiveStatusBar(QFrame):
             connection_text, connection_state = "Gateway only", "risk"
         elif upstream_recovery_pending:
             connection_text, connection_state = "Reconciling", "waiting"
-        elif awaiting_fresh_data and has_market_data_context:
-            connection_text, connection_state = "Data pending", "waiting"
         elif upstream_connected is True:
             connection_text, connection_state = "Connected", "success"
         else:
             connection_text, connection_state = "Checking link", "waiting"
+        if connection_state == "success":
+            connectivity_message = "Broker connection confirmed; see Data for market-data freshness."
         connection_tooltip = (
             f"Local API socket: {'connected' if local_connected else 'disconnected'}\n"
             f"Gateway/TWS to IBKR servers: "
@@ -1794,9 +1856,10 @@ class LiveStatusBar(QFrame):
         account_text = account or ("Auto (single managed account)" if connected and local_connected else "N/A")
         self.pills["Account"].set_value(account_text, "success" if upstream_connected is True else "waiting")
         contract = price_snapshot.get("contract") or {}
-        ticker = cycle.get("ticker") or contract.get("ticker") or strategy.get("ticker")
-        exchange = cycle.get("exchange") or contract.get("exchange") or strategy.get("exchange") or "SMART"
-        currency = cycle.get("currency") or contract.get("currency") or strategy.get("currency") or "USD"
+        display_cycle = cycle if _display_cycle_matches_contract(cycle, contract) else {}
+        ticker = contract.get("ticker") or display_cycle.get("ticker") or strategy.get("ticker")
+        exchange = contract.get("exchange") or display_cycle.get("exchange") or strategy.get("exchange") or "SMART"
+        currency = contract.get("currency") or display_cycle.get("currency") or strategy.get("currency") or "USD"
         self.pills["Ticker"].set_value(f"{ticker} / {exchange} / {currency}" if ticker else "N/A", "success" if ticker else "waiting")
         rth_open = price_snapshot.get("rth_open")
         rth_text = _format_rth_status(price_snapshot, short=True)
@@ -1822,16 +1885,13 @@ class LiveStatusBar(QFrame):
             data_text, data_state = "IBKR link lost", "risk"
         elif event_tracking and event_tracking_available is False:
             data_text, data_state = "Update tracking unavailable", "risk"
+        elif has_price and _display_data_is_stale(price_snapshot, strategy.get("max_selected_price_age_seconds")):
+            stale_text = f"Stale {_format_market_data_age(age)}" if isinstance(age, (int, float)) else "Stale"
+            data_text, data_state = f"{mode_label} / {stale_text}", "waiting"
         elif bool(price_snapshot.get("api_data_invalidated")) or data_code == "invalidated":
             data_text, data_state = "Waiting for update", "waiting"
         elif not has_price:
             data_text, data_state = "No usable price", "risk"
-        elif data_code == "stale" or (
-            isinstance(age, (int, float))
-            and float(age) > float(strategy.get("max_selected_price_age_seconds") or 3.0)
-        ):
-            stale_text = f"Stale {float(age):.1f}s" if isinstance(age, (int, float)) else "Stale"
-            data_text, data_state = f"{mode_label} / {stale_text}", "waiting"
         elif data_code == "cached_only":
             data_text, data_state = "Cached only", "waiting"
         elif mode_value in {3, 4}:
@@ -1844,6 +1904,9 @@ class LiveStatusBar(QFrame):
         data_tooltip = (
             f"State: {data_code or 'not reported'}\n"
             f"Last actual streaming update age: {update_age_text}\n"
+            f"Last actual streaming update: {_format_utc_timestamp(_last_market_update(price_snapshot))}\n"
+            f"Awaiting a new update after connection notification: {'yes' if awaiting_fresh_data else 'no'}\n"
+            f"Invalidation reason: {price_snapshot.get('api_data_invalidated_reason') or '-'}\n"
             f"Actual update sequence: {price_snapshot.get('market_data_update_sequence') or '-'}\n"
             f"Subscription ID: {price_snapshot.get('market_data_subscription_id') or '-'}\n"
             f"Update-event tracking available: "
@@ -1867,6 +1930,25 @@ class LiveStatusBar(QFrame):
             trading_text = str(trading_status.get("summary") or "Stopped")
             trading_state = str(trading_status.get("state") or "inactive")
             trading_tooltip = str(trading_status.get("tooltip") or trading_text)
+            blockers = trading_status.get("blockers") or []
+            # Only simplify the ordinary closed-session wait. Preserve every
+            # blocker in the tooltip and leave all other faults/headlines alone.
+            if (
+                trading_state == "waiting"
+                and stage in {Stage.WAIT_INITIAL_DROP.value, Stage.WAIT_RISE_TRIGGER.value}
+                and connected and local_connected and upstream_connected is True
+                and not upstream_recovery_pending
+                and not snapshot.get("recovery_required")
+                and not snapshot.get("startup_resume_required")
+                and not (snapshot.get("storage_fault") or {}).get("active")
+                and blockers
+                and all(item.get("code") in {"rth_closed", "stale_data", "fresh_market_data_pending"} for item in blockers)
+            ):
+                rth_blocker = next((item for item in blockers if item.get("code") == "rth_closed"), None)
+                if rth_blocker is not None:
+                    side = str(rth_blocker.get("side") or "")
+                    if side in {"BUY", "SELL"}:
+                        trading_text = f"{side} blocked: RTH closed"
         elif snapshot.get("startup_resume_required"):
             trading_text, trading_state = "Start required", "waiting"
         elif _blocking_cycle_message(cycle):
@@ -1881,7 +1963,7 @@ class LiveStatusBar(QFrame):
             trading_text, trading_state = "Stopped", "waiting"
         self.pills["Trading"].set_value(trading_text, trading_state)
         display_price = _float_or_none(price_snapshot.get("price"))
-        trigger = _float_or_none(cycle.get("rise_trigger_price"))
+        trigger = _float_or_none(display_cycle.get("rise_trigger_price"))
         if display_price is not None and display_price <= 0:
             display_price = None
         if trigger is not None and trigger <= 0:
@@ -2548,6 +2630,25 @@ class CycleTimelineWidget(QWidget):
         cycle = self._cycle()
         markers: list[dict[str, Any]] = []
 
+        def fill_point(
+            aggregate_price: Any,
+            aggregate_time: Any,
+            execution: dict[str, Any],
+            submitted_price: Any,
+            order_time: Any,
+        ) -> tuple[Any, Optional[float]]:
+            # A completion marker represents the aggregate fill, not the first
+            # partial execution. If that aggregate is unavailable, keep the
+            # execution's own price and timestamp together.
+            if positive_price(aggregate_price) is not None:
+                return aggregate_price, self._aligned_action_time(
+                    aggregate_time or order_time, execution.get("executed_at")
+                )
+            execution_price = execution.get("avg_price") or execution.get("price")
+            if positive_price(execution_price) is not None:
+                return execution_price, _parse_timestamp(execution.get("executed_at"))
+            return submitted_price, self._aligned_action_time(order_time, aggregate_time)
+
         def add(label: str, price: Any, ts: Any, kind: str, note: str = "") -> None:
             value = positive_price(price)
             if value is None:
@@ -2570,13 +2671,17 @@ class CycleTimelineWidget(QWidget):
         add("DROP", cycle.get("drop_trigger_price") or self.row.get("drop_trigger_price"), drop_time, "drop", "Initial drop trigger")
 
         buy_exec = self._first_execution("BUY")
+        buy_price, buy_time = fill_point(
+            cycle.get("avg_buy_price") or self.row.get("avg_buy_price"),
+            cycle.get("buy_filled_at") or self.row.get("buy_filled_at") or self._first_decision_time("buy_fill"),
+            buy_exec,
+            cycle.get("buy_initial_trail_stop_price"),
+            buy_order.get("updated_at") or buy_order.get("created_at"),
+        )
         add(
             "BUY",
-            buy_exec.get("avg_price") or buy_exec.get("price") or cycle.get("avg_buy_price") or self.row.get("avg_buy_price") or cycle.get("buy_initial_trail_stop_price"),
-            self._aligned_action_time(
-                cycle.get("buy_filled_at") or self.row.get("buy_filled_at") or self._first_decision_time("buy_fill") or buy_order.get("updated_at") or buy_order.get("created_at"),
-                buy_exec.get("executed_at"),
-            ),
+            buy_price,
+            buy_time,
             "buy",
             "BUY fill or submitted BUY level",
         )
@@ -2587,13 +2692,17 @@ class CycleTimelineWidget(QWidget):
             if "PROTECT" in ref:
                 protective_exec = dict(execution)
                 break
+        protective_price, protective_time = fill_point(
+            cycle.get("protective_avg_sell_price") or self.row.get("protective_avg_sell_price"),
+            cycle.get("protective_sell_filled_at") or self.row.get("protective_sell_filled_at"),
+            protective_exec,
+            cycle.get("protective_sell_initial_stop_price"),
+            protective_order.get("updated_at") or protective_order.get("created_at"),
+        )
         add(
             "PROTECTIVE SELL",
-            protective_exec.get("avg_price") or protective_exec.get("price") or cycle.get("protective_avg_sell_price") or cycle.get("protective_sell_initial_stop_price"),
-            self._aligned_action_time(
-                cycle.get("protective_sell_filled_at") or self.row.get("protective_sell_filled_at") or protective_order.get("updated_at") or protective_order.get("created_at"),
-                protective_exec.get("executed_at"),
-            ),
+            protective_price,
+            protective_time,
             "protective",
             "Protective SELL marker",
         )
@@ -2608,13 +2717,17 @@ class CycleTimelineWidget(QWidget):
                 if not sell_exec:
                     sell_exec = dict(execution)
         sell_order = self._first_order("SELL", "SELL_TRAIL")
+        sell_price, sell_time = fill_point(
+            cycle.get("avg_sell_price") or self.row.get("avg_sell_price"),
+            cycle.get("sell_filled_at") or self.row.get("sell_filled_at") or self._first_decision_time("sell_fill"),
+            sell_exec,
+            cycle.get("sell_initial_trail_stop_price"),
+            sell_order.get("updated_at") or sell_order.get("created_at"),
+        )
         add(
             "FINAL SELL",
-            sell_exec.get("avg_price") or sell_exec.get("price") or cycle.get("avg_sell_price") or self.row.get("avg_sell_price") or cycle.get("sell_initial_trail_stop_price"),
-            self._aligned_action_time(
-                cycle.get("sell_filled_at") or self.row.get("sell_filled_at") or self._first_decision_time("sell_fill") or sell_order.get("updated_at") or sell_order.get("created_at"),
-                sell_exec.get("executed_at"),
-            ),
+            sell_price,
+            sell_time,
             "sell",
             "Final profit/protective exit marker",
         )
@@ -3616,7 +3729,10 @@ class StrategyGraphWidget(QWidget):
         self._history: deque[tuple[float, float]] = deque()
         self._history_max_points = 21600
         self._history_max_age_seconds = 6 * 60 * 60
-        self._cycle_key: Optional[str] = None
+        self._cycle_key: Optional[tuple[Any, ...]] = None
+        self._display_ticker = ""
+        self._trail_states: dict[str, dict[str, Any]] = {}
+        self._trail_estimate_note = ""
         self._last_plot_rect: Optional[QRectF] = None
         self._last_plot_time_range: Optional[tuple[float, float]] = None
         self._hover_sample: Optional[tuple[float, float]] = None
@@ -3633,25 +3749,145 @@ class StrategyGraphWidget(QWidget):
         *,
         repaint: bool = True,
     ) -> None:
-        key = str((cycle or {}).get("id") or f"IDLE:{strategy.normalized_ticker()}")
+        contract = (price_snapshot or {}).get("contract") or {}
+        display_cycle = cycle if _display_cycle_matches_contract(cycle or {}, contract) else None
+        identity = contract or display_cycle or {
+            "ticker": strategy.normalized_ticker(), "con_id": strategy.contract_con_id,
+            "currency": strategy.currency, "primary_exchange": strategy.primary_exchange,
+        }
+        con_id = identity.get("con_id")
+        instrument = ("con_id", str(con_id)) if con_id else (
+            "symbol", str(identity.get("ticker") or "").upper(),
+            str(identity.get("currency") or "").upper(),
+            str(identity.get("primary_exchange") or "").upper(),
+        )
+        key = (instrument, (display_cycle or {}).get("id"))
+        previous_cycle = self._cycle
         if key != self._cycle_key:
             self._history.clear()
             self._hover_point = None
+            self._hover_sample = None
+            self._trail_states.clear()
             self._cycle_key = key
-        self._cycle = cycle or None
+            previous_cycle = None
+        self._display_ticker = str(contract.get("ticker") or (display_cycle or {}).get("ticker") or strategy.normalized_ticker())
+        self._cycle = dict(display_cycle) if display_cycle else None
         self._price_snapshot = price_snapshot or None
         self._strategy = strategy
 
         price = _float_or_none((price_snapshot or {}).get("price"))
-        if price is None and cycle:
-            price = _float_or_none(cycle.get("last_price"))
+        if price is None and display_cycle:
+            price = _float_or_none(display_cycle.get("last_price"))
+        now = time.time()
+        self._update_trail_estimate(previous_cycle, now)
         if price is not None and price > 0:
-            now = time.time()
             if not self._history or now - self._history[-1][0] >= 1.0 or abs(price - self._history[-1][1]) > 1e-9:
                 self._history.append((now, price))
                 self._prune_history(now)
         if repaint:
             self.update()
+
+    @staticmethod
+    def _trail_order_key(cycle: dict[str, Any], side: str) -> tuple[str, str]:
+        order_id = cycle.get(f"{side}_order_id")
+        return (str(cycle.get(f"{side}_order_ref") or ""), str(order_id) if order_id is not None else "")
+
+    def _update_trail_estimate(self, previous_cycle: Optional[dict[str, Any]], now: float) -> None:
+        """Track app-observed stops per order, independently of graph pruning.
+
+        An order already present at startup may have trailed while the GUI was
+        absent. Its submitted initial stop cannot reconstruct that history.
+        """
+        cycle = self._cycle or {}
+        side = {Stage.BUY_TRAIL_ACTIVE.value: "buy", Stage.SELL_TRAIL_ACTIVE.value: "sell"}.get(cycle.get("stage"))
+        self._trail_estimate_note = ""
+        if side is None:
+            self._trail_states.clear()
+            return
+        order_key = self._trail_order_key(cycle, side)
+        pct_field = "buy_rebound_trail_pct" if side == "buy" else "sell_trailing_stop_pct"
+        pct = _float_or_none(cycle.get(pct_field))
+        if pct is None and self._strategy is not None:
+            pct = _float_or_none(getattr(self._strategy, pct_field))
+        if pct is None or pct <= 0 or "MARKET" in order_key[0].upper():
+            self._trail_states.pop(side, None)
+            return
+        initial = _float_or_none(cycle.get(f"{side}_initial_trail_stop_price"))
+        price_snapshot = self._price_snapshot or {}
+        received_at = _parse_timestamp(
+            price_snapshot.get("selected_price_basis_received_at") or _last_market_update(price_snapshot)
+        )
+        price = _float_or_none(price_snapshot.get("price"))
+        sequence = _float_or_none(price_snapshot.get("market_data_update_sequence"))
+        subscription = str(price_snapshot.get("market_data_subscription_id") or "")
+        state = self._trail_states.get(side)
+        prior_key = state["signature"][0] if state is not None else self._trail_order_key(previous_cycle or {}, side)
+        same_reference_learning_id = prior_key[0] == order_key[0] and (not prior_key[1] or not order_key[1])
+        same_id_learning_reference = bool(
+            prior_key[1] and prior_key[1] == order_key[1] and (not prior_key[0] or not order_key[0])
+        )
+        if state is not None and (same_reference_learning_id or same_id_learning_reference):
+            # Learning an ID/reference for the same order is not a submission;
+            # in particular it must not turn a restart estimate into known data.
+            order_key = (order_key[0] or prior_key[0], order_key[1] or prior_key[1])
+            state["signature"] = (order_key, state["signature"][1], state["signature"][2])
+        signature = (order_key, initial, pct)
+        if state is None or state["signature"] != signature:
+            # A preceding same-cycle snapshot without this order establishes
+            # that submission occurred while this graph was being observed.
+            observed_submission = bool(
+                any(order_key) and initial is not None and initial > 0
+                and previous_cycle is not None
+                and (
+                    prior_key[0] != order_key[0]
+                    or bool(prior_key[1] and order_key[1] and prior_key[1] != order_key[1])
+                    or (not any(prior_key) and bool(order_key[1]))
+                )
+            )
+            state = {
+                "signature": signature, "estimate": initial if observed_submission else None,
+                "observed_after": now, "last_sample_at": None, "last_sample_price": None, "extreme": None,
+                "submission_quote": (received_at, price, sequence, subscription),
+                "unavailable_reason": "order history was not observed",
+            }
+            self._trail_states[side] = state
+        if state["estimate"] is None:
+            self._trail_estimate_note = f"{side.upper()} stop estimate unavailable: {state['unavailable_reason']}."
+            return
+        # Never treat the cached quote at submission or a cycle's old last_price
+        # as a new observation of this order. Real quote receipt time is needed.
+        if received_at is None or price is None or price <= 0:
+            return
+        if received_at <= state["observed_after"]:
+            submitted_quote = state["submission_quote"]
+            first_second = received_at == math.floor(state["observed_after"])
+            sequence_proves_update = bool(
+                first_second and subscription and subscription == submitted_quote[3]
+                and sequence is not None and submitted_quote[2] is not None
+                and sequence > submitted_quote[2] and price != submitted_quote[1]
+            )
+            if not sequence_proves_update:
+                if first_second and price != submitted_quote[1]:
+                    state["estimate"] = None
+                    state["unavailable_reason"] = "quote timing around submission is ambiguous"
+                    self._trail_estimate_note = f"{side.upper()} stop estimate unavailable: {state['unavailable_reason']}."
+                return
+        if state["last_sample_at"] is not None and (
+            received_at < state["last_sample_at"]
+            or (received_at == state["last_sample_at"] and price == state["last_sample_price"])
+        ):
+            return
+        # Adapter receipt strings have second resolution. Different prices in
+        # the same later second are still distinct post-submission evidence.
+        state["last_sample_at"] = received_at
+        state["last_sample_price"] = price
+        previous_extreme = state["extreme"]
+        extreme = price if previous_extreme is None else (
+            min(previous_extreme, price) if side == "buy" else max(previous_extreme, price)
+        )
+        state["extreme"] = extreme
+        candidate = extreme * (1.0 + pct / 100.0 if side == "buy" else 1.0 - pct / 100.0)
+        state["estimate"] = min(state["estimate"], candidate) if side == "buy" else max(state["estimate"], candidate)
 
     def _prune_history(self, now: Optional[float] = None) -> None:
         """Keep a rolling graph buffer so the app can run indefinitely.
@@ -3696,12 +3932,8 @@ class StrategyGraphWidget(QWidget):
             add("Initial drop trigger", cycle.get("drop_trigger_price"), "#d97706", "Stage 1 trigger")
         elif stage == Stage.BUY_TRAIL_ACTIVE.value:
             add("BUY initial stop", cycle.get("buy_initial_trail_stop_price"), "#2563eb", "submitted stop")
-            pct = _float_or_none(cycle.get("buy_rebound_trail_pct"))
-            if pct is None and self._strategy is not None:
-                pct = float(self._strategy.buy_rebound_trail_pct)
-            if history_prices and pct is not None:
-                low = min(history_prices)
-                add("Estimated current BUY stop", low * (1.0 + pct / 100.0), "#1d4ed8", "app-observed trail estimate")
+            estimate = self._trail_states.get("buy", {}).get("estimate")
+            add("Estimated current BUY stop", estimate, "#1d4ed8", "app estimate; not broker stop")
             add("Raw Last trigger diagnostic", raw_last, "#7c3aed", "broker trigger data")
         elif stage == Stage.WAIT_RISE_TRIGGER.value:
             add("Average buy", cycle.get("avg_buy_price"), "#111827", "executed buy")
@@ -3709,12 +3941,8 @@ class StrategyGraphWidget(QWidget):
             add("Protective SELL stop", cycle.get("protective_sell_initial_stop_price"), "#dc2626", "protective order")
         elif stage == Stage.SELL_TRAIL_ACTIVE.value:
             add("SELL initial stop", cycle.get("sell_initial_trail_stop_price"), "#16a34a", "submitted stop")
-            pct = _float_or_none(cycle.get("sell_trailing_stop_pct"))
-            if pct is None and self._strategy is not None:
-                pct = float(self._strategy.sell_trailing_stop_pct)
-            if history_prices and pct is not None:
-                high = max(history_prices)
-                add("Estimated current SELL stop", high * (1.0 - pct / 100.0), "#059669", "app-observed trail estimate")
+            estimate = self._trail_states.get("sell", {}).get("estimate")
+            add("Estimated current SELL stop", estimate, "#059669", "app estimate; not broker stop")
             add("Raw Last trigger diagnostic", raw_last, "#7c3aed", "broker trigger data")
         elif stage == Stage.CYCLE_COMPLETE.value:
             add("Average buy", cycle.get("avg_buy_price"), "#2563eb", "completed BUY marker")
@@ -3778,7 +4006,7 @@ class StrategyGraphWidget(QWidget):
 
         cycle = self._cycle or {}
         title = "Market and strategy graph"
-        ticker = cycle.get("ticker") or (self._strategy.normalized_ticker() if self._strategy else "")
+        ticker = self._display_ticker
         if ticker:
             title += f" - {ticker}"
         stage = cycle.get("stage") or "Idle / price only"
@@ -3944,6 +4172,13 @@ class StrategyGraphWidget(QWidget):
             row_y += row_h
             if row_y > legend.bottom() - 28:
                 break
+
+        if self._trail_estimate_note:
+            painter.setPen(_theme_color("#6b7280", "#9ca3af"))
+            painter.drawText(
+                QRectF(legend.left() + 12, row_y + 4, legend.width() - 24, 54),
+                Qt.AlignLeft | Qt.AlignTop | Qt.TextWordWrap, self._trail_estimate_note,
+            )
 
     def mouseMoveEvent(self, event) -> None:  # type: ignore[override]
         plot = self._last_plot_rect
@@ -4417,6 +4652,9 @@ class FlowchartPanel(QWidget):
         if rows == self._history_rows:
             return
         current_key = self.history_combo.currentData()
+        selected_id = None
+        if isinstance(current_key, int) and 0 <= current_key < len(self._history_rows):
+            selected_id = self._history_rows[current_key].get("id")
         self._history_rows = rows
         self.history_combo.blockSignals(True)
         self.history_combo.clear()
@@ -4428,10 +4666,11 @@ class FlowchartPanel(QWidget):
             net = row.get("net_pnl")
             net_text = _format_currency(net, 2) if net is not None else "-"
             self.history_combo.addItem(f"Previous trade: {ticker} cycle {cycle} | buy {buy} | net {net_text}", idx)
-        if current_key is not None:
-            for i in range(self.history_combo.count()):
-                if self.history_combo.itemData(i) == current_key:
-                    self.history_combo.setCurrentIndex(i)
+        self.history_combo.setCurrentIndex(0)
+        if selected_id not in (None, ""):
+            for idx, row in enumerate(self._history_rows):
+                if row.get("id") == selected_id:
+                    self.history_combo.setCurrentIndex(idx + 1)
                     break
         self.history_combo.blockSignals(False)
         self._redraw()
@@ -4443,7 +4682,10 @@ class FlowchartPanel(QWidget):
         self._redraw()
 
     def _strategy_from_history_row(self, row: dict[str, Any]) -> StrategySettings:
-        data = asdict(self._current_strategy)
+        # Historical diagrams must never inherit today's operator settings.
+        # Fixed display defaults cover genuinely absent legacy fields; the
+        # selector/explanation identify these assumptions when a row is shown.
+        data = asdict(StrategySettings())
         # History rows use enriched/export-oriented column names such as
         # configured_min_profit_pct. Keep the direct names as fallbacks so the
         # selector also works with raw cycle dictionaries in tests.
@@ -4471,11 +4713,17 @@ class FlowchartPanel(QWidget):
             "max_gap_from_prev_close_pct": ("max_gap_from_prev_close_pct",),
             "block_delayed_data_in_live": ("block_delayed_data_in_live",),
         }
-        for dest, sources in mapping.items():
+        mapping["contract_con_id"] = ("contract_con_id", "con_id")
+        missing = []
+        for dest in data:
+            sources = mapping.get(dest, (dest,))
             for src in sources:
                 if row.get(src) is not None:
                     data[dest] = row.get(src)
                     break
+            else:
+                missing.append(dest)
+        self._history_defaulted_settings = missing
         return StrategySettings(**data)
 
     def _redraw(self) -> None:
@@ -4489,12 +4737,25 @@ class FlowchartPanel(QWidget):
                 row = self._history_rows[int(selected)]
             except Exception:
                 row = {}
-            strategy = self._strategy_from_history_row(row) if row else self._current_strategy
+            strategy = self._strategy_from_history_row(row)
+            missing = getattr(self, "_history_defaulted_settings", [])
+            explanation = "Historical view: uses this cycle's recorded settings."
+            if missing:
+                explanation += " Not recorded; fixed display defaults used: " + ", ".join(
+                    name.replace("_", " ") for name in missing
+                ) + "."
+            self.explanation_label.setText(explanation)
+            self.history_combo.setToolTip(explanation)
             historical_cycle = dict(row or {})
             historical_cycle.setdefault("stage", Stage.CYCLE_COMPLETE.value)
             if self.flowchart.update_data(historical_cycle or None, None, strategy):
                 QTimer.singleShot(0, self._sync_flowchart_canvas)
             return
+        self.explanation_label.setText(
+            "Live explanation view: highlights the current stage, the condition being waited for, "
+            "the next order/action, enabled protections, and active guards."
+        )
+        self.history_combo.setToolTip("")
         if self.flowchart.update_data(self._current_cycle, self._current_price_snapshot, self._current_strategy):
             QTimer.singleShot(0, self._sync_flowchart_canvas)
 
@@ -4633,7 +4894,13 @@ class PricePanel(QGroupBox):
             self.raw_api_toggle.setChecked(bool(enabled))
             self._set_raw_table_visible(bool(enabled))
 
-    def update_data(self, cycle: Optional[dict[str, Any]], price_snapshot: Optional[dict[str, Any]]) -> None:
+    def update_data(
+        self,
+        cycle: Optional[dict[str, Any]],
+        price_snapshot: Optional[dict[str, Any]],
+        *,
+        max_age: Any = None,
+    ) -> None:
         price_snapshot = price_snapshot or {}
         self._last_price_snapshot = price_snapshot
         ticker_text, instrument_text = self._instrument_identity(cycle, price_snapshot)
@@ -4651,14 +4918,16 @@ class PricePanel(QGroupBox):
         selected = self.DATA_MODE_LABELS.get(selected_value, str(selected_value if selected_value is not None else "not selected"))
         actual_value = price_snapshot.get("subscription_market_data_type")
         actual = self.DATA_MODE_LABELS.get(actual_value, str(actual_value if actual_value is not None else "not reported"))
-        status = price_snapshot.get("status") or ("OK" if price is not None else "No usable price")
+        if max_age is None:
+            max_age = (cycle or {}).get("max_selected_price_age_seconds")
+        status, _status_state = _price_feed_display_status(price_snapshot, max_age)
         error = price_snapshot.get("error") or ""
         if error:
             status = f"{status}: {error}"
         status_text = f"{status} | requested {requested} | selected {selected} | actual {actual}"
         if self.price_status.text() != status_text:
             self.price_status.setText(status_text)
-        source_text = f"Source: {price_snapshot.get('source') or '-'} | Updated: {_format_utc_timestamp(price_snapshot.get('timestamp'))}"
+        source_text = f"Source: {price_snapshot.get('source') or '-'} | Last market update: {_format_utc_timestamp(_last_market_update(price_snapshot))}"
         if self.price_source.text() != source_text:
             self.price_source.setText(source_text)
         age = price_snapshot.get("age_seconds")
@@ -4668,10 +4937,10 @@ class PricePanel(QGroupBox):
             next_text = f"next cached-handle check in {float(next_refresh):.1f}s"
         else:
             next_text = "cached handle checked each worker tick; only actual update events count as fresh"
-        refresh_text = f"Snapshot age: {age_text} | {next_text}"
+        refresh_text = f"Cached snapshot checked: {age_text} ago | {next_text}"
         if self.price_refresh.text() != refresh_text:
             self.price_refresh.setText(refresh_text)
-        self._update_api_indicator(price_snapshot)
+        self._update_api_indicator(price_snapshot, max_age=max_age)
         self._update_summary_cards(price_snapshot)
 
         self._update_progress(cycle, price, price_snapshot)
@@ -4783,23 +5052,15 @@ class PricePanel(QGroupBox):
                 card.set_value(value)
 
     def _format_age(self, value: Any) -> str:
-        if not isinstance(value, (int, float)):
-            return "-"
-        seconds = max(0.0, float(value))
-        if seconds < 60:
-            return f"{seconds:.1f}s"
-        minutes = seconds / 60.0
-        if minutes < 60:
-            return f"{minutes:.1f}m"
-        return f"{minutes / 60.0:.1f}h"
+        return _format_market_data_age(value)
 
-    def _update_api_indicator(self, price_snapshot: dict[str, Any]) -> None:
+    def _update_api_indicator(self, price_snapshot: dict[str, Any], *, max_age: Any = 3.0) -> None:
         field_count = int(price_snapshot.get("api_non_null_field_count") or 0)
         data_age = price_snapshot.get("api_data_age_seconds")
         change_age = price_snapshot.get("api_data_change_age_seconds")
         update_count = int(price_snapshot.get("api_data_update_count") or price_snapshot.get("api_data_seen_count") or 0)
         change_count = int(price_snapshot.get("api_data_change_count") or 0)
-        last_data_at = _format_utc_timestamp(price_snapshot.get("api_last_data_received_at"))
+        last_data_at = _format_utc_timestamp(_last_market_update(price_snapshot))
         last_change_at = _format_utc_timestamp(price_snapshot.get("api_last_value_change_at"))
         data_state = str(price_snapshot.get("api_data_state") or "none")
         invalidated = bool(price_snapshot.get("api_data_invalidated"))
@@ -4807,12 +5068,15 @@ class PricePanel(QGroupBox):
         if data_state == "upstream_disconnected":
             dot_object = "ApiIndicatorBad"
             state = "IBKR server link lost; cached quotes invalid"
+        elif price_snapshot.get("market_data_event_tracking") and price_snapshot.get("market_data_event_tracking_available") is False:
+            dot_object = "ApiIndicatorBad"
+            state = "Market-data update tracking unavailable"
+        elif _display_data_is_stale(price_snapshot, max_age):
+            dot_object = "ApiIndicatorWarn"
+            state = "API data stale"
         elif invalidated or data_state == "invalidated":
             dot_object = "ApiIndicatorWarn"
             state = "Waiting for a fresh streaming update"
-        elif data_state == "stale":
-            dot_object = "ApiIndicatorWarn"
-            state = "API data stale"
         elif data_state in {"receiving", "recent"}:
             dot_object = "ApiIndicatorGood"
             state = "Actual API updates are recent"
@@ -5149,6 +5413,25 @@ class AboutInfoDialog(QDialog):
         layout.addWidget(buttons)
 
 
+def _confirm_app_position_market_sell(parent: QWidget, unsold_quantity: float) -> bool:
+    """Use the same deliberate, cancel-default confirmation for either entry point."""
+    quantity_label = (
+        f"all {unsold_quantity:g} app-bought unsold share(s)"
+        if unsold_quantity > 0
+        else "the entire app-bought unsold position"
+    )
+    answer = QMessageBox.question(
+        parent,
+        "Confirm potential-loss market SELL",
+        f"Are you sure you want to sell {quantity_label} with a market order?\n\n"
+        "The order may fill immediately at an unfavorable price and may realize a loss. "
+        "Only the app-owned unsold quantity for the active cycle will be submitted; unrelated account positions are not included.",
+        QMessageBox.Ok | QMessageBox.Cancel,
+        QMessageBox.Cancel,
+    )
+    return answer == QMessageBox.Ok
+
+
 class StopDialog(QDialog):
     def __init__(
         self,
@@ -5299,21 +5582,7 @@ class StopDialog(QDialog):
         self.close_btn.clicked.connect(self.reject)
 
     def _confirm_sell_market(self) -> None:
-        quantity_label = (
-            f"all {self.unsold_quantity:g} app-bought unsold share(s)"
-            if self.unsold_quantity > 0
-            else "the entire app-bought unsold position"
-        )
-        answer = QMessageBox.question(
-            self,
-            "Confirm potential-loss market SELL",
-            f"Are you sure you want to sell {quantity_label} with a market order?\n\n"
-            "The order may fill immediately at an unfavorable price and may realize a loss. "
-            "Only the app-owned unsold quantity for the active cycle will be submitted; unrelated account positions are not included.",
-            QMessageBox.Ok | QMessageBox.Cancel,
-            QMessageBox.Cancel,
-        )
-        if answer != QMessageBox.Ok:
+        if not _confirm_app_position_market_sell(self, self.unsold_quantity):
             return
         self._choose(StopAction.SELL_APP_POSITION_MARKET)
 
@@ -6180,8 +6449,7 @@ class CycleAuditDialog(QDialog):
             return "CANCELLED"
 
         sell_ref = str(row.get("sell_order_ref") or "")
-        protective_ref = str(row.get("protective_sell_order_ref") or "")
-        if protective_qty > 0 or "PROTECT" in sell_ref.upper() or "PROTECT" in protective_ref.upper() or row.get("protective_exit"):
+        if protective_qty > 0 or (sell_qty > 0 and "PROTECT" in sell_ref.upper()) or row.get("protective_exit"):
             return "PROTECTIVE EXIT"
         if (net is not None and net >= 0) or (net is None and gross is not None and gross >= 0):
             return "PROFIT EXIT"
@@ -6323,6 +6591,44 @@ class CycleAuditDialog(QDialog):
         capture_deferred: bool = False,
     ) -> QWidget:
         cycle = details.get("cycle") or row
+
+        def available(*values: Any) -> Any:
+            return next((value for value in values if value is not None and value != ""), None)
+
+        buy_order_type = available(row.get("buy_order_type"), cycle.get("buy_order_type"))
+        if buy_order_type is None:
+            buy_ref = available(cycle.get("buy_order_ref"), row.get("buy_order_ref"))
+            buy_id = available(cycle.get("buy_order_id"), row.get("buy_order_id"))
+            buy_orders = [
+                order for order in details.get("orders") or []
+                if str(order.get("action") or "").upper() == "BUY"
+            ]
+            if buy_ref is None and buy_id is None and len(buy_orders) > 1:
+                # Without a recorded identity, multiple orders cannot safely
+                # identify which BUY type belongs to the reported fill.
+                buy_orders = []
+            for order in buy_orders:
+                if buy_ref is not None and order.get("order_ref") != buy_ref:
+                    continue
+                if buy_ref is None and buy_id is not None and order.get("order_id") != buy_id:
+                    continue
+                raw = _parse_jsonish(order.get("raw_json") or order.get("raw"))
+                raw_order = raw.get("order", raw) if isinstance(raw, dict) else {}
+                buy_order_type = available(
+                    order.get("order_type"),
+                    raw_order.get("orderType") if isinstance(raw_order, dict) else None,
+                )
+                if buy_order_type is not None:
+                    break
+        duration = available(row.get("holding_minutes_display"), row.get("duration"))
+        if duration is None:
+            buy_time = _parse_timestamp(available(cycle.get("buy_filled_at"), row.get("buy_filled_at")))
+            sell_time = _parse_timestamp(available(
+                cycle.get("sell_filled_at"), row.get("sell_filled_at"),
+                cycle.get("protective_sell_filled_at"), row.get("protective_sell_filled_at"),
+            ))
+            if buy_time is not None and sell_time is not None and sell_time >= buy_time:
+                duration = f"{(sell_time - buy_time) / 60.0:.2f} min"
         tab = QWidget()
         layout = QVBoxLayout(tab)
         if capture_deferred:
@@ -6346,15 +6652,15 @@ class CycleAuditDialog(QDialog):
         layout.addWidget(compact_timeline_scroll, 1)
         summary_items = [
             ("Outcome", cls._outcome_badge(row, details)),
-            ("Entry condition", f"Initial drop {row.get('configured_initial_drop_pct') or cycle.get('initial_drop_pct') or '-'}%; BUY rebound {row.get('configured_buy_rebound_pct') or cycle.get('buy_rebound_trail_pct') or '-'}%"),
-            ("Buy order type", row.get("buy_order_type") or cycle.get("buy_order_type") or "TRAIL or MKT from stored order row"),
-            ("Buy fill", f"{cycle.get('buy_filled_qty') or row.get('buy_filled_qty') or '-'} @ {cls._money(cycle.get('avg_buy_price') or row.get('avg_buy_price'))}"),
+            ("Entry condition", f"Initial drop {available(row.get('configured_initial_drop_pct'), cycle.get('initial_drop_pct'), '-')}%; BUY rebound {available(row.get('configured_buy_rebound_pct'), cycle.get('buy_rebound_trail_pct'), '-')}%"),
+            ("Buy order type", available(buy_order_type, "Not available from audit rows")),
+            ("Buy fill", f"{available(cycle.get('buy_filled_qty'), row.get('buy_filled_qty'), '-')} @ {cls._money(available(cycle.get('avg_buy_price'), row.get('avg_buy_price')))}"),
             ("Protective sell status", cycle.get("protective_sell_status") or row.get("protective_sell_enabled_display") or "Not applicable in this stage"),
-            ("Exit condition", f"Minimum profit {row.get('configured_min_profit_pct') or cycle.get('rise_trigger_pct') or '-'}%; SELL trailing-stop {row.get('configured_sell_trail_pct') or cycle.get('sell_trailing_stop_pct') or '-'}%"),
-            ("Sell fill", f"{cycle.get('sell_filled_qty') or row.get('sell_filled_qty') or '-'} @ {cls._money(cycle.get('avg_sell_price') or row.get('avg_sell_price'))}"),
-            ("Gross / net P&L", f"{cls._money(row.get('gross_pnl') or cycle.get('gross_pnl'))} / {cls._money(row.get('net_pnl') or cycle.get('net_pnl'))}"),
-            ("Duration", row.get("holding_minutes_display") or row.get("duration") or "Not available from audit rows"),
-            ("Slippage", row.get("configured_slippage_buffer_pct") or cycle.get("slippage_buffer_pct") or "Not available from audit rows"),
+            ("Exit condition", f"Minimum profit {available(row.get('configured_min_profit_pct'), cycle.get('rise_trigger_pct'), '-')}%; SELL trailing-stop {available(row.get('configured_sell_trail_pct'), cycle.get('sell_trailing_stop_pct'), '-')}%"),
+            ("Sell fill", f"{available(cycle.get('sell_filled_qty'), row.get('sell_filled_qty'), '-')} @ {cls._money(available(cycle.get('avg_sell_price'), row.get('avg_sell_price')))}"),
+            ("Gross / net P&L", f"{cls._money(available(row.get('gross_pnl'), cycle.get('gross_pnl')))} / {cls._money(available(row.get('net_pnl'), cycle.get('net_pnl')))}"),
+            ("Duration", available(duration, "Not available from audit rows")),
+            ("Slippage", available(row.get("configured_slippage_buffer_pct"), cycle.get("slippage_buffer_pct"), "Not available from audit rows")),
             ("Market-data mode", row.get("market_data_mode") or cycle.get("market_data_mode") or "Not available from audit rows"),
         ]
         summary_table = cls._multi_pair_key_value_table(summary_items, pairs_per_row=3)
@@ -6557,7 +6863,7 @@ class CycleAuditDialog(QDialog):
             lines.extend([
                 "BUILT-IN EXAMPLE CYCLE",
                 "=" * 80,
-                "This is synthetic v5.3.0 paper-trading example data. It is not an actual market record, is not stored in SQLite, and cannot affect trading or risk totals.",
+                "This is synthetic v5.6.0 paper-trading example data. It is not an actual market record, is not stored in SQLite, and cannot affect trading or risk totals.",
                 "The scenario models a liquid U.S. stock pullback, a multi-execution trailing BUY fill, a temporary protective SELL, and a modest trailing-stop profit exit.",
                 "",
             ])
@@ -6682,7 +6988,7 @@ class MainWindow(QMainWindow):
         self._watchdog_shutdown_expected = False
         auto_restart_value = str(os.environ.get("IBKR_BOT_AUTO_RESTART", "1") or "1").strip().lower()
         self._watchdog_auto_restart_enabled = auto_restart_value not in {"0", "false", "no", "off"}
-        self.setWindowTitle("BouncyBot - IBKR Portable Trading Bot v5.3.0")
+        self.setWindowTitle("BouncyBot - IBKR Portable Trading Bot v5.6.0")
         icon_path = resource_path("Images", "BouncyBot_app_icon.png")
         if icon_path.is_file():
             self.setWindowIcon(QIcon(str(icon_path)))
@@ -6708,6 +7014,7 @@ class MainWindow(QMainWindow):
         self._history_columns_sized = False
         self._all_history_rows: list[dict[str, Any]] = []
         self._visible_history_rows: list[dict[str, Any]] = []
+        self._requested_history_filters: dict[str, str] = {}
 
         self._build_menu()
         shell = QWidget()
@@ -8143,7 +8450,7 @@ class MainWindow(QMainWindow):
         self.price_status_label.setObjectName("PriceStatusBad")
         self.price_source_label = QLabel("Source: -")
         self.price_source_label.setObjectName("Muted")
-        self.price_updated_label = QLabel("Last update: -")
+        self.price_updated_label = QLabel("Last market update: -")
         self.price_updated_label.setObjectName("Muted")
         self.price_mode_label = QLabel("Requested mode: -")
         self.price_mode_label.setObjectName("Muted")
@@ -8308,6 +8615,10 @@ class MainWindow(QMainWindow):
         root.addLayout(filters)
 
         summary_box = QGroupBox("Completed trade summary")
+        summary_box.setToolTip(
+            "All completed cycles matching the history filters, across the entire database. "
+            "A blank ticker includes all tickers. The table shows the latest 500 matches."
+        )
         summary_grid = QGridLayout(summary_box)
         self.history_summary_cards: dict[str, MetricCard] = {}
         for idx, title in enumerate([
@@ -8374,7 +8685,7 @@ class MainWindow(QMainWindow):
         self.history_table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
         self.history_table.verticalHeader().setDefaultSectionSize(28)
         root.addWidget(self.history_table, 1)
-        self.history_refresh_btn.clicked.connect(lambda: self.controller.refresh_history(self.history_ticker_filter.text()))
+        self.history_refresh_btn.clicked.connect(lambda: self._request_history_refresh(force=True))
         self.history_export_btn.clicked.connect(self._export_history)
         self.history_table.cellClicked.connect(self._history_row_clicked)
         self.history_ticker_filter.textChanged.connect(self._schedule_history_filter)
@@ -8579,6 +8890,33 @@ class MainWindow(QMainWindow):
 
     def _recovery_sell_market_clicked(self) -> None:
         if not self._recovery_refresh_is_current_or_warn("submitting a market SELL"):
+            return
+        cycle = (self.current_snapshot or {}).get("active_cycle") or {}
+        quantity = self._persisted_app_unsold_quantity(cycle)
+        if not cycle or quantity <= 0:
+            QMessageBox.warning(self, "Market SELL unavailable", "No app-bought unsold position is available for the active cycle.")
+            return
+        signature = recovery_cycle_signature(cycle)
+        con_id = cycle.get("con_id")
+        if not _confirm_app_position_market_sell(self, quantity):
+            return
+        # Qt continues receiving worker snapshots while the modal is open. Do
+        # not apply a confirmation to a different cycle, fill, or stale probe.
+        if not self._recovery_refresh_is_current_or_warn("submitting a market SELL"):
+            return
+        current_cycle = (self.current_snapshot or {}).get("active_cycle") or {}
+        current_quantity = self._persisted_app_unsold_quantity(current_cycle)
+        if (
+            recovery_cycle_signature(current_cycle) != signature
+            or current_cycle.get("con_id") != con_id
+            or abs(current_quantity - quantity) > 1e-9
+        ):
+            QMessageBox.warning(
+                self,
+                "Market SELL state changed",
+                "The active cycle or app-owned unsold quantity changed while confirmation was open. "
+                "Review the current reconciliation state and confirm again if you still want to sell.",
+            )
             return
         self.controller.request_stop(StopAction.SELL_APP_POSITION_MARKET)
 
@@ -10156,7 +10494,10 @@ class MainWindow(QMainWindow):
             self._update_event_log(events)
         history_summary = snapshot.get("history_summary") or {}
         history_signature = repr(sorted(history_summary.items()))
-        if history_signature != getattr(self, "_last_history_summary_signature", None):
+        if (
+            (snapshot.get("history_filters") or {}) == self._history_filter_values()
+            and history_signature != getattr(self, "_last_history_summary_signature", None)
+        ):
             self._last_history_summary_signature = history_signature
             self._update_history_summary(history_summary)
         recovery_refresh = _recovery_refresh_status(snapshot)
@@ -10181,9 +10522,11 @@ class MainWindow(QMainWindow):
     def _apply_atr_adaptive_snapshot_to_inputs(self, snapshot: dict[str, Any]) -> None:
         if not hasattr(self, "atr_adaptive_check"):
             return
-        strategy = snapshot.get("strategy") or {}
         price_snapshot = snapshot.get("price_snapshot") or {}
-        enabled = bool(strategy.get("atr_adaptive_enabled", self.atr_adaptive_check.isChecked()) or self.atr_adaptive_check.isChecked())
+        # Startup settings are hydrated before this method. Afterwards the
+        # current controls own manual/adaptive mode: an older queued snapshot
+        # must not overwrite a manual edit awaiting the autosave timer.
+        enabled = bool(self.atr_adaptive_check.isChecked())
         atr = price_snapshot.get("atr") or {}
         adaptive = price_snapshot.get("atr_adaptive_percentages") or {}
         ready = bool(price_snapshot.get("atr_ready") or atr.get("ready"))
@@ -10192,10 +10535,10 @@ class MainWindow(QMainWindow):
             try:
                 self.initial_drop_spin.setValue(float(adaptive.get("initial_drop_pct", self.initial_drop_spin.value())))
                 self.buy_rebound_spin.setValue(float(adaptive.get("buy_rebound_trail_pct", self.buy_rebound_spin.value())))
-                if bool(adaptive.get("atr_adapt_minimum_profit_enabled", self.atr_min_profit_adaptive_check.isChecked())):
+                if self.atr_min_profit_adaptive_check.isChecked():
                     self.rise_trigger_spin.setValue(float(adaptive.get("rise_trigger_pct", self.rise_trigger_spin.value())))
                 self.sell_trail_spin.setValue(float(adaptive.get("sell_trailing_stop_pct", self.sell_trail_spin.value())))
-                if bool(adaptive.get("atr_adapt_protective_sell_enabled", self.atr_protective_sell_adaptive_check.isChecked())):
+                if self.atr_protective_sell_adaptive_check.isChecked():
                     self.protective_sell_trail_spin.setValue(float(adaptive.get("protective_sell_trailing_stop_pct", self.protective_sell_trail_spin.value())))
             finally:
                 self._applying_snapshot_to_inputs = False
@@ -10278,7 +10621,11 @@ class MainWindow(QMainWindow):
         for widget, enabled in zip([self.initial_drop_spin, self.buy_rebound_spin, self.rise_trigger_spin, self.sell_trail_spin], states):
             self._set_widgets_enabled([widget], enabled)
         if hasattr(self, "protective_sell_trail_spin"):
-            protective_manual_enabled = (not atr_enabled or not adapt_protective) and stage in {None, Stage.WAIT_INITIAL_DROP.value, Stage.BUY_TRAIL_ACTIVE.value}
+            protective_manual_enabled = (not atr_enabled or not adapt_protective) and stage in {
+                None, Stage.IDLE.value, Stage.WAIT_INITIAL_DROP.value,
+                Stage.BUY_TRAIL_ACTIVE.value, Stage.CYCLE_COMPLETE.value,
+                Stage.STOPPED.value, Stage.ERROR.value,
+            }
             self._set_widgets_enabled([self.protective_sell_trail_spin], protective_manual_enabled)
 
     def _update_recovery_panel(self, snapshot: dict[str, Any]) -> None:
@@ -10353,15 +10700,11 @@ class MainWindow(QMainWindow):
                     return order
             return None
 
-        def status_working(ref: Any, status: Any, filled_qty: Any = 0) -> bool:
+        def status_working(ref: Any, status: Any) -> bool:
             if not ref:
                 return False
-            try:
-                if int(float(filled_qty or 0)) > 0:
-                    return False
-            except Exception:
-                pass
-            return str(status or "").strip() not in {"Filled", "Cancelled", "ApiCancelled", "Inactive", "Rejected"}
+            # A partial fill does not terminate the unfilled remainder.
+            return str(status or "").strip().lower() not in TERMINAL_ORDER_STATUSES
 
         def broker_probe_stale_for(*timestamps: Any) -> bool:
             checked_at = broker.get("checked_at")
@@ -10381,6 +10724,8 @@ class MainWindow(QMainWindow):
         if broker_position is not None:
             account = broker.get("position_account") or cycle.get("account") or "account not specified"
             broker_position_text = f"TWS position {broker_position:g} shares for {account}"
+            if not refresh_current:
+                broker_position_text += " (not current; refresh required)"
         elif broker.get("position_error"):
             broker_position_text = f"Position check error: {broker.get('position_error')}"
         elif broker.get("checked_at") and not broker.get("connected"):
@@ -10579,7 +10924,15 @@ class MainWindow(QMainWindow):
                     action_state = "risk"
         elif stage == Stage.WAIT_RISE_TRIGGER.value:
             protective_ref = cycle.get("protective_sell_order_ref")
-            if protective_ref and not first_matching_order(protective_ref) and status_working(protective_ref, cycle.get("protective_sell_status"), cycle.get("protective_sell_filled_qty")):
+            if open_qty > 0 and not refresh_current:
+                inconsistent = "The broker position is not current, so the app-owned unsold quantity cannot be verified."
+                recommendation = "Refresh from IBKR/TWS before comparing the full app-owned position with the broker position."
+                action_state = "waiting"
+            elif open_qty > 0 and broker_position is None:
+                inconsistent = "The broker position is unavailable, so the app-owned unsold quantity cannot be verified."
+                recommendation = "Refresh from IBKR/TWS and verify the position before choosing a recovery action."
+                action_state = "waiting"
+            elif protective_ref and not first_matching_order(protective_ref) and status_working(protective_ref, cycle.get("protective_sell_status")):
                 if broker_probe_stale_for(cycle.get("protective_sell_filled_at"), cycle.get("updated_at")):
                     inconsistent = "SQLite expects a protective SELL order, but the broker probe is missing or older than the local protective-order state."
                     recommendation = "Refresh from IBKR/TWS before treating this as a recovery error."
@@ -10588,7 +10941,7 @@ class MainWindow(QMainWindow):
                     inconsistent = "SQLite expects a protective SELL order, but TWS does not show that app-owned order open."
                     recommendation = "Refresh from IBKR/TWS; if no protective execution/order exists, manually decide whether to market-close or mark handled."
                     action_state = "risk"
-            elif broker_position is not None and open_qty > 0 and broker_position < min(1.0, open_qty):
+            elif broker_position is not None and open_qty > 0 and broker_position + 1e-9 < open_qty:
                 inconsistent = "SQLite expects an app-owned long position, but the broker position is lower."
                 recommendation = "Do not submit new SELL orders. Reconcile executions/position manually, then mark handled if already closed."
                 action_state = "risk"
@@ -10749,9 +11102,9 @@ class MainWindow(QMainWindow):
         has_working_local_order = False
         if has_cycle:
             has_working_local_order = any([
-                status_working(cycle.get("buy_order_ref"), cycle.get("buy_status"), 0),
-                status_working(cycle.get("protective_sell_order_ref"), cycle.get("protective_sell_status"), cycle.get("protective_sell_filled_qty")),
-                status_working(cycle.get("sell_order_ref"), cycle.get("sell_status"), cycle.get("sell_filled_qty")),
+                status_working(cycle.get("buy_order_ref"), cycle.get("buy_status")),
+                status_working(cycle.get("protective_sell_order_ref"), cycle.get("protective_sell_status")),
+                status_working(cycle.get("sell_order_ref"), cycle.get("sell_status")),
             ])
         terminal_safe_stage = stage in {"", Stage.IDLE.value, Stage.STOPPED.value, Stage.CYCLE_COMPLETE.value, "No active cycle"}
         permissions = _recovery_action_permissions(
@@ -11274,8 +11627,10 @@ class MainWindow(QMainWindow):
             card.set_value(mapping.get(title))
 
     def _update_price_feed(self, snapshot: Optional[dict[str, Any]], poll_seconds: Any = None) -> None:
+        current = self.current_snapshot or {}
+        max_age = (current.get("strategy") or {}).get("max_selected_price_age_seconds") or 3.0
         if hasattr(self, "price_panel"):
-            self.price_panel.update_data((self.current_snapshot or {}).get("active_cycle"), snapshot)
+            self.price_panel.update_data(current.get("active_cycle"), snapshot, max_age=max_age)
         if not hasattr(self, "price_cards"):
             return
         if not snapshot:
@@ -11291,21 +11646,20 @@ class MainWindow(QMainWindow):
                 self.price_status_label.style().polish(self.price_status_label)
             if self.price_source_label.text() != "Source: -":
                 self.price_source_label.setText("Source: -")
-            if self.price_updated_label.text() != "Last update: -":
-                self.price_updated_label.setText("Last update: -")
+            if self.price_updated_label.text() != "Last market update: -":
+                self.price_updated_label.setText("Last market update: -")
             if self.price_mode_label.text() != "Requested mode: -":
                 self.price_mode_label.setText("Requested mode: -")
             return
 
         price = snapshot.get("price")
-        ok = price is not None
         price_text = _format_price(price)
         if self.price_big_value.text() != price_text:
             self.price_big_value.setText(price_text)
-        status = str(snapshot.get("status") or ("Usable price" if ok else "No usable price"))
+        status, status_state = _price_feed_display_status(snapshot, max_age)
         if self.price_status_label.text() != status:
             self.price_status_label.setText(status)
-        status_object = "PriceStatusGood" if ok else "PriceStatusBad"
+        status_object = {"success": "PriceStatusGood", "waiting": "PriceStatusWarning", "risk": "PriceStatusBad"}[status_state]
         if self.price_status_label.objectName() != status_object:
             self.price_status_label.setObjectName(status_object)
             self.price_status_label.style().unpolish(self.price_status_label)
@@ -11313,8 +11667,7 @@ class MainWindow(QMainWindow):
         source_text = f"Source: {snapshot.get('source') or '-'}"
         if self.price_source_label.text() != source_text:
             self.price_source_label.setText(source_text)
-        updated_at = snapshot.get("timestamp") or snapshot.get("updated_at") or snapshot.get("received_at") or snapshot.get("requested_at") or "-"
-        updated_text = f"Last update ({APP_TIMEZONE_LABEL}): {_format_utc_timestamp(updated_at)}"
+        updated_text = f"Last market update ({APP_TIMEZONE_LABEL}): {_format_utc_timestamp(_last_market_update(snapshot))}"
         if self.price_updated_label.text() != updated_text:
             self.price_updated_label.setText(updated_text)
         data_mode_labels = {0: "Auto best", 1: "Live", 2: "Frozen", 3: "Delayed", 4: "Delayed frozen"}
@@ -11326,7 +11679,7 @@ class MainWindow(QMainWindow):
         actual = data_mode_labels.get(actual_raw, str(actual_raw)) if actual_raw is not None else "not reported"
         age = snapshot.get("age_seconds")
         next_refresh = snapshot.get("next_refresh_seconds")
-        age_text = f"age {float(age):.1f}s" if isinstance(age, (int, float)) else "age -"
+        age_text = f"cached snapshot checked {float(age):.1f}s ago" if isinstance(age, (int, float)) else "cached snapshot check unavailable"
         if isinstance(next_refresh, (int, float)) and float(next_refresh) > 0:
             next_text = f"next {float(next_refresh):.1f}s"
         else:
@@ -11916,6 +12269,28 @@ class MainWindow(QMainWindow):
             return False
         return not (mode_filter == "Live" and mode_text and ("paper" in mode_text or mode_text.startswith("du")))
 
+    def _history_filter_values(self) -> dict[str, str]:
+        """Capture plain values on the GUI thread for worker-owned reporting."""
+        filters = {
+            "ticker": self.history_ticker_filter.text().strip().upper(),
+            "date_from": self.history_from_filter.text().strip(),
+            "date_to": self.history_to_filter.text().strip(),
+            "outcome": self.history_outcome_filter.currentText(),
+            "atr": self.history_atr_filter.currentText(),
+            "mode": self.history_mode_filter.currentText(),
+        }
+        defaults = {"outcome": "All outcomes", "atr": "ATR all", "mode": "Paper/live all"}
+        return {key: value for key, value in filters.items() if value and value != defaults.get(key)}
+
+    def _request_history_refresh(self, *, force: bool = False) -> None:
+        filters = self._history_filter_values()
+        if not force and filters == self._requested_history_filters:
+            return
+        self._requested_history_filters = dict(filters)
+        self._last_history_summary_signature = None
+        self._update_history_summary({})
+        self.controller.refresh_history(filters=filters)
+
     def _apply_history_filters(
         self,
         *args: Any,
@@ -11924,6 +12299,7 @@ class MainWindow(QMainWindow):
     ) -> None:
         if not hasattr(self, "history_table"):
             return
+        self._request_history_refresh()
         source_rows = list(getattr(self, "_all_history_rows", []) or [])
         display_rows = [row for row in source_rows if self._history_row_matches_filters(row)]
         rows_changed = display_rows != self._visible_history_rows
@@ -12074,9 +12450,16 @@ class MainWindow(QMainWindow):
         elif rows_changed:
             self._flowchart_history_refresh_pending = True
 
-    def _on_history(self, rows: list[dict[str, Any]]) -> None:
+    def _on_history(self, rows: Any) -> None:
+        if isinstance(rows, dict):
+            if rows.get("filters", {}) != self._history_filter_values():
+                return
+            summary = rows.get("summary") or {}
+            self._last_history_summary_signature = repr(sorted(summary.items()))
+            self._update_history_summary(summary)
+            rows = rows.get("rows") or []
         display_rows = list(rows or [])
-        if not display_rows:
+        if not display_rows and not self._history_filter_values():
             display_rows = [self._example_history_row()]
         self._all_history_rows = display_rows
         self._history_columns_sized = False
@@ -12088,7 +12471,7 @@ class MainWindow(QMainWindow):
         # file must surface as an operator message instead of an unhandled
         # exception escaping the Qt slot.
         try:
-            target = self.controller.export_history(self.history_ticker_filter.text())
+            target = self.controller.export_history(filters=self._history_filter_values())
         except Exception as exc:
             QMessageBox.warning(self, "Export failed", f"Could not export the trade history:\n{exc}")
             return

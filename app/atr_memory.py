@@ -13,7 +13,10 @@ from math import isclose, isfinite
 from typing import Any, Callable
 
 ATR_SEED_VERSION = 1
-ATR_SEED_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
+# Keep a previous-session estimate for at most 24 elapsed hours. Weekend or
+# longer session gaps expire it; current-session eligibility still comes from
+# the broker-reported RTH window, not a guessed weekday/holiday calendar.
+ATR_SEED_MAX_AGE_SECONDS = 24 * 60 * 60
 ATR_SEED_WRITE_INTERVAL_SECONDS = 60.0
 ATR_SEED_SAVE_WINDOW_SECONDS = 5 * 60.0
 

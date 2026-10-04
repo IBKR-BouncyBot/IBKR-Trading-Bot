@@ -1,6 +1,6 @@
 # Troubleshooting
 
-This guide describes v5.3.0. Keep the source, installed dependencies, and packaged executable version aligned when investigating an issue.
+This guide describes v5.6.0. Keep the source, installed dependencies, and packaged executable version aligned when investigating an issue.
 
 ## The application cannot connect
 
@@ -69,19 +69,22 @@ Review the Price data monitor and event log:
 
 After reconnect, confirm that the **actual update** timestamp/count/sequence advances. A non-null bid, ask, or last value marked cached-only does not prove that new data is arriving. Reconfirm the ticker when the selected contract changed.
 
-The Data indicator reports API activity, while the BUY stale-data guard checks the selected price and bid/ask ages independently. Recent volume or size updates cannot make old price fields fresh. Conversely, an otherwise valid quote within the configured age limits does not become stale merely because the latest read contains no new selected-price event. The Trading status now makes that distinction; strategy evaluation and order submission retain their existing event and safety checks.
+The Data indicator reports subscription type and actual API update age, while the BUY stale-data guard checks the selected price and bid/ask ages independently. **Live / Stale** means the subscription type is live but its last actual update is old. A pending post-recovery/farm event remains in the tooltip and does not replace the stale label when that old update is known. **Last market update** uses the actual event receipt timestamp; **Cached snapshot checked** reports a separate read age and can be recent while the data is old. Recent volume or size updates cannot make old price fields fresh. Conversely, an otherwise valid quote within the configured age limits does not become stale merely because the latest read contains no new selected-price event. The Trading status now makes that distinction; strategy evaluation and order submission retain their existing event and safety checks.
 
 In Stage 3, the general **Running** status does not establish that the separate SELL quote check has passed. The audit report's `stage3_sell_quote_status` records missing/stale quote evidence and confirmation counts; those checks still apply before a SELL can be submitted.
 
-## Gateway is running, but the app shows Gateway only, Reconciling, or Data pending
+## Gateway is running, but connection or data is not ready
 
-These states intentionally distinguish the local API socket from the Gateway/TWS connection to IBKR servers:
+Connection and data readiness are displayed separately:
 
 - **Gateway only:** the local socket is alive, but IBKR reported upstream connectivity unavailable (normally code 1100 or 2110). Trading, app-order polling, strategy advancement, and broker-dependent workflow commands are paused.
 - **Reconciling:** code 1101/1102 restored the upstream link, but app-owned open orders and recent executions are still being checked.
-- **Data pending:** connectivity/reconciliation is available, but no new post-connect/post-recovery ticker event has arrived. Cached fields remain non-tradeable.
+- **Connected:** both broker links are available and reconciliation is complete. It does not establish that a fresh usable quote has arrived.
+- **Stale or waiting data:** the Data box and tooltip explain the market-data state. If no new post-connect/post-recovery ticker event has arrived, cached fields remain non-tradeable. A known old last update is shown as stale even while that additional event is awaited.
 
-Inspect Gateway/TWS messages and Internet connectivity. After restoration, wait for the state to clear and confirm an actual update arrives. If it does not, disconnect/reconnect the app, reconfirm the ticker, refresh Reconciliation, and inspect market-data permissions. Do not rely solely on a populated cached quote.
+Inspect Gateway/TWS messages, the Data tooltip and contract-specific RTH. Old data and waiting for another update can coexist normally while the market is closed; the last actual update appearing before versus after a farm notification should not make two healthy connections look different. The app still requires a new event after its freshness invalidation.
+
+After restoration during an active session, confirm an actual update arrives. If it does not, inspect market-data permissions and capture the current audit status before investigating reconnection or contract confirmation. Do not rely solely on a populated cached quote or a recent cached snapshot check.
 
 ## A contract reports RTH unavailable
 
@@ -97,7 +100,7 @@ A local reconnect is not enough for trading: the upstream IBKR link, broker reco
 
 ## Trading says BUY blocked
 
-Hover the **Trading** box. It lists all currently evaluated blockers, not only the first one. Common reasons include:
+Hover the **Trading** box. It lists all currently evaluated blockers, not only the first one. If closed RTH is accompanied only by stale/pending market data, **RTH closed** leads the compact summary; those data blockers remain active and listed. Other faults retain their priority. Common reasons include:
 
 - ATR warmup;
 - closed or unknown RTH;
@@ -168,7 +171,7 @@ ATR will not warm up from time while the application is closed, from pre/post-ma
 - the selected-price basis update timestamp advances; a size/timestamp callback or unchanged cached Last is not an ATR observation;
 - the ATR period and bar duration are not set unnecessarily high.
 
-When the warmup blocker is enabled, the initial-drop trigger remains unset until readiness. The readiness update creates a new anchor and cannot itself trigger a BUY. Observation/bar collection continues when adaptation is off, but raw in-memory history resets whenever the application restarts and pauses outside RTH. A valid saved RTH estimate can supply readiness during the new warmup. Check the saved-session timestamp, contract/profile, period/bar duration, and seven-day age limit when no starting estimate is used. Missing or rejected checkpoints fall back to ordinary warmup; checkpoint I/O errors are reported through the emergency diagnostic log.
+When the warmup blocker is enabled, the initial-drop trigger remains unset until readiness. The readiness update creates a new anchor and cannot itself trigger a BUY. Observation/bar collection continues when adaptation is off, but raw in-memory history resets whenever the application restarts and pauses outside RTH. A valid saved RTH estimate can supply readiness during the new warmup. Check the saved-session timestamp, contract/profile, period/bar duration, and 24-hour elapsed UTC age limit when no starting estimate is used. Missing or rejected checkpoints fall back to ordinary warmup; checkpoint I/O errors are reported through the emergency diagnostic log.
 
 ## An external long position exists, but the app still allows a BUY
 
@@ -336,3 +339,10 @@ Readiness belonged to the previous calculation. The warmup guard now requires ma
 ## Daily history after upgrading
 
 5.1.0 fixes completion dates against later commission updates. Existing completed rows use their recorded update timestamp as a legacy fallback. If that timestamp was already moved by an older callback, provide the audit/broker completion evidence for investigation; the application does not guess the original date.
+
+
+## Completed trade summary differs from the visible history
+
+The summary uses the Trade history filters, not the current strategy ticker. Clear the ticker, date, outcome, ATR and Paper/live filters to include every completed cycle in the database. Completed-history changes now refresh the rows and flowchart choices along with the summary. **Refresh** remains available for an explicit reload. **Export CSV** uses the same filters and includes all matches beyond the table's display limit.
+
+The table is limited to the latest 500 matching rows, but the summary covers all matching completed cycles. The synthetic empty-history example is excluded from summary metrics. These boundaries can legitimately make the summary count differ from the number of displayed rows. Versions before 5.5.1 could show zero when the configured strategy ticker had no completed trades, even while the unfiltered table showed another ticker's completed history.

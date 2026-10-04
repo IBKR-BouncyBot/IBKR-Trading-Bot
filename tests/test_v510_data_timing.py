@@ -211,34 +211,41 @@ class DataTimingTests(unittest.TestCase):
                 "available": True, "minutes_since_open": 100,
                 "minutes_to_close": 10 if clock[0] == 100 else 4,
             }
-            def delay(_reason):
-                if scenario in {"backup_age", "entry_window"}:
-                    clock[0] += 4 if scenario == "backup_age" else 0.1
-                if scenario == "rth_close":
-                    self.broker.rth_open = False
+            self.backup_calls = []
+            def delay(reason):
+                self.backup_calls.append(reason)
+                if scenario == "backup_age":
+                    clock[0] += 4
             self.c.storage.backup_database = delay
             record = self.c._record_order_intent
             def record_then_delay(*args, **kwargs):
                 record(*args, **kwargs)
                 if scenario == "intent_age":
                     clock[0] += 4
+                elif scenario == "entry_window":
+                    clock[0] += 0.1
+                elif scenario == "rth_close":
+                    self.broker.rth_open = False
             self.c._record_order_intent = record_then_delay
             self.c._execute_actions(actions, cycle)
             order = self.c.storage.get_order_for_cycle_ref(cycle.id, ref)
         return order
 
-    def test_final_buy_rechecks_after_backup_for_both_order_types(self):
-        # Separate test instances below exercise the same persisted paths for
-        # trailing and market orders; no preflight guard is mocked away.
+    def test_trailing_buy_submission_precedes_deferred_backup(self):
         order = self.final_buy("TRAIL", "backup_age")
-        self.assertEqual(self.broker.placed_orders, [])
-        self.assertEqual(order["status"], "SUBMIT_FAILED")
-        self.assertEqual(self.c.active_cycle.stage, Stage.WAIT_INITIAL_DROP)
+        self.assertEqual(len(self.broker.placed_orders), 1)
+        self.assertEqual(order["status"], "Submitted")
+        self.assertEqual(self.backup_calls, [])
+        self.c._drain_commands()
+        self.assertEqual(self.backup_calls, ["order_submission"])
 
-    def test_market_buy_rechecks_after_backup(self):
+    def test_market_buy_submission_precedes_deferred_backup(self):
         order = self.final_buy("MKT", "backup_age")
-        self.assertEqual(self.broker.placed_orders, [])
-        self.assertEqual(order["status"], "SUBMIT_FAILED")
+        self.assertEqual(len(self.broker.placed_orders), 1)
+        self.assertEqual(order["status"], "Submitted")
+        self.assertEqual(self.backup_calls, [])
+        self.c._drain_commands()
+        self.assertEqual(self.backup_calls, ["order_submission"])
 
     def test_market_buy_rechecks_after_intent_persistence(self):
         order = self.final_buy("MKT", "intent_age")
@@ -250,12 +257,12 @@ class DataTimingTests(unittest.TestCase):
         self.assertEqual(self.broker.placed_orders, [])
         self.assertEqual(order["status"], "SUBMIT_FAILED")
 
-    def test_final_buy_checks_rth_after_backup(self):
+    def test_final_buy_checks_rth_after_intent_persistence(self):
         self.final_buy("MKT", "rth_close")
         self.assertEqual(self.broker.placed_orders, [])
         self.assertIn("RTH guard", self.c.active_cycle.error_message)
 
-    def test_final_buy_checks_entry_window_after_backup(self):
+    def test_final_buy_checks_entry_window_after_intent_persistence(self):
         self.final_buy("TRAIL", "entry_window")
         self.assertEqual(self.broker.placed_orders, [])
         self.assertIn("Session timing guard", self.c.active_cycle.error_message)
@@ -270,7 +277,7 @@ class DataTimingTests(unittest.TestCase):
 
     def test_disabled_stale_guard_preserves_configuration(self):
         self.settings.stale_data_guard_enabled = False
-        self.final_buy("MKT", "backup_age")
+        self.final_buy("MKT", "intent_age")
         self.assertEqual(len(self.broker.placed_orders), 1)
 
 

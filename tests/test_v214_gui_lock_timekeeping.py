@@ -9,9 +9,9 @@ PYPROJECT = Path("pyproject.toml").read_text(encoding="utf-8")
 
 
 def test_v215_version_metadata_and_package_docs_are_current():
-    assert "BouncyBot - IBKR Portable Trading Bot v5.3.0" in GUI
+    assert "BouncyBot - IBKR Portable Trading Bot v5.6.0" in GUI
     assert "# BouncyBot - an IBKR Trading Bot" in README
-    assert 'version = "5.3.0"' in PYPROJECT
+    assert 'version = "5.6.0"' in PYPROJECT
     assert Path("docs/legacy/V2_20_RECOVERY_GRAPH_RECOVERY_UI.md").exists()
 
 
@@ -50,7 +50,7 @@ def test_v215_rth_text_and_utc_timekeeping_are_visible_and_consistent():
     assert 'def _format_rth_status(price_snapshot' in GUI
     assert 'RTH open' in GUI
     assert 'RTH closed' in GUI
-    assert 'Last update ({APP_TIMEZONE_LABEL})' in GUI
+    assert 'Last market update ({APP_TIMEZONE_LABEL})' in GUI
     assert 'return datetime.fromtimestamp(float(parsed), timezone.utc).strftime(fmt)' in GUI
     assert 'timestamp=utc_now_iso()' in ADAPTER
     assert 'parsed = parsed.replace(tzinfo=timezone.utc)' in TIMELINE
@@ -59,7 +59,7 @@ def test_v215_rth_text_and_utc_timekeeping_are_visible_and_consistent():
 
 
 def test_v215_default_history_example_uses_current_utc_audit_data():
-    assert 'This is synthetic v5.3.0 paper-trading example data.' in GUI
+    assert 'This is synthetic v5.6.0 paper-trading example data.' in GUI
     assert '"created_at": "2026-07-16T13:35:00+00:00"' in GUI
     assert '"buy_filled_at": "2026-07-16T14:08:27+00:00"' in GUI
     assert '"sell_filled_at": "2026-07-16T15:55:14+00:00"' in GUI

@@ -11,7 +11,7 @@ from app.ib_adapter import MarketPriceSnapshot
 from app.storage import BotStorage
 from tests.test_v400_atr_memory_and_order_edits import (
     FRIDAY,
-    MONDAY,
+    THURSDAY,
     Store,
     controller_with_settings,
     inputs,
@@ -21,8 +21,8 @@ from tests.test_v400_atr_memory_and_order_edits import (
     seeded_memory,
 )
 
-MIDDAY = FRIDAY.replace(hour=16, minute=0, second=0)
-CLOSE = FRIDAY.replace(hour=20, minute=0, second=0)
+MIDDAY = THURSDAY.replace(hour=16, minute=0, second=0)
+CLOSE = THURSDAY.replace(hour=20, minute=0, second=0)
 
 
 def observe(memory, identity, now, atr=2.0, status=None):
@@ -53,10 +53,10 @@ def test_ready_atr_updates_in_memory_without_intraday_database_writes():
 def test_five_minute_boundary_is_inclusive_and_no_earlier_write_occurs():
     memory, identity, store = midday_memory()
     assert ATR_SEED_SAVE_WINDOW_SECONDS == 300
-    before = FRIDAY - timedelta(microseconds=1)
+    before = THURSDAY - timedelta(microseconds=1)
     observe(memory, identity, before, 3.0)
     assert store.writes == 0
-    observe(memory, identity, FRIDAY, 4.0)
+    observe(memory, identity, THURSDAY, 4.0)
     assert store.writes == 1 and not memory.dirty
     assert store.data[memory.key]["snapshot"]["atr"] == 4.0
 
@@ -64,7 +64,7 @@ def test_five_minute_boundary_is_inclusive_and_no_earlier_write_occurs():
 def test_final_five_minutes_save_once_per_minute_then_flush_latest_at_close():
     memory, identity, store = midday_memory()
     for second in range(300):
-        observe(memory, identity, FRIDAY + timedelta(seconds=second), 2 + second / 1000)
+        observe(memory, identity, THURSDAY + timedelta(seconds=second), 2 + second / 1000)
     assert store.writes == 5
     assert memory.dirty
     latest = deepcopy(memory.seed)
@@ -102,10 +102,10 @@ def test_midday_status_loss_is_not_misclassified_as_session_close(change):
 
 def test_unverified_status_in_closing_window_does_not_force_a_write():
     memory, identity, store = midday_memory()
-    memory.prepare(identity, {"is_open": False}, FRIDAY.isoformat())
+    memory.prepare(identity, {"is_open": False}, THURSDAY.isoformat())
     assert store.writes == 0 and memory.dirty
     # A verified closing session resumes normal eligibility without a fake tick.
-    memory.prepare(identity, rth(FRIDAY), FRIDAY.isoformat())
+    memory.prepare(identity, rth(THURSDAY), THURSDAY.isoformat())
     memory.apply(ready_result())
     assert store.writes == 1
     assert store.data[memory.key]["observed_at"] == MIDDAY.isoformat()
@@ -139,7 +139,7 @@ def test_direct_next_session_transition_saves_previous_final_observation():
     observe(memory, identity, CLOSE - timedelta(seconds=2), 3.0)
     observe(memory, identity, CLOSE - timedelta(seconds=1), 4.0)
     assert memory.dirty
-    assert memory.prepare(identity, rth(MONDAY), MONDAY.isoformat())
+    assert memory.prepare(identity, rth(FRIDAY), FRIDAY.isoformat())
     result = memory.apply(pending_result(1))
     assert result["ready"] and result["seeded"]
     assert result["atr"] == 4.0
@@ -174,7 +174,7 @@ def test_explicit_app_close_saves_latest_midday_estimate_and_restart_restores_it
     assert storage.get_json(memory.key, None) is None
     memory.flush()  # Existing orderly-worker-shutdown call; no RTH-window limit.
     assert storage.get_json(memory.key)["snapshot"]["atr"] == 4.0
-    for restart in (latest_time + timedelta(seconds=1), MONDAY):
+    for restart in (latest_time + timedelta(seconds=1), FRIDAY):
         restored = AtrSessionMemory(BotStorage(storage.db_path))
         restored.prepare(identity, rth(restart), restart.isoformat())
         result = restored.apply(pending_result())
@@ -186,12 +186,12 @@ def test_next_day_intraday_estimates_do_not_overwrite_previous_persisted_session
     memory, identity, store = seeded_memory()
     prior = deepcopy(store.data[memory.key])
     for minute in range(61):
-        observe(memory, identity, MONDAY + timedelta(minutes=minute), 3.0 + minute / 100)
+        observe(memory, identity, FRIDAY + timedelta(minutes=minute), 3.0 + minute / 100)
     assert memory.seed["snapshot"]["atr"] == 3.6
     assert store.data[memory.key] == prior and store.writes == 1
     # A crash before today's closing window reuses the previous saved estimate.
     restarted = AtrSessionMemory(store)
-    now = MONDAY + timedelta(hours=2)
+    now = FRIDAY + timedelta(hours=2)
     restarted.prepare(identity, rth(now), now.isoformat())
     assert restarted.apply(pending_result())["atr"] == 2.0
 
@@ -200,7 +200,7 @@ def test_shutdown_during_warmup_does_not_relabel_or_overwrite_saved_seed():
     _, identity, store = seeded_memory()
     prior = deepcopy(store.data)
     memory = AtrSessionMemory(store)
-    memory.prepare(identity, rth(MONDAY), MONDAY.isoformat())
+    memory.prepare(identity, rth(FRIDAY), FRIDAY.isoformat())
     assert memory.apply(pending_result())["seeded"]
     memory.flush()
     assert store.data == prior and store.writes == 1
@@ -226,15 +226,15 @@ def test_failed_final_write_is_retried_at_most_once_per_minute():
 
 def test_transient_status_blips_cannot_bypass_closing_window_retry_interval():
     memory, identity, store = seeded_memory()
-    observe(memory, identity, FRIDAY + timedelta(seconds=1), 3.0)
+    observe(memory, identity, THURSDAY + timedelta(seconds=1), 3.0)
     store.write_error = True
     for second in range(2, 60):
-        now = FRIDAY + timedelta(seconds=second)
+        now = THURSDAY + timedelta(seconds=second)
         status = rth(now) if second % 2 else {"is_open": False}
         memory.prepare(identity, status, now.isoformat())
         memory.apply(ready_result(4.0))
     assert store.writes == 1 and memory.dirty
-    observe(memory, identity, FRIDAY + timedelta(seconds=60), 5.0)
+    observe(memory, identity, THURSDAY + timedelta(seconds=60), 5.0)
     assert store.writes == 2 and memory.dirty
 
 
@@ -271,7 +271,7 @@ def test_controller_saves_final_rth_value_and_restores_without_fake_quotes(tmp_p
         assert controller.price_snapshot["atr_ready"]
         assert controller.storage.get_json(memory.key, None) is None
         for minute, price in enumerate((100.0, 101.0, 100.0, 102.0, 104.0)):
-            tick(price, FRIDAY + timedelta(minutes=minute))
+            tick(price, THURSDAY + timedelta(minutes=minute))
         tick(105.0, CLOSE - timedelta(seconds=1))
         final = deepcopy(memory.seed)
         assert final["snapshot"]["atr"] == controller.price_snapshot["atr_value"]
@@ -280,7 +280,7 @@ def test_controller_saves_final_rth_value_and_restores_without_fake_quotes(tmp_p
         assert not controller.price_snapshot["atr_ready"]
         restored = AtrSessionMemory(BotStorage(controller.storage.db_path))
         identity = atr_seed_identity(contract, settings, f"{controller.connection.trading_mode}|{controller.connection.market_data_type}")
-        restored.prepare(identity, rth(MONDAY), MONDAY.isoformat())
+        restored.prepare(identity, rth(FRIDAY), FRIDAY.isoformat())
         result = restored.apply(pending_result())
         assert result["seeded"] and result["atr"] == final["snapshot"]["atr"]
         assert result["live_bars_available"] == 0

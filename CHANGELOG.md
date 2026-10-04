@@ -2,6 +2,36 @@
 
 Each version has one consolidated entry describing its delivered changes. Current behavior is documented in [README.md](README.md) and the [current guides](docs/README.md); older entries and archived notes describe their historical releases.
 
+## v5.6.0
+
+- Correct all fifteen findings from the 5.5.1 GUI review with targeted changes: protect manual percentages against queued ATR updates; align the Reconciliation market-SELL confirmation with Stop; compare full position quantities and retain nonterminal partial orders as working.
+- Keep ticker identity and graph data consistent after changing instruments; limit estimated trailing stops to the applicable order's lifetime; retain historical flowchart selections by cycle ID and display their saved settings; restore next-cycle manual protective-percentage editing under existing permissions.
+- Apply all Trade history filters to full-result CSV exports, classify protective exits from execution evidence, use weighted-average completion markers, preserve zero-valued audit settings and read available order-type/timing fields. Refresh completed-history rows and selectors only when the relevant history changes.
+- Update the ADA, ETH, NIGHT, SOL, XRP and ZEC support addresses in About > Info and README; add targeted regressions and synchronize current documentation and release metadata. See the [release note](docs/V5_6_0_TARGETED_GUI_FIXES.md) and [implementation and test report](IMPLEMENTATION_TEST_REPORT.txt) for scope and executed validation.
+
+## v5.5.1
+
+- Make Completed trade summary follow the Trade history ticker, date, outcome, ATR and Paper/live filters instead of the configured strategy ticker. With all filters clear, summarize every completed cycle in the database.
+- Apply history filters before the table's 500-row display limit, while summary totals include all matching completed cycles. Ignore results for superseded filters so old requests cannot restore a mismatched summary.
+- Retain the existing database snapshot cadence and cache. The reporting correction adds no database writes, schema changes, broker actions or trading-rule changes.
+- Add history-filter regressions and update documentation and release metadata. Additional GUI review findings are reported separately; they are not silently included in this patch. See the [release note](docs/legacy/V5_5_1_HISTORY_SUMMARY.md) and [implementation and test report](docs/legacy/V5_5_1_IMPLEMENTATION_TEST_REPORT.txt).
+
+## v5.5.0
+
+- Separate connection health from quote freshness in the GUI. Connected instances remain Connected while data is stale or awaiting an update; tooltips no longer imply that an earlier update is arriving now.
+- Present a known old market-data update consistently as stale, including when another event is required after a recovery/farm notification. Retain subscription type, waiting details, delayed/frozen states and other faults.
+- Lead the Trading summary with RTH closed when its only accompanying blockers are stale/pending market data. Keep every blocker in the tooltip and preserve priority for other faults.
+- Show the actual market-update receipt time separately from cached snapshot check age, and label stale/invalidated displayed prices as cached. Never substitute the snapshot-read timestamp for missing actual-update evidence.
+- Add GUI status regressions and update current documentation and release metadata. Trading, broker connectivity, market-data subscriptions, freshness guards, RTH, ATR, persistence and scheduling are unchanged. See the [release note](docs/legacy/V5_5_0_GUI_STATUS.md) and [implementation and test report](docs/legacy/V5_5_0_IMPLEMENTATION_TEST_REPORT.txt).
+
+## v5.4.0
+
+- Defer the nine order/fill backup requests through the existing controller command queue. Durable trading-state writes, broker submission checks and full backup restore validation remain in place. Queued copies run later on the same worker and can still delay it; no backup thread is introduced.
+- Stamp the completed schema with `PRAGMA user_version = 1`. Keep a best-effort pre-migration copy for unstamped/older databases, skip the redundant startup copy for the current stamp, and reject an unreadable or future stamp before backup, migration or database writes.
+- Retain the newest 20 backup files after a new backup passes full restore validation. Startup alone never prunes older copies, and failed backup creation/validation does not prune them.
+- Limit saved RTH ATR estimates to 24 elapsed UTC hours, accepting the exact boundary. Older estimates, including normal weekend gaps, fall back to the existing warmup; identity, RTH and current-quote safeguards remain in place.
+- Add targeted backup, migration, retention and ATR regressions, update current operating documentation and remove the README's screenshot-age note. See the [release note](docs/legacy/V5_4_0_RELIABILITY.md) and [implementation and test report](docs/legacy/V5_4_0_IMPLEMENTATION_TEST_REPORT.txt).
+
 ## v5.3.0
 
 - Show N/A in the top Ticker box when no ticker name is available, retaining populated ticker formatting.
@@ -10,7 +40,7 @@ Each version has one consolidated entry describing its delivered changes. Curren
 - Fit all five Strategy flowchart cards to one compact text-based height while retaining their fonts.
 - Place Reconciliation navigation at the right of the tab row and keep the other three tabs at the left.
 - Add the supplied dark-theme logo, five-stage ribbon and three infographic images to `Images/`, and adopt the supplied README image links and title.
-- Add GUI regressions and update current documentation and release metadata. Name the changed-file archive `IBKR_Trading_Bot_5.3.0_Release_files.zip`. Trading, storage and timer behavior are unchanged. See the [release note](docs/V5_3_0_GUI_LAYOUT.md) and [implementation and test report](IMPLEMENTATION_TEST_REPORT.txt).
+- Add GUI regressions and update current documentation and release metadata. Name the changed-file archive `IBKR_Trading_Bot_5.3.0_Release_files.zip`. Trading, storage and timer behavior are unchanged. See the [release note](docs/legacy/V5_3_0_GUI_LAYOUT.md) and [implementation and test report](docs/legacy/V5_3_0_IMPLEMENTATION_TEST_REPORT.txt).
 
 ## v5.2.0
 

@@ -8,7 +8,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.atr_memory import AtrSessionMemory, atr_seed_identity, valid_atr_seed
+from app.atr_memory import (
+    ATR_SEED_MAX_AGE_SECONDS,
+    AtrSessionMemory,
+    atr_seed_identity,
+    valid_atr_seed,
+)
 from app.ib_adapter import MarketPriceSnapshot, QualifiedContract
 from app.models import CycleState, Stage, StrategySettings
 from app.order_edit_policy import (
@@ -22,8 +27,9 @@ from app.order_edit_policy import (
 from app.storage import BotStorage
 from tests.test_controller_headless import _install_qt_stub
 
-FRIDAY = datetime(2026, 8, 7, 19, 55, tzinfo=timezone.utc)
-MONDAY = datetime(2026, 8, 10, 13, 30, 1, tzinfo=timezone.utc)
+# A Thursday-close seed can supply the next weekday open within 24 hours.
+THURSDAY = datetime(2026, 8, 6, 19, 55, tzinfo=timezone.utc)
+FRIDAY = datetime(2026, 8, 7, 13, 30, 1, tzinfo=timezone.utc)
 
 
 def rth(now):
@@ -72,35 +78,35 @@ class Store:
         self.data[key] = deepcopy(value)
 
 
-def seeded_memory(store=None):
+def seeded_memory(store=None, *, observed=THURSDAY, status=None):
     store = store if store is not None else Store()
     contract, settings = inputs()
     identity = atr_seed_identity(contract, settings, "live|0")
     memory = AtrSessionMemory(store)
-    memory.prepare(identity, rth(FRIDAY), FRIDAY.isoformat())
+    memory.prepare(identity, rth(observed) if status is None else status, observed.isoformat())
     memory.note_observation(live=True)
     memory.apply(ready_result())
     return memory, identity, store
 
 
-def test_first_day_warms_normally_and_weekend_seed_survives_database_restart(tmp_path):
+def test_first_day_warms_normally_and_next_weekday_seed_survives_database_restart(tmp_path):
     storage = BotStorage(tmp_path / "bot.sqlite")
     contract, settings = inputs()
     identity = atr_seed_identity(contract, settings, "live|0")
     first = AtrSessionMemory(storage)
-    first.prepare(identity, rth(FRIDAY), FRIDAY.isoformat())
+    first.prepare(identity, rth(THURSDAY), THURSDAY.isoformat())
     assert not first.apply(pending_result())["ready"]
     first.note_observation(live=True)
     first.apply(ready_result())
     second = AtrSessionMemory(BotStorage(storage.db_path))
-    assert second.prepare(identity, rth(MONDAY), MONDAY.isoformat())
+    assert second.prepare(identity, rth(FRIDAY), FRIDAY.isoformat())
     result = second.apply(pending_result(1))
     assert result["ready"] and result["seeded"]
     assert result["atr_pct"] == 2.0
     assert result["live_bars_available"] == 1
-    assert result["seed_observed_at"] == FRIDAY.isoformat()
+    assert result["seed_observed_at"] == THURSDAY.isoformat()
     # A seeded observation must not refresh/roll forward the checkpoint age.
-    assert second.seed["observed_at"] == FRIDAY.isoformat()
+    assert second.seed["observed_at"] == THURSDAY.isoformat()
     assert second.dirty is False
     fresh = second.apply(ready_result(atr=4.0))
     assert not fresh["seeded"] and fresh["atr_pct"] == 4.0
@@ -108,14 +114,15 @@ def test_first_day_warms_normally_and_weekend_seed_survives_database_restart(tmp
 
 @pytest.mark.parametrize("change", [
     {"version": 2}, {"observed_at": "bad"}, {"observed_at": "2026-08-07T19:55:00"},
-    {"observed_at": "2026-08-12T19:55:00+00:00"}, {"session_close": "2026-08-07T13:00:00+00:00"},
+    {"observed_at": "2026-08-12T19:55:00+00:00"}, {"session_close": "2026-08-06T13:00:00+00:00"},
     {"identity": {}}, {"snapshot": {}}, {"snapshot": None},
 ])
 def test_bad_seed_metadata_is_rejected(change):
     memory, identity, _ = seeded_memory()
+    assert valid_atr_seed(memory.seed, identity, FRIDAY)
     candidate = deepcopy(memory.seed)
     candidate.update(change)
-    assert not valid_atr_seed(candidate, identity, MONDAY)
+    assert not valid_atr_seed(candidate, identity, FRIDAY)
 
 
 @pytest.mark.parametrize("key,value", [
@@ -125,9 +132,10 @@ def test_bad_seed_metadata_is_rejected(change):
 ])
 def test_bad_seed_numeric_facts_are_rejected(key, value):
     memory, identity, _ = seeded_memory()
+    assert valid_atr_seed(memory.seed, identity, FRIDAY)
     record = deepcopy(memory.seed)
     record["snapshot"][key] = value
-    assert not valid_atr_seed(record, identity, MONDAY)
+    assert not valid_atr_seed(record, identity, FRIDAY)
 
 
 @pytest.mark.parametrize("key,value", [
@@ -139,7 +147,7 @@ def test_seeds_are_scoped_to_contract_profile_and_calculation(key, value):
     other = dict(identity)
     other[key] = value
     next_memory = AtrSessionMemory(store)
-    next_memory.prepare(other, rth(MONDAY), MONDAY.isoformat())
+    next_memory.prepare(other, rth(FRIDAY), FRIDAY.isoformat())
     assert not next_memory.apply(pending_result())["ready"]
     assert next_memory.seed is None
     assert memory.seed is not None
@@ -156,7 +164,7 @@ def test_identity_rejects_unqualified_contract_and_uses_normalized_names():
 
 def test_expired_and_future_seeds_do_not_become_ready():
     memory, identity, store = seeded_memory()
-    for now in (FRIDAY - timedelta(minutes=1), FRIDAY + timedelta(days=8)):
+    for now in (THURSDAY - timedelta(minutes=1), THURSDAY + timedelta(days=8)):
         restored = AtrSessionMemory(store)
         restored.prepare(identity, rth(now), now.isoformat())
         assert restored.seed is None
@@ -164,43 +172,117 @@ def test_expired_and_future_seeds_do_not_become_ready():
     assert memory.seed is not None
 
 
+@pytest.mark.parametrize("age_seconds,expected", [
+    (-0.000001, False), (0, True), (86399.999999, True),
+    (86400, True), (86400.000001, False),
+])
+def test_seed_age_uses_the_inclusive_24_hour_elapsed_boundary(age_seconds, expected):
+    memory, identity, _ = seeded_memory()
+    assert ATR_SEED_MAX_AGE_SECONDS == 86400
+    now = THURSDAY + timedelta(seconds=age_seconds)
+    assert valid_atr_seed(memory.seed, identity, now) is expected
+
+
+@pytest.mark.parametrize("observed,next_open", [
+    (datetime(2026, 8, 7, 19, 55, tzinfo=timezone.utc), datetime(2026, 8, 10, 13, 30, tzinfo=timezone.utc)),
+    (datetime(2026, 8, 4, 19, 55, tzinfo=timezone.utc), datetime(2026, 8, 6, 13, 30, tzinfo=timezone.utc)),
+    (datetime.fromisoformat("2026-03-06T15:55:00-05:00"), datetime.fromisoformat("2026-03-09T09:30:00-04:00")),
+    (datetime.fromisoformat("2026-10-30T15:55:00-04:00"), datetime.fromisoformat("2026-11-02T09:30:00-05:00")),
+])
+def test_weekend_or_missing_weekday_expires_seed_for_restart_and_continuous_run(observed, next_open):
+    # Use UTC broker-session fixtures; offset-changing weekends cover DST too.
+    observed = observed.astimezone(timezone.utc)
+    next_open = next_open.astimezone(timezone.utc)
+    prior_status = rth(observed)
+    prior_status.update({
+        "session_open": (observed - timedelta(hours=6, minutes=25)).isoformat(),
+        "session_close": (observed + timedelta(minutes=5)).isoformat(),
+    })
+    next_status = rth(next_open)
+    next_status.update({
+        "session_open": next_open.isoformat(),
+        "session_close": (next_open + timedelta(hours=6, minutes=30)).isoformat(),
+    })
+    memory, identity, store = seeded_memory(observed=observed, status=prior_status)
+    memory.flush()
+    stored = deepcopy(store.data)
+    assert valid_atr_seed(memory.seed, identity, observed)
+    assert stored[memory.key] == memory.seed
+    assert observed.weekday() in {1, 4} and next_open.weekday() in {0, 3}
+    for restored in (memory, AtrSessionMemory(store)):
+        restored.prepare(identity, next_status, next_open.isoformat())
+        assert restored.session is not None
+        result = restored.apply(pending_result(1))
+        assert not result["ready"] and not result["seeded"]
+        assert result["atr"] is None and result["live_bars_available"] == 1
+    assert store.data == stored
+
+
+@pytest.mark.parametrize("offset_hours", [-5, 0, 5.5])
+def test_seed_expiry_is_unchanged_by_timestamp_timezone_offsets(offset_hours):
+    memory, identity, _ = seeded_memory()
+    record = deepcopy(memory.seed)
+    zone = timezone(timedelta(hours=offset_hours))
+    for key in ("observed_at", "session_open", "session_close"):
+        record[key] = datetime.fromisoformat(record[key]).astimezone(zone).isoformat()
+    boundary = (THURSDAY + timedelta(hours=24)).astimezone(zone)
+    assert valid_atr_seed(record, identity, boundary)
+    assert not valid_atr_seed(record, identity, boundary + timedelta(microseconds=1))
+
+
+def test_seed_already_loaded_expires_during_current_session_without_relabeling():
+    _, identity, store = seeded_memory()
+    stored = deepcopy(store.data)
+    memory = AtrSessionMemory(store)
+    memory.prepare(identity, rth(FRIDAY), FRIDAY.isoformat())
+    assert memory.apply(pending_result(1))["seeded"]
+    expired = THURSDAY + timedelta(hours=24, seconds=1)
+    memory.prepare(identity, rth(expired), expired.isoformat())
+    result = memory.apply(pending_result(2))
+    assert not result["ready"] and not result["seeded"]
+    assert result["atr"] is None
+    assert memory.seed["observed_at"] == THURSDAY.isoformat()
+    memory.flush()
+    assert store.data == stored
+
+
 @pytest.mark.parametrize("status_change", [
-    {"is_open": False}, {"session_close": "bad"}, {"checked_at": FRIDAY.isoformat()},
-    {"session_open": "2026-08-10T13:30:00"}, {"checked_at": "2026-08-10T14:00:00+00:00"},
+    {"is_open": False}, {"session_close": "bad"}, {"checked_at": THURSDAY.isoformat()},
+    {"session_open": "2026-08-07T13:30:00"}, {"checked_at": "2026-08-07T14:00:00+00:00"},
 ])
 def test_seed_never_bypasses_unverified_closed_or_stale_rth(status_change):
     _, identity, store = seeded_memory()
     memory = AtrSessionMemory(store)
-    status = rth(MONDAY)
+    status = rth(FRIDAY)
     status.update(status_change)
-    memory.prepare(identity, status, MONDAY.isoformat())
+    memory.prepare(identity, status, FRIDAY.isoformat())
     assert not memory.apply(pending_result())["ready"]
 
 
 def test_same_session_restart_config_changes_and_zero_atr_fail_closed():
     memory, identity, store = seeded_memory()
     restarted = AtrSessionMemory(store)
-    restarted.prepare(identity, rth(FRIDAY), FRIDAY.isoformat())
+    restarted.prepare(identity, rth(THURSDAY), THURSDAY.isoformat())
     assert restarted.apply(pending_result())["seeded"]
     # A completed but zero-volatility current sample is not hidden by old data.
     result = restarted.apply({**pending_result(4), "atr": 0.0, "atr_pct": 0.0})
     assert not result["ready"]
     changed = dict(identity, period=9)
-    assert not memory.prepare(changed, rth(FRIDAY), FRIDAY.isoformat())
+    assert not memory.prepare(changed, rth(THURSDAY), THURSDAY.isoformat())
     assert memory.seed is None
-    assert memory.prepare(None, rth(FRIDAY), FRIDAY.isoformat())
+    assert memory.prepare(None, rth(THURSDAY), THURSDAY.isoformat())
 
 
 def test_checkpoint_writes_are_coalesced_and_latest_is_flushed_at_close():
     memory, identity, store = seeded_memory()
     assert store.writes == 1
     for second in range(1, 20):
-        now = FRIDAY + timedelta(seconds=second)
+        now = THURSDAY + timedelta(seconds=second)
         memory.prepare(identity, rth(now), now.isoformat())
         memory.note_observation(live=True)
         memory.apply(ready_result(2.0 + second / 100))
     assert store.writes == 1 and memory.dirty
-    closed = FRIDAY.replace(hour=20, minute=0, second=0)
+    closed = THURSDAY.replace(hour=20, minute=0, second=0)
     memory.prepare(identity, {**rth(closed), "is_open": False}, closed.isoformat())
     assert store.writes == 2
     assert store.data[memory.key]["snapshot"]["atr"] == 2.19
@@ -211,7 +293,7 @@ def test_cache_failures_are_optional_visible_and_retries_remain_bounded():
     errors = []
     memory.on_error = lambda message, **kwargs: errors.append(message)
     store.write_error = True
-    now = FRIDAY + timedelta(seconds=61)
+    now = THURSDAY + timedelta(seconds=61)
     memory.prepare(identity, rth(now), now.isoformat())
     memory.note_observation(live=True)
     result = memory.apply(ready_result(3))
@@ -230,7 +312,7 @@ def test_cache_failures_are_optional_visible_and_retries_remain_bounded():
     assert not memory.dirty and memory.error == ""
     store.read_error = True
     restored = AtrSessionMemory(store, lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("logger failure")))
-    restored.prepare(identity, rth(MONDAY), MONDAY.isoformat())
+    restored.prepare(identity, rth(FRIDAY), FRIDAY.isoformat())
     assert not restored.apply(pending_result())["ready"]
     assert "read unavailable" in restored.error
     restored.flush()  # no pending write
@@ -238,7 +320,7 @@ def test_cache_failures_are_optional_visible_and_retries_remain_bounded():
 
 def test_delayed_or_mixed_observations_cannot_replace_live_seed():
     memory, identity, store = seeded_memory()
-    now = FRIDAY + timedelta(minutes=1)
+    now = THURSDAY + timedelta(minutes=1)
     memory.prepare(identity, rth(now), now.isoformat())
     memory.note_observation(live=False)
     memory.apply(ready_result(9))
@@ -258,9 +340,13 @@ def controller_with_settings(tmp_path, monkeypatch):
     return module, controller, contract, settings
 
 
-def test_controller_next_rth_uses_seed_then_fresh_bars_without_synthetic_prices(tmp_path, monkeypatch):
+@pytest.mark.parametrize("observed,next_open,reuse_seed", [
+    (THURSDAY, FRIDAY, True),
+    (datetime(2026, 8, 7, 19, 55, tzinfo=timezone.utc), datetime(2026, 8, 10, 13, 30, 1, tzinfo=timezone.utc), False),
+])
+def test_controller_next_rth_uses_only_unexpired_seed_until_fresh_bars_are_ready(tmp_path, monkeypatch, observed, next_open, reuse_seed):
     module, controller, contract, settings = controller_with_settings(tmp_path, monkeypatch)
-    clock = {"wall": FRIDAY, "mono": 10000.0}
+    clock = {"wall": observed, "mono": 10000.0}
     monkeypatch.setattr(module, "utc_now_iso", lambda: clock["wall"].isoformat())
     monkeypatch.setattr(module.time, "monotonic", lambda: clock["mono"])
 
@@ -281,23 +367,26 @@ def test_controller_next_rth_uses_seed_then_fresh_bars_without_synthetic_prices(
     assert controller.price_snapshot["atr_ready"]
     saved = controller.price_snapshot["atr_pct"]
     controller._atr_session_memory.flush()
-    # Running continuously over a weekend must reset old raw RTH observations.
-    clock.update(wall=MONDAY, mono=260000.0)
+    # Running continuously into the next RTH session resets raw RTH observations.
+    clock.update(wall=next_open, mono=10000.0 + (next_open - observed).total_seconds())
     tick(110.0)
     assert len(controller._price_history) == 1
-    assert controller.price_snapshot["atr_ready"]
-    assert controller.price_snapshot["atr"]["seeded"]
-    assert controller.price_snapshot["atr_pct"] == saved
+    assert controller.price_snapshot["atr_ready"] is reuse_seed
+    assert controller.price_snapshot["atr"]["seeded"] is reuse_seed
+    assert controller.price_snapshot["atr_pct"] == (saved if reuse_seed else None)
     assert controller.price_snapshot["atr"]["live_bars_available"] == 1
     # Warmup may use the seed, but no other entry guard/market tick is fabricated.
     cycle = CycleState.new(settings, 1, "DU1", 110.0, 0.0)
-    assert controller._atr_warmup_guard_blocker_for_buy(cycle) is None
+    blocker = controller._atr_warmup_guard_blocker_for_buy(cycle)
+    assert (blocker is None) is reuse_seed
     for price in (113.0, 111.0, 114.0):
         clock["wall"] += timedelta(seconds=60)
         clock["mono"] += 60
         tick(price)
     assert not controller.price_snapshot["atr"]["seeded"]
+    assert controller.price_snapshot["atr_ready"]
     assert controller.price_snapshot["atr_pct"] != saved
+    assert controller._atr_warmup_guard_blocker_for_buy(cycle) is None
     controller._market_capture.shutdown()
 
 
@@ -426,7 +515,7 @@ def test_pending_record_validation_and_complete_field_inventory():
 
 def test_new_rth_window_resets_atr_without_erasing_recent_volatility_history(tmp_path, monkeypatch):
     module, controller, contract, _ = controller_with_settings(tmp_path, monkeypatch)
-    clock = {"wall": MONDAY, "mono": 10000.0}
+    clock = {"wall": FRIDAY, "mono": 10000.0}
     monkeypatch.setattr(module, "utc_now_iso", lambda: clock["wall"].isoformat())
     monkeypatch.setattr(module.time, "monotonic", lambda: clock["mono"])
 
@@ -439,7 +528,7 @@ def test_new_rth_window_resets_atr_without_erasing_recent_volatility_history(tmp
             timestamp=clock["wall"].isoformat(), status="OK",
         ), contract)
 
-    first_open = MONDAY.replace(second=0)
+    first_open = FRIDAY.replace(second=0)
     for price in (100., 101., 100., 102.):
         tick(price, first_open)
         clock["wall"] += timedelta(seconds=60)
@@ -464,12 +553,12 @@ def test_restored_seed_does_not_make_cached_quote_a_new_event(tmp_path, monkeypa
     profile = f"{controller.connection.trading_mode}|{controller.connection.market_data_type}"
     identity = atr_seed_identity(contract, settings, profile)
     cache = AtrSessionMemory(controller.storage)
-    cache.prepare(identity, rth(FRIDAY), FRIDAY.isoformat())
+    cache.prepare(identity, rth(THURSDAY), THURSDAY.isoformat())
     cache.note_observation(live=True)
     cache.apply(ready_result())
-    monkeypatch.setattr(module, "utc_now_iso", lambda: MONDAY.isoformat())
+    monkeypatch.setattr(module, "utc_now_iso", lambda: FRIDAY.isoformat())
     monkeypatch.setattr(module.time, "monotonic", lambda: 10000.0)
-    controller._latest_rth_status = rth(MONDAY)
+    controller._latest_rth_status = rth(FRIDAY)
     quote = _tracked_quote_snapshot(1, bid=100., ask=100.1, last=120., selected_price=100.05)
     controller._record_price_snapshot(quote, contract)
     assert controller.price_snapshot["atr_ready"]
@@ -522,7 +611,7 @@ def test_risk_draft_cannot_change_cancellation_of_an_already_working_buy(tmp_pat
 
 def test_profile_change_cannot_rebuild_atr_from_prior_profile_prices(tmp_path, monkeypatch):
     module, controller, contract, _ = controller_with_settings(tmp_path, monkeypatch)
-    clock = {"wall": MONDAY, "mono": 10000.0}
+    clock = {"wall": FRIDAY, "mono": 10000.0}
     monkeypatch.setattr(module, "utc_now_iso", lambda: clock["wall"].isoformat())
     monkeypatch.setattr(module.time, "monotonic", lambda: clock["mono"])
 

@@ -316,5 +316,8 @@ def test_corrupt_database_is_rejected_without_overwriting_original_bytes(tmp_pat
 
     assert db.read_bytes() == original
     backups = list((tmp_path / "backups").glob("*_before_schema_check.sqlite"))
-    assert backups
-    assert BotStorage._validate_sqlite_database_file(backups[0])["ok"] is False
+    # An unreadable schema is now rejected before any backup or migration write;
+    # do not leave an empty, invalid recovery artifact beside the corrupt source.
+    assert backups == []
+    assert not (tmp_path / "backups").exists()
+    assert BotStorage._validate_sqlite_database_file(db)["ok"] is False
