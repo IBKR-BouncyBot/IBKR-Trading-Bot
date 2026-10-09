@@ -4,11 +4,11 @@
   <img src="Images/BouncyBot_logo_git.png" alt="BouncyBot logo" width="640" />
 </p>
 
-**Current release: v5.6.0**
+**Current release: v5.7.0**
 
-Version 5.6.0 corrects the fifteen GUI findings from the previous review: manual/ATR input handling, reconciliation displays and confirmation, ticker and graph identity, historical flowcharts, filtered CSV export and audit details. It retains complete-database history totals when all filters are clear and updates the support addresses in About > Info.
+Version 5.7.0 lets an already partially filled marketable BUY finish on its original broker order. It removes the three-second remainder timeout and automatic post-fill cancellation for market-data or entry-guard changes. Explicit Stop/close requests and the separately configured pre-close BUY cancellation remain available. This applies to both direct market BUYs and native trailing BUYs once they have triggered and partially filled.
 
-The correction is limited to history reporting and its read-only data path; trading, market-data subscriptions, freshness safeguards and database writes are unchanged. See the [release and upgrade notes](docs/V5_6_0_TARGETED_GUI_FIXES.md) and [implementation and test report](IMPLEMENTATION_TEST_REPORT.txt) for the changes, test results and remaining platform checks.
+Unknown submissions, unresolved exits, identity mismatches and insufficient positions remain blocked. The five-stage strategy, order-sizing rules, RTH/quote safeguards and backup policy are retained. See the [release and upgrade notes](docs/V5_7_0_PARTIAL_BUY_COMPLETION.md) and [implementation and test report](IMPLEMENTATION_TEST_REPORT.txt) for the exact scope, executed checks and remaining platform gates.
 
 ![Simple-view](Images/Trading-Simple-view.png)
 
@@ -88,7 +88,7 @@ quantity = floor(budget / sizing price)
 
 The sizing price is the projected BUY stop, optionally increased by the configured planning-only slippage buffer. A positive BUY trail creates a native IBKR `TRAIL` order. A zero BUY trail creates a market BUY immediately after the drop condition.
 
-When a positive BUY quantity first fills, the triggered marketable order is allowed **3.0 seconds** to finish normally. If it remains nonterminal after that grace period, or if a configured market/session safety condition becomes unsafe, the application requests cancellation of the unfilled remainder once. Stage 2 remains active until the original BUY order is terminal, and all additional fills received before or during cancellation are reconciled into the app-owned quantity, weighted average price, commissions, later SELL sizing, and P/L. Execution and commission callbacks are applied idempotently by IBKR execution ID, including callbacks that arrive after order polling or reconnect.
+When a positive BUY quantity first fills, the original marketable BUY remains working until IBKR reports it terminal. There is no partial-fill timeout, and stale quotes or other entry-guard changes do not automatically cancel its remainder. Explicit operator Stop/close requests and the separately configured pre-close BUY cancellation still apply. Stage 2 remains active until the original BUY order is terminal, and all additional fills received before or during any requested cancellation are reconciled into the app-owned quantity, weighted average price, commissions, later SELL sizing, and P/L. A terminal partial settles only the quantity actually acquired; the bot does not place a top-up order. Execution and commission callbacks remain idempotent by IBKR execution ID, including callbacks that arrive after order polling or reconnect.
 
 ### Stage 3 — wait for minimum profit
 
@@ -393,7 +393,7 @@ Host and port remain editable. The optional Start helper can launch a configured
 
 If the GUI is locked, unlock it with the top lock button to restore the workflow buttons and view-mode selector. Select **Advanced** or **Debug** to edit connection and strategy settings.
 
-Select the TWS/Gateway profile, host, port, client ID, market-data mode, and optional account override. Click **1. Connect to IB Gateway API** or **1. Connect to TWS API**, according to the selected profile. A blank account requests automatic selection of one unambiguous managed account before a new cycle. The Connection indicator distinguishes a local socket connection from the Gateway/TWS upstream IBKR link; **Gateway only** means the local process is reachable but trading is paused because upstream connectivity is not confirmed. Contract search, ticker confirmation, and strategy start stay disabled until the upstream link is ready and any post-restoration reconciliation has completed. After an enabled local API connection is lost, BouncyBot retries every ten seconds without an attempt limit. Manual **Disconnect** and application shutdown stop those retries.
+Select the TWS/Gateway profile, host, port, client ID, market-data mode, and optional account override. Click **1. Connect to IB Gateway API** or **1. Connect to TWS API**, according to the selected profile. A blank account requests automatic selection of one unambiguous managed account before a new cycle. The Connection indicator distinguishes a local socket connection from the Gateway/TWS upstream IBKR link; **Waiting for IBKR** means the local process is reachable but trading is paused because upstream connectivity is not confirmed. Contract search, ticker confirmation, and strategy start stay disabled until the upstream link is ready and any post-restoration reconciliation has completed. After an enabled local API connection is lost, BouncyBot retries every ten seconds without an attempt limit. Manual **Disconnect** and application shutdown stop those retries.
 
 ### 2. Search for a contract
 
@@ -411,7 +411,7 @@ The top lock button prevents accidental editing. When locked, editable configura
 
 The ten equal-width status boxes and compact lock control sit above the five-stage ribbon. Both rows remain visible while scrolling or changing tabs. Long status text wraps within its box. The top Ticker box shows **N/A** when no ticker name is available; populated labels retain their identity details.
 
-**Connection** reports the local API and upstream IBKR links, independently of quote freshness. With both links available and reconciliation complete, it stays **Connected** while data is stale or awaits an update. **Data** separates the subscription type from freshness: **Live / Stale** means the live subscription has an old last actual update, not that its price is currently tradeable. A known old update has the same stale label whether or not a recovery/farm notification also requires another event; the tooltip retains that waiting reason. Missing update evidence remains a waiting/unknown condition. Connection faults, reconciliation and worker/storage warnings retain their distinct states.
+**Connection** reports the local API and upstream IBKR links, independently of quote freshness. With both links available and reconciliation complete, it stays **Connected** while data is stale or awaits an update. **Data** separates the subscription type from freshness: **Live / Stale** means the live subscription has an old last actual update, not that its price is currently tradeable. A known old update has the same stale label whether or not a recovery/farm notification also requires another event; the tooltip retains that waiting reason. Missing update evidence remains a waiting/unknown condition. During an active cycle, temporary local loss shows amber **Reconnecting**, an unavailable upstream link shows amber **Waiting for IBKR**, and pending reconciliation shows amber **Reconciling**. The affected workflow cards show **Waiting**, while Trading shows **Paused: reconnecting** or **Paused: reconciling**. Actual manual-review, trading-risk and worker/storage faults retain their fault presentation; amber waiting does not authorize trading.
 
 Live strategy, Strategy flowchart and Trade history stay on the left of the tab row. The **Reconciliation** button on the right opens that page and indicates when it is selected. It remains reachable while locked; keyboard users can focus the button with Tab and activate it with Space. Ctrl+Tab cycles the three visible left-side tabs and skips the hidden Reconciliation tab header.
 
@@ -499,7 +499,7 @@ Run:
 
 This verifies standard GIL-enabled CPython 3.14.x before installing dependencies or running tests, then performs Python compilation, every collected pytest test (including the bounded soak tests) with `ResourceWarning` checks, statement and branch coverage with a 75% minimum, a generated per-callable coverage check, a seventeen-mutant safety smoke gate, all deterministic CSV simulations, Ruff, and Pyright. The Windows full-test path applies no pytest marker filter. Every effective executable callable under `app/` and in `main.py` must be entered by at least one test. Failure at any required stage produces a nonzero result.
 
-The offline suite includes broker-event permutations, generated controller state sequences, numerical/payload properties, recovery decision matrices, differential simulations, crash/restart and schema-migration cases, storage fault injection, Gateway outage sequences, and multi-instance isolation. The CSV gate validates 58 explicit scenario contracts across 54 price-path files, including threshold edges, gap fills, partial fills, RTH transitions, protective exits, slippage buffers, sizing, reinvestment, and zero-trailing market-order branches. These offline checks do not connect to IBKR or use real market/account/order data. GUI tests use Qt doubles or offscreen native widgets with an inert controller; they do not start live trading. See [Deterministic offline behavior tests](docs/OFFLINE_BEHAVIOR_TESTS.md) and [production incident replay tests](docs/PRODUCTION_INCIDENT_REPLAY_TESTS.md).
+The offline suite includes broker-event permutations, generated controller state sequences, numerical/payload properties, recovery decision matrices, differential simulations, crash/restart and schema-migration cases, storage fault injection, Gateway outage sequences, and multi-instance isolation. The CSV gate validates 58 explicit scenario contracts across 54 price-path files, including threshold edges, gap fills, partial fills, RTH transitions, protective exits, slippage buffers, sizing, reinvestment, and zero-trailing market-order branches. These offline checks do not connect to IBKR or request live market/account/order data. Sanitized recorded evidence is used only by deterministic incident replays. GUI tests use Qt doubles or offscreen native widgets with an inert controller; they do not start live trading. See [Deterministic offline behavior tests](docs/OFFLINE_BEHAVIOR_TESTS.md) and [production incident replay tests](docs/PRODUCTION_INCIDENT_REPLAY_TESTS.md).
 
 ### Direct Python tests
 
@@ -535,7 +535,7 @@ dist\IBKRTradingBot\IBKRTradingBot.exe
 It also creates a versioned release folder and ZIP:
 
 ```text
-release\IBKRTradingBot_5.6.0_Windows\
+release\IBKRTradingBot_5.7.0_Windows\
   BouncyBot.lnk
   GUI\IBKRTradingBot.exe
   docs\
@@ -545,7 +545,7 @@ release\IBKRTradingBot_5.6.0_Windows\
   SECURITY.md
   QUICK_START.txt
 
-release\IBKRTradingBot_5.6.0_Windows.zip
+release\IBKRTradingBot_5.7.0_Windows.zip
 release\SHA256SUMS.txt
 ```
 
@@ -622,7 +622,10 @@ Superseded release-specific documents are indexed under [docs/legacy](docs/legac
 
 ## Release history
 
-- [v5.6.0 release note](docs/V5_6_0_TARGETED_GUI_FIXES.md) - the fifteen targeted GUI corrections, support-address updates and verification boundaries.
+- [v5.7.0 release note](docs/V5_7_0_PARTIAL_BUY_COMPLETION.md) - let partially filled marketable BUYs complete on the original order.
+- [v5.6.2 release note](docs/legacy/V5_6_2_COMPLETED_ORDER_RECOVERY.md) - recover exact executions hidden by stale or incomplete completed-order counters.
+- [Archived v5.6.1 release note](docs/legacy/V5_6_1_OUTAGE_RECOVERY.md) - deferred incomplete broker recovery reads and explicit revalidation of the two confirmed legacy outage holds.
+- [Archived v5.6.0 release note](docs/legacy/V5_6_0_TARGETED_GUI_FIXES.md) - the fifteen targeted GUI corrections, support-address updates and verification boundaries.
 - [Archived v5.5.1 release note](docs/legacy/V5_5_1_HISTORY_SUMMARY.md) - matching Trade history filters and complete-database summary totals.
 - [Archived v5.5.0 release note](docs/legacy/V5_5_0_GUI_STATUS.md) - consistent connection, data and trading status; actual market-update timestamps.
 - [Archived v5.4.0 release note](docs/legacy/V5_4_0_RELIABILITY.md) - deferred backups, schema-aware startup copies, validated retention and 24-hour ATR seed age.

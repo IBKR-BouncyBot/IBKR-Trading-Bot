@@ -2057,6 +2057,41 @@ class BotStorage:
             ).fetchall()
         return [dict(row) for row in rows][::-1]
 
+    def get_waiting_recovery_evidence(self, cycle_id: str) -> dict[str, Any]:
+        """Read the latest hold and its immediate prior stage, without audit history.
+
+        Used only by an explicit reconciliation of an old outage hold. Never
+        search past an incompatible stage to find an earlier resumable one.
+        """
+        with self.connect() as con:
+            hold = con.execute(
+                "SELECT id, message, stage_before, stage_after FROM decision_events "
+                "WHERE cycle_id=? AND event_type='RECOVERY_REQUIRED' ORDER BY id DESC LIMIT 1",
+                (cycle_id,),
+            ).fetchone()
+            prior = con.execute(
+                "SELECT stage_after FROM decision_events WHERE cycle_id=? AND id<? "
+                "AND COALESCE(stage_after, '')<>'' ORDER BY id DESC LIMIT 1",
+                (cycle_id, hold["id"] if hold else 0),
+            ).fetchone()
+            orders = con.execute("SELECT * FROM orders WHERE cycle_id=? ORDER BY id", (cycle_id,)).fetchall()
+            executions = con.execute("SELECT * FROM executions WHERE cycle_id=? ORDER BY id", (cycle_id,)).fetchall()
+
+        def normalize(row: sqlite3.Row) -> dict[str, Any]:
+            result = dict(row)
+            try:
+                result["raw"] = json.loads(result.pop("raw_json") or "{}")
+            except (ValueError, TypeError):
+                result["raw"] = {}
+            return result
+
+        return {
+            "hold": dict(hold) if hold else {},
+            "prior_stage": prior["stage_after"] if prior else None,
+            "orders": [normalize(row) for row in orders],
+            "executions": [normalize(row) for row in executions],
+        }
+
     def get_cycle_audit_bundle(self, cycle_id: str) -> dict[str, Any]:
         """Return all persisted records used to inspect one completed/active cycle.
 

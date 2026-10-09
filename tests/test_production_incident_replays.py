@@ -299,7 +299,7 @@ def test_iren_fixture_replays_definitive_rejection_circuit_breaker(
     assert [row["event_type"] for row in decisions].count("ORDER_TERMINAL_WITHOUT_FILL") == 1
 
 
-def test_nbis_fixture_reconciles_second_fill_during_partial_fill_grace(
+def test_nbis_fixture_reconciles_second_fill_while_original_buy_remains_working(
     controller_module: Any,
     tmp_path: Path,
 ) -> None:

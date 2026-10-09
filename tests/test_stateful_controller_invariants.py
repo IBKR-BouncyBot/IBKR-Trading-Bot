@@ -8,7 +8,6 @@ external positions, and cycle-limit behavior without a GUI or network session.
 from __future__ import annotations
 
 import random
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -119,14 +118,11 @@ def test_generated_full_cycle_preserves_cross_module_invariants(
     if partial:
         active_partial = controller.active_cycle
         assert active_partial is not None
-        active_partial.buy_filled_at = (
-            datetime.now(timezone.utc)
-            - timedelta(
-                seconds=controller.BUY_PARTIAL_FILL_GRACE_SECONDS + 1.0
-            )
-        ).isoformat()
-        controller.storage.upsert_cycle(active_partial)
+        # Exercise an explicit broker/operator cancellation, not an automatic
+        # partial-fill timeout; v5.7.0 keeps the original remainder working.
         controller._handle_buy_order_poll(active_partial, buy_state)
+        assert not broker.cancelled_orders
+        broker.cancel_order(str(buy_cycle.buy_order_ref), buy_cycle.buy_order_id)
         terminal_buy = broker.poll_order(str(buy_cycle.buy_order_ref))
         assert terminal_buy is not None and terminal_buy.status == "Cancelled"
         controller._handle_buy_order_poll(controller.active_cycle, terminal_buy)
@@ -209,7 +205,10 @@ def test_order_submission_boundary_fails_closed_during_upstream_outage_and_can_r
     assert controller.active_cycle is not None
     expected_stage = Stage.WAIT_INITIAL_DROP if side == "BUY" else Stage.WAIT_RISE_TRIGGER
     assert controller.active_cycle.stage == expected_stage
-    assert "connect" in controller.active_cycle.error_message.lower()
+    assert controller.active_cycle.error_message is None
+    assert controller.active_cycle.recovery_required is False
+    assert controller._upstream_recovery_pending is True
+    assert "waiting for complete broker data" in controller.status
 
     broker.upstream_restored(data_lost=data_lost)
     controller._drain_broker_events()

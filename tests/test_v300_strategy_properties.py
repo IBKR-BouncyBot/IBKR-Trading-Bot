@@ -99,10 +99,9 @@ def test_buy_fill_and_sell_trigger_properties_preserve_minimum_profit_floor():
         )
         assert filled.rise_trigger_price >= minimum_stop
         if cycle.quantity > filled_qty:
-            # The pure strategy layer no longer cancels immediately on the
-            # first partial. The controller allows the triggered marketable
-            # BUY a short grace period, then supplies the terminal cancellation
-            # status when a remainder still exists.
+            # The original BUY remains working after a partial fill. This
+            # scenario then supplies an external terminal cancellation status
+            # to exercise settlement of only the shares actually acquired.
             assert actions == []
             assert filled.buy_remainder_cancel_requested is False
             filled, terminal_actions = StrategyEngine.on_buy_fill(

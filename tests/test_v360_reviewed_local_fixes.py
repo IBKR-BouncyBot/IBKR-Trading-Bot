@@ -1,4 +1,4 @@
-"""v5.6.0 reviewed local-fix and fail-closed regression coverage."""
+"""v5.7.0 reviewed local-fix and fail-closed regression coverage."""
 
 from __future__ import annotations
 
@@ -372,21 +372,21 @@ def test_v360_release_metadata_and_documentation_locations_are_current() -> None
     security = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
     docs_index = (ROOT / "docs" / "README.md").read_text(encoding="utf-8")
     legacy_index = (ROOT / "docs" / "legacy" / "README.md").read_text(encoding="utf-8")
-    current_note = ROOT / "docs" / "V5_6_0_TARGETED_GUI_FIXES.md"
+    current_note = ROOT / "docs" / "V5_7_0_PARTIAL_BUY_COMPLETION.md"
     archived_v350_note = ROOT / "docs" / "legacy" / "V3_5_0_GUI_LIGHT_MODE_AND_LAYOUT.md"
     archived_v350_report = ROOT / "docs" / "legacy" / "V3_5_0_IMPLEMENTATION_TEST_REPORT.txt"
     archived_v360_note = ROOT / "docs" / "legacy" / "V3_6_0_SELL_RECONCILIATION_AND_HISTORY_ROBUSTNESS.md"
     archived_v360_report = ROOT / "docs" / "legacy" / "V3_6_0_IMPLEMENTATION_TEST_REPORT.txt"
 
-    assert 'APP_VERSION = "5.6.0"' in gui
-    assert "BouncyBot - IBKR Portable Trading Bot v5.6.0" in gui
-    assert "This is synthetic v5.6.0 paper-trading example data." in gui
-    assert 'version = "5.6.0"' in pyproject
-    assert '$version = "5.6.0"' in build
-    assert "**Current release: v5.6.0**" in readme
-    assert "## v5.6.0" in changelog
-    assert "current repository version, v5.6.0" in security
-    assert "current v5.6.0 behavior" in docs_index
+    assert 'APP_VERSION = "5.7.0"' in gui
+    assert "BouncyBot - IBKR Portable Trading Bot v5.7.0" in gui
+    assert "This is synthetic v5.7.0 paper-trading example data." in gui
+    assert 'version = "5.7.0"' in pyproject
+    assert '$version = "5.7.0"' in build
+    assert "**Current release: v5.7.0**" in readme
+    assert "## v5.7.0" in changelog
+    assert "current repository version, v5.7.0" in security
+    assert "current v5.7.0 behavior" in docs_index
     assert current_note.is_file()
     assert archived_v350_note.is_file()
     assert archived_v350_report.is_file()

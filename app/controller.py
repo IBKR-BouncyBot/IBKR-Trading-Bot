@@ -97,6 +97,14 @@ from .strategy import StrategyAction, StrategyEngine, make_order_ref
 from .watchdog import append_emergency_log
 
 
+class _RecoveryReadDeferred(BrokerAdapterError):
+    """Broker evidence is incomplete; retry without rewriting the cycle stage."""
+
+
+class _IdentityReadDeferred(_RecoveryReadDeferred):
+    """Identity could not be read before any broker mutation was attempted."""
+
+
 class _HeadlessSignalInstance:
     """Tiny Signal-compatible object used only for non-GUI build/test runs."""
 
@@ -167,11 +175,6 @@ class TradingController:
     DIAGNOSTIC_REPEAT_SUMMARY_SECONDS = 5.0 * 60.0
     NATIVE_ORDER_WAIT_SUMMARY_SECONDS = 15.0 * 60.0
     STAGE3_NEAR_TRIGGER_PCT = 0.5
-    # A positive partial fill proves that a native TRAIL BUY has triggered, or
-    # that a zero-trail MKT BUY is executing. Allow normal multi-print marketable
-    # execution a brief chance to finish before cancelling the working remainder.
-    BUY_PARTIAL_FILL_GRACE_SECONDS = 3.0
-
     # Zero means do not add a second rate limit inside the strategy cadence when
     # reading the cached TWS subscription handle. The adapter stamps actual
     # pending-ticker events; repeated cached reads may update diagnostics but
@@ -276,6 +279,14 @@ class TradingController:
         self._last_broker_refresh_monotonic = 0.0
         self._upstream_recovery_pending = False
         self._last_upstream_recovery_attempt_monotonic = 0.0
+        self._recovery_read_active = False
+        self._recovery_execution_rows: Optional[list[dict[str, Any]]] = None
+        self._recovery_managed_accounts: Optional[list[str]] = None
+        self._last_deferred_recovery_reason: Optional[str] = None
+        self._outage_recovery_requested_cycle_id: Optional[str] = None
+        self._deferred_repeat_cycle_id: Optional[str] = None
+        self._deferred_market_close_cycle_id: Optional[str] = None
+        self._outage_reconcile_blocker = ""
         self._auto_reconnect_enabled = False
         self._last_reconnect_attempt_monotonic = 0.0
         self._reconnect_failures = 0
@@ -855,8 +866,23 @@ class TradingController:
             return "manual_review_required"
         if not self.connected:
             return "local_state_only"
-        if any(probe.get(key) for key in ("error", "position_error", "recent_executions_error")):
+        if any(probe.get(key) for key in ("error", "position_error", "recent_executions_error", "invalidated_at")):
             return "broker_partially_checked"
+        if bool(getattr(self, "_upstream_recovery_pending", False)):
+            return "broker_partially_checked"
+        if cycle is not None:
+            if "position_size" in probe:
+                try:
+                    position = float(probe["position_size"])
+                except (TypeError, ValueError, OverflowError):
+                    return "broker_partially_checked"
+                if not isfinite(position):
+                    return "broker_partially_checked"
+            signature = probe.get("local_cycle_signature")
+            if signature is not None and signature != recovery_cycle_signature(cycle):
+                return "broker_partially_checked"
+            if cycle.stage == Stage.SELL_TRAIL_ACTIVE and cycle.sell_status == "Filled" and cycle.sell_filled_qty != cycle.buy_filled_qty:
+                return "broker_partially_checked"
         if probe.get("checked_at"):
             return "fully_reconciled"
         return "broker_partially_checked"
@@ -1972,7 +1998,7 @@ class TradingController:
             if not self._require_broker_operation_connectivity("Start strategy"):
                 return
             if self._upstream_recovery_pending and not self._recover_upstream_session_if_needed():
-                self.status = "Start strategy blocked: post-reconnect broker reconciliation has not completed."
+                self.status = "Waiting to start strategy: post-reconnect broker reconciliation has not completed."
                 self._log("WARN", self.status, self.active_cycle)
                 self.emit_snapshot(force=True)
                 return
@@ -2662,7 +2688,9 @@ class TradingController:
             )
             self._log("WARN", self.status, self.active_cycle)
         else:
-            self._recover_after_connect()
+            if self._recover_after_connect() is False:
+                self.emit_snapshot(force=True)
+                return False
         self.emit_snapshot(force=True)
         return True
 
@@ -2690,6 +2718,9 @@ class TradingController:
         self.emit_snapshot(force=True)
 
     def _disconnect(self) -> None:
+        self._outage_recovery_requested_cycle_id = None
+        self._deferred_repeat_cycle_id = None
+        self._deferred_market_close_cycle_id = None
         self._auto_reconnect_enabled = False
         self._clear_audit_condition(
             "broker_reconnect",
@@ -2903,12 +2934,16 @@ class TradingController:
                 return
         if not self._require_broker_operation_connectivity("Resume recovery monitoring"):
             return
+        requested_cycle = self.storage.get_latest_active_cycle()
+        self._outage_recovery_requested_cycle_id = requested_cycle.id if requested_cycle is not None else None
         if bool(getattr(self, "_stale_active_cycle_detected", False)):
             self._log("WARN", "Operator requested recovery resume for a stale startup cycle after broker/local review.", self.active_cycle)
         self._startup_resume_required = False
         self._stale_active_cycle_detected = False
         try:
-            self._recover_after_connect()
+            if self._recover_after_connect(allow_outage_recovery=True) is False:
+                self.emit_snapshot(force=True)
+                return
         except Exception as exc:
             self._upstream_recovery_pending = True
             self.status = f"Recovery resume failed; monitoring remains paused: {exc}"
@@ -2921,7 +2956,8 @@ class TradingController:
             self.status = "No active SQLite cycle to resume."
             self._log("INFO", self.status)
         elif cycle.stage == Stage.MANUAL_REVIEW or bool(getattr(cycle, "recovery_required", False)) or self._recovery_required:
-            self.status = "Recovery still requires manual review after broker refresh."
+            blocker = self._outage_reconcile_blocker or cycle.error_message or "Broker evidence does not yet support resuming this cycle."
+            self.status = f"Recovery still requires manual review: {blocker}"
             self._log("WARN", self.status, cycle)
         else:
             self.status = f"Recovery resumed: monitoring {cycle.ticker} at {cycle.stage.value}."
@@ -3082,7 +3118,287 @@ class TradingController:
             if str(getattr(order, "order_ref", "") or "") in known
         ]
 
-    def _recover_after_connect(self) -> None:
+    def _restore_outage_waiting_cycle(self, cycle: CycleState, open_orders: list[Any]) -> bool:
+        """Revalidate only the two legacy waiting-stage outage holds.
+
+        This is called only by explicit Reconcile and continue. The prior stage
+        must be proved by the audit and a settled local ledger, never inferred
+        from today's position. No broker mutation or temporary cleared state is
+        allowed while acquiring the evidence.
+        """
+        self._outage_reconcile_blocker = ""
+
+        def retain_hold(message: str) -> bool:
+            self._outage_reconcile_blocker = message
+            return False
+
+        account = str(cycle.account or "").strip()
+        account_hold = f"RECOVERY REQUIRED: Cycle account {account} is not confirmed in the broker managed accounts."
+        contract_hold = "RECOVERY REQUIRED: Cannot qualify the stored position contract: Not connected to TWS."
+        if cycle.error_message not in {account_hold, contract_hold} or not account or int(cycle.con_id or 0) <= 0:
+            return False
+        if self._storage_fault_active:
+            return retain_hold("Database writes are not available; the recovery decision cannot be saved safely.")
+        unresolved = self.storage.get_unresolved_cycles()
+        if len(unresolved) != 1 or unresolved[0].id != cycle.id:
+            return retain_hold("More than one unresolved cycle, or a different unresolved cycle, needs review.")
+        if any(self._polled_order_is_working(order) for order in open_orders):
+            return retain_hold("An app-owned order is still working; its outcome must be reconciled first.")
+        if any((cycle.close_position_market_requested, cycle.close_before_rth_liquidation_requested, cycle.close_before_rth_cancel_requested,
+                cycle.buy_remainder_cancel_requested)):
+            return retain_hold("A cancellation or position-close request is still recorded; its outcome needs review.")
+        if any(
+            getattr(cycle, f"{role}_{field}", None)
+            for role in ("sell", "protective_sell")
+            for field in ("order_ref", "order_id", "perm_id", "status", "filled_qty")
+        ):
+            return retain_hold("SELL or protective-order evidence needs reconciliation before this hold can be cleared.")
+
+        evidence = self.storage.get_waiting_recovery_evidence(cycle.id)
+        hold = evidence["hold"]
+        if hold.get("message") != cycle.error_message or hold.get("stage_after") != Stage.MANUAL_REVIEW.value:
+            return retain_hold("The saved hold does not match its recovery audit record.")
+        prior = evidence["prior_stage"]
+        stage_value = hold.get("stage_before") or prior
+        if hold.get("stage_before") and prior and stage_value != prior:
+            return retain_hold("The recorded stages before the hold disagree.")
+        if stage_value not in {Stage.WAIT_INITIAL_DROP.value, Stage.WAIT_RISE_TRIGGER.value}:
+            return retain_hold("The audit does not establish a safe waiting stage before this hold.")
+        stage = Stage(stage_value)
+        if cycle.error_message == contract_hold and stage != Stage.WAIT_RISE_TRIGGER:
+            return retain_hold("The contract-qualification hold does not agree with the recorded prior stage.")
+        orders, executions = evidence["orders"], evidence["executions"]
+        if stage == Stage.WAIT_INITIAL_DROP:
+            if orders or executions or any(
+                getattr(cycle, f"buy_{field}", None)
+                for field in ("order_ref", "order_id", "perm_id", "status", "filled_qty", "filled_at")
+            ) or cycle.avg_buy_price:
+                return retain_hold("Stage 1 has order or fill evidence that requires review.")
+        else:
+            if cycle.protective_sell_enabled or cycle.buy_status != "Filled" or cycle.buy_filled_qty <= 0:
+                return retain_hold("Stage 3 requires a settled BUY and separate review of any configured protection.")
+            if len(orders) != 1 or not executions or not cycle.buy_order_ref or not cycle.buy_perm_id:
+                return retain_hold("The saved BUY order and execution ledger do not prove a single settled entry.")
+            order = orders[0]
+            if any(order.get(key) != value for key, value in {
+                "action": "BUY", "status": "Filled", "ticker": cycle.ticker,
+                "order_ref": cycle.buy_order_ref, "order_id": cycle.buy_order_id,
+                "perm_id": cycle.buy_perm_id, "quantity": cycle.buy_filled_qty,
+            }.items()):
+                return retain_hold("The saved BUY order identity or quantity disagrees with the cycle.")
+            total = 0.0
+            for row in executions:
+                if any(row.get(key) != value for key, value in {
+                    "side": "BUY", "ticker": cycle.ticker, "currency": cycle.currency,
+                    "order_ref": cycle.buy_order_ref, "order_id": cycle.buy_order_id,
+                    "perm_id": cycle.buy_perm_id,
+                }.items()):
+                    return retain_hold("A saved execution disagrees with the settled BUY identity.")
+                shares, price = float(row["shares"]), float(row["price"])
+                if not row.get("execution_id") or not isfinite(shares) or shares <= 0 or not isfinite(price) or price <= 0:
+                    return retain_hold("A saved execution has incomplete or invalid fill evidence.")
+                raw = row.get("raw") or {}
+                if isinstance(raw, dict) and (
+                    any(str(raw[key]).strip() != account for key in ("account", "acctNumber") if raw.get(key) not in (None, ""))
+                    or any(self._optional_int(raw[key]) != cycle.con_id for key in ("con_id", "conId") if raw.get(key) not in (None, ""))
+                ):
+                    return retain_hold("Archived execution account or contract evidence conflicts with the cycle.")
+                archived_accounts = self._legacy_execution_accounts(cycle, row, {cycle.buy_order_ref}, orders)
+                raw_args = raw.get("raw_args") if isinstance(raw, dict) else None
+                if isinstance(raw_args, list):
+                    for text in raw_args:
+                        if isinstance(text, str) and text.startswith("Fill("):
+                            archived_row = dict(row, raw={"raw_args": [text]})
+                            if self._legacy_execution_accounts(cycle, archived_row, {cycle.buy_order_ref}, orders) != {account}:
+                                return retain_hold("Archived execution account or contract evidence is incomplete or contradictory.")
+                structured_identity = isinstance(raw, dict) and (
+                    str(raw.get("account") or raw.get("acctNumber") or "").strip() == account
+                    and self._optional_int(raw.get("con_id") or raw.get("conId")) == cycle.con_id
+                )
+                if not structured_identity and archived_accounts != {account}:
+                    return retain_hold("The saved executions do not establish the original account and contract.")
+                total += shares
+            if abs(total - cycle.buy_filled_qty) > 1e-9:
+                return retain_hold("The saved execution quantity disagrees with the settled BUY quantity.")
+
+        # Executions returned now can corroborate the settled ledger, but a new
+        # or conflicting fill cannot authorize this narrow legacy hold release.
+        saved_executions = {row["execution_id"]: row for row in executions}
+        for row in self._adapter_recent_executions():
+            ref = str(row.get("order_ref") or row.get("orderRef") or "")
+            same_perm = cycle.buy_perm_id and self._optional_int(row.get("perm_id")) == cycle.buy_perm_id
+            if not same_perm and (not cycle.buy_order_ref or ref != cycle.buy_order_ref):
+                continue
+            saved = saved_executions.get(row.get("execution_id"))
+            if (
+                saved is None or not self._execution_matches_order(cycle, row, "BUY")
+                or str(row.get("account") or "").strip() != account
+                or self._optional_int(row.get("con_id")) != cycle.con_id
+                or float(row.get("shares") or 0) != float(saved["shares"])
+                or float(row.get("price") or 0) != float(saved["price"])
+            ):
+                return retain_hold("A fresh execution is new or conflicts with the settled local ledger.")
+
+        self._require_recovery_connection()
+        accounts = getattr(self, "_recovery_managed_accounts", None)
+        if accounts is None:
+            accounts = self.adapter.managed_accounts()
+        self._require_recovery_connection()
+        if account not in accounts or (self.connection.account and self.connection.account.strip() != account):
+            return retain_hold("The original cycle account is not confirmed by the current broker connection and configuration.")
+        try:
+            contract = self._adapter_qualify_stock(cycle.ticker, cycle.exchange, cycle.currency, cycle.primary_exchange, cycle.con_id)
+            self._require_recovery_connection()
+            self._verify_qualified_contract(contract, self._cycle_contract_settings(cycle))
+            method = getattr(self.adapter, "recovery_position_size", None)
+            position = method(contract, account=account) if callable(method) else self.adapter.position_size(contract, account=account, refresh=True)
+            self._require_recovery_connection()
+        except Exception as exc:
+            if self._recovery_read_interrupted(exc) or isinstance(exc, BrokerAdapterError):
+                raise _RecoveryReadDeferred(f"Legacy outage hold could not be revalidated: {exc}") from exc
+            return retain_hold(f"The exact stored contract or position could not be verified: {exc}")
+        quantity = float(position) if position is not None else float("nan")
+        if not isfinite(quantity) or quantity + 1e-9 < self._app_unsold_quantity(cycle):
+            detail = "unavailable" if not isfinite(quantity) else f"{quantity:g} shares"
+            return retain_hold(f"Fresh broker position is {detail}; {self._app_unsold_quantity(cycle)} app-owned shares need confirmation.")
+
+        # Re-read after broker calls. A changed local record needs a new review,
+        # not an overwrite based on evidence for an earlier cycle signature.
+        current = self.storage.get_cycle(cycle.id)
+        if current is None or current.to_dict() != cycle.to_dict():
+            return retain_hold("The local cycle changed during broker checks; review the updated state.")
+        self._require_recovery_connection()
+        restored = deepcopy(cycle)
+        restored.stage = stage
+        restored.recovery_required = False
+        restored.error_message = None
+        restored.touch()
+        self.storage.upsert_cycle(restored)
+        self.active_cycle = restored
+        self.contract = contract
+        self._recovery_required = False
+        self.storage.add_decision_event(
+            event_type="OUTAGE_HOLD_RECONCILED", cycle=restored,
+            stage_before=Stage.MANUAL_REVIEW.value, stage_after=stage.value,
+            decision_result="reconciled",
+            message="Operator reconciled a legacy outage hold against fresh broker identity, orders, executions and position.",
+        )
+        self._log("INFO", f"Outage hold reconciled; restored {stage.value} for {cycle.ticker}.", restored)
+        return True
+
+    def _require_recovery_connection(self) -> None:
+        status = self._adapter_connectivity_snapshot()
+        self._broker_connectivity = status
+        if not self.connected or not status.get("local_connected") or status.get("upstream_connected") is not True:
+            raise _RecoveryReadDeferred("Broker connectivity was lost or is not confirmed during recovery.")
+
+    def _recovery_poll_order(self, order_ref: str) -> Optional[PolledOrderState]:
+        self._require_recovery_connection()
+        try:
+            state = self.adapter.poll_order(order_ref)
+        except Exception as exc:
+            raise _RecoveryReadDeferred(f"Exact-order refresh did not complete: {exc}") from exc
+        self._require_recovery_connection()
+        return state
+
+    def _recovery_read_interrupted(self, exc: Exception) -> bool:
+        try:
+            self._require_recovery_connection()
+        except _RecoveryReadDeferred:
+            return True
+        text = str(exc).lower()
+        return isinstance(exc, (ConnectionError, TimeoutError)) or any(
+            token in text for token in ("not connected", "disconnected", "connection lost", "timed out", "timeout")
+        )
+
+    def _defer_broker_recovery(self, exc: Exception) -> None:
+        self._upstream_recovery_pending = True
+        self._last_upstream_recovery_attempt_monotonic = time.monotonic()
+        reason = str(exc) or "A broker recovery request did not complete."
+        self.status = f"Broker recovery is waiting for complete broker data; trading remains paused: {reason}"
+        self._invalidate_market_data_freshness("Broker reconciliation is incomplete; waiting for recovery and a fresh quote.")
+        if self._last_recovery_probe:
+            self._last_recovery_probe = {
+                **self._last_recovery_probe,
+                "invalidated_at": utc_now_iso(),
+                "invalidation_reason": "Broker reconciliation did not complete.",
+            }
+        if getattr(self, "_last_deferred_recovery_reason", None) != reason:
+            self._log("WARN", self.status, self.active_cycle)
+            self._last_deferred_recovery_reason = reason
+
+    def _recover_after_connect(self, *, allow_outage_recovery: bool = False) -> bool:
+        """Retry incomplete read-only evidence without losing the saved stage."""
+        self._recovery_execution_rows = None
+        self._recovery_managed_accounts = None
+        self._outage_reconcile_blocker = ""
+        self._recovery_read_active = True
+        try:
+            self._require_recovery_connection()
+            self.active_cycle = self.storage.get_latest_active_cycle()
+            if allow_outage_recovery and self._outage_recovery_requested_cycle_id is None:
+                self._outage_recovery_requested_cycle_id = self.active_cycle.id if self.active_cycle is not None else None
+            continue_operator_request = bool(
+                self.active_cycle is not None
+                and self.active_cycle.id == self._outage_recovery_requested_cycle_id
+            )
+            method = getattr(self.adapter, "recovery_open_app_orders", self.adapter.open_app_orders)
+            try:
+                open_orders = self._local_open_app_orders(method())
+            except Exception as exc:
+                raise _RecoveryReadDeferred(f"Open-order refresh did not complete: {exc}") from exc
+            self._require_recovery_connection()
+            if self.active_cycle is not None:
+                method = getattr(self.adapter, "recovery_recent_executions", None)
+                if not callable(method):
+                    method = getattr(self.adapter, "recent_executions", None)
+                try:
+                    rows = method() if callable(method) else []
+                    self._recovery_execution_rows = [row for row in rows or [] if isinstance(row, dict)]
+                except Exception as exc:
+                    raise _RecoveryReadDeferred(f"Execution refresh did not complete: {exc}") from exc
+                self._require_recovery_connection()
+                if bool(getattr(self.adapter, "requires_exact_contract_selection", False)):
+                    try:
+                        accounts = self.adapter.managed_accounts()
+                    except Exception as exc:
+                        raise _RecoveryReadDeferred(f"Managed accounts are unavailable: {exc}") from exc
+                    self._require_recovery_connection()
+                    self._recovery_managed_accounts = [str(account).strip() for account in accounts or [] if str(account).strip()]
+                    if not self._recovery_managed_accounts:
+                        raise _RecoveryReadDeferred("The broker managed-account snapshot is not available yet.")
+            self._recover_after_connect_impl(open_orders, allow_outage_recovery=continue_operator_request)
+            self._require_recovery_connection()
+            self._last_deferred_recovery_reason = None
+            self._outage_recovery_requested_cycle_id = None
+            self._upstream_recovery_pending = False
+            repeat_id = self._deferred_repeat_cycle_id
+            self._deferred_repeat_cycle_id = None
+            if repeat_id and self.active_cycle is None and not self._recovery_required:
+                repeat_cycle = self.storage.get_cycle(repeat_id)
+                if repeat_cycle is not None and repeat_cycle.stage == Stage.CYCLE_COMPLETE and not repeat_cycle.stop_after_current_cycle:
+                    self.active_cycle = repeat_cycle
+            close_id = self._deferred_market_close_cycle_id
+            self._deferred_market_close_cycle_id = None
+            if (
+                close_id and self.active_cycle is not None and self.active_cycle.id == close_id
+                and self.active_cycle.stage not in {Stage.CYCLE_COMPLETE, Stage.STOPPED, Stage.MANUAL_REVIEW}
+                and not self._recovery_required
+            ):
+                self._request_market_close_for_app_position(self.active_cycle)
+                if self._upstream_recovery_pending:
+                    return False
+            self._require_recovery_connection()
+            return True
+        except _RecoveryReadDeferred as exc:
+            self._defer_broker_recovery(exc)
+            return False
+        finally:
+            self._recovery_execution_rows = None
+            self._recovery_managed_accounts = None
+            self._recovery_read_active = False
+
+    def _recover_after_connect_impl(self, open_orders: list[Any], *, allow_outage_recovery: bool) -> None:
         """Reconcile SQLite state with app-owned TWS orders and executions.
 
         This method runs after the operator clicks Start for a stored cycle and
@@ -3094,8 +3410,8 @@ class TradingController:
         """
         self._recovery_required = False
         self.active_cycle = self.storage.get_latest_active_cycle()
-        open_orders = self._local_open_app_orders(self.adapter.open_app_orders())
         self._capture_recovery_probe(self.active_cycle, open_orders)
+        self._require_recovery_connection()
         open_refs = {o.order_ref for o in open_orders}
         if self.active_cycle is None:
             if open_orders:
@@ -3108,9 +3424,12 @@ class TradingController:
         if cycle.stage == Stage.MANUAL_REVIEW or bool(cycle.recovery_required):
             # A successful reconnect, or absence from one open-order response,
             # is not proof that an uncertain submission never reached IBKR.
-            self._recovery_required = True
-            self.status = cycle.error_message or "Recovery still requires manual review."
-            return
+            if not allow_outage_recovery or not self._restore_outage_waiting_cycle(cycle, open_orders):
+                self._recovery_required = True
+                blocker = self._outage_reconcile_blocker if allow_outage_recovery else ""
+                self.status = blocker or cycle.error_message or "Recovery still requires manual review."
+                return
+            cycle = self.active_cycle or cycle
         if cycle.stage == Stage.WAIT_INITIAL_DROP and any(
             self._polled_order_is_working(order) for order in open_orders
         ):
@@ -3124,7 +3443,8 @@ class TradingController:
             if cycle.buy_order_ref in open_refs:
                 self._log("INFO", f"Recovered active BUY trailing order for {cycle.ticker}.", cycle)
             else:
-                polled = self.adapter.poll_order(cycle.buy_order_ref or "") if cycle.buy_order_ref else None
+                polled = self._recovery_poll_order(cycle.buy_order_ref or "") if cycle.buy_order_ref else None
+                self._require_recovery_connection()
                 if polled and (polled.filled > 0 or cycle.close_position_market_requested):
                     self._handle_buy_order_poll(cycle, polled)
                     recovered = self.active_cycle or cycle
@@ -3150,22 +3470,59 @@ class TradingController:
             if cycle.sell_order_ref in open_refs:
                 self._log("INFO", f"Recovered active SELL order for {cycle.ticker}.", cycle)
             else:
-                polled = self.adapter.poll_order(cycle.sell_order_ref or "") if cycle.sell_order_ref else None
-                if polled is not None:
+                polled = self._recovery_poll_order(cycle.sell_order_ref or "") if cycle.sell_order_ref else None
+                self._require_recovery_connection()
+                execution_evidence = any(
+                    self._execution_matches_order(cycle, row, "SELL")
+                    for row in self._adapter_recent_executions()
+                )
+                explicit_close = bool(
+                    cycle.close_position_market_requested
+                    or cycle.close_before_rth_liquidation_requested
+                    or self._is_close_before_rth_market_order_ref(cycle.sell_order_ref)
+                )
+                if execution_evidence:
+                    # Apply the fresh complete execution snapshot before any
+                    # replacement decision, even when a stale Trade reports a
+                    # confirmed partial cancellation. Otherwise a fill during
+                    # the outage could be sold a second time by manual close.
+                    valid_quantity, _, _, _ = self._aggregate_recovered_executions(cycle, "SELL")
+                    if valid_quantity <= 0:
+                        self._mark_recovery_required(cycle, "Recent SELL executions contain incomplete or conflicting fill evidence.")
+                    elif self._recover_sell_from_executions(cycle) is not None:
+                        self._maybe_start_next_cycle()
+                    elif polled is not None and explicit_close and (
+                        polled.filled > 0 or self._order_terminal_without_fill(polled.status)
+                    ):
+                        # The ledger now includes every validated recent fill;
+                        # the existing cancellation gate derives only its proven
+                        # unsold remainder and still requires terminal status.
+                        self._handle_sell_order_poll(self.active_cycle or cycle, polled)
+                    else:
+                        self._mark_recovery_required(cycle, "Recent SELL executions do not prove that the complete app-owned position is closed.")
+                elif polled is not None and polled.filled > 0:
                     self._handle_sell_order_poll(cycle, polled)
                     recovered_cycle = self.active_cycle
                     if recovered_cycle is not None and recovered_cycle.stage == Stage.CYCLE_COMPLETE:
                         self._log("INFO", f"Recovered completed SELL order for {cycle.ticker}.", recovered_cycle)
-                elif self._recover_sell_from_executions(cycle) is not None:
-                    self._maybe_start_next_cycle()
+                elif polled is not None and explicit_close and self._order_terminal_without_fill(polled.status):
+                    self._handle_sell_order_poll(cycle, polled)
                 else:
-                    self._mark_recovery_required(cycle, "SQLite expected active SELL order, but no matching TWS open order or recent app execution was found.")
+                    self._mark_recovery_required(cycle, "SQLite expected active SELL order, but no matching TWS open order or complete recent app execution evidence was found.")
         elif cycle.stage in {Stage.WAIT_INITIAL_DROP, Stage.WAIT_RISE_TRIGGER}:
             try:
                 self.contract = self._adapter_qualify_stock(cycle.ticker, cycle.exchange, cycle.currency, cycle.primary_exchange, cycle.con_id)
             except Exception as exc:
-                if cycle.stage == Stage.WAIT_RISE_TRIGGER:
-                    self._mark_recovery_required(cycle, f"Cannot qualify the stored position contract: {exc}")
+                if self._recovery_read_interrupted(exc):
+                    raise _RecoveryReadDeferred(f"Stored-contract qualification did not complete: {exc}") from exc
+                self._mark_recovery_required(cycle, f"Cannot qualify the stored position contract: {exc}")
+                return
+            self._require_recovery_connection()
+            if self.contract is not None:
+                try:
+                    self._verify_qualified_contract(self.contract, self._cycle_contract_settings(cycle))
+                except Exception as exc:
+                    self._mark_recovery_required(cycle, f"Stored contract identity conflicts with broker qualification: {exc}")
                     return
             if not self._check_position_for_waiting_cycle(cycle):
                 return
@@ -3185,7 +3542,8 @@ class TradingController:
                 if cycle.protective_sell_order_ref in open_refs:
                     self._log("INFO", f"Recovered active protective SELL trailing order for {cycle.ticker}.", cycle)
                 else:
-                    polled = self.adapter.poll_order(cycle.protective_sell_order_ref) if cycle.protective_sell_order_ref else None
+                    polled = self._recovery_poll_order(cycle.protective_sell_order_ref) if cycle.protective_sell_order_ref else None
+                    self._require_recovery_connection()
                     if polled and (polled.filled > 0 or cycle.close_position_market_requested):
                         # Reuse the live poll gate so recovery cannot complete a
                         # protective exit until the broker reports the exact
@@ -3493,7 +3851,7 @@ class TradingController:
                 continue
         return accounts
 
-    def _bind_cycle_account(self, cycle: CycleState) -> Optional[str]:
+    def _bind_cycle_account(self, cycle: CycleState, *, defer_unavailable: bool = False) -> Optional[str]:
         """Pin a broker-confirmed account; never infer old ownership from a draft."""
         account = str(cycle.account or "").strip()
         configured = str(self.connection.account or "").strip()
@@ -3502,9 +3860,28 @@ class TradingController:
         method = getattr(self.adapter, "managed_accounts", None)
         strict = bool(getattr(self.adapter, "requires_exact_contract_selection", False))
         try:
-            managed = {str(value).strip() for value in (method() or []) if str(value).strip()} if callable(method) else set()
+            if defer_unavailable:
+                self._require_recovery_connection()
+            recovery_accounts = getattr(self, "_recovery_managed_accounts", None)
+            if recovery_accounts is not None:
+                managed = set(recovery_accounts)
+            else:
+                managed = {str(value).strip() for value in (method() or []) if str(value).strip()} if callable(method) else set()
         except Exception as exc:
+            if defer_unavailable:
+                raise _IdentityReadDeferred(f"Managed accounts are unavailable before submission: {exc}") from exc
+            if getattr(self, "_recovery_read_active", False):
+                raise _RecoveryReadDeferred(f"Managed accounts are unavailable: {exc}") from exc
             return f"Cycle account could not be verified: {exc}"
+        if defer_unavailable:
+            try:
+                self._require_recovery_connection()
+            except _RecoveryReadDeferred as exc:
+                raise _IdentityReadDeferred(str(exc)) from exc
+            if strict and not managed:
+                raise _IdentityReadDeferred("The broker managed-account snapshot is not available before submission.")
+        if getattr(self, "_recovery_read_active", False):
+            self._require_recovery_connection()
         if account:
             if (strict or managed) and account not in managed:
                 return f"Cycle account {account} is not confirmed in the broker managed accounts."
@@ -3545,9 +3922,19 @@ class TradingController:
                         polled = self.adapter.poll_order(ref)
                         if polled is not None and str(polled.order_ref) == ref:
                             consider(polled.raw, ref)
-                    for row in self._adapter_recent_executions():
+                    if defer_unavailable:
+                        reader = getattr(self.adapter, "recovery_recent_executions", None)
+                        if not callable(reader):
+                            reader = getattr(self.adapter, "recent_executions", None)
+                        rows = reader() if callable(reader) else []
+                        self._require_recovery_connection()
+                    else:
+                        rows = self._adapter_recent_executions()
+                    for row in rows or []:
                         consider(row)
                 except Exception as exc:
+                    if defer_unavailable:
+                        raise _IdentityReadDeferred(f"Legacy account evidence is unavailable before submission: {exc}") from exc
                     return f"Legacy cycle account evidence could not be reconciled: {exc}"
             if len(candidates) != 1:
                 return "The stored cycle has no unambiguous exact-order account evidence; verify its account in recovery."
@@ -3577,16 +3964,25 @@ class TradingController:
                 f"Unresolved: {details}. Review historical blockers in Reconciliation."
             )
         try:
+            self._require_recovery_connection()
             if bool(getattr(self.adapter, "requires_exact_contract_selection", False)) and not cycle.con_id:
                 return "The cycle has no exact broker contract ID."
             if self.contract is None:
                 self.contract = self._adapter_qualify_stock(
                     cycle.ticker, cycle.exchange, cycle.currency, cycle.primary_exchange, cycle.con_id,
                 )
+            self._require_recovery_connection()
             self._verify_qualified_contract(self.contract, self._cycle_contract_settings(cycle))
         except Exception as exc:
+            if self._recovery_read_interrupted(exc):
+                raise _IdentityReadDeferred(f"Contract identity is unavailable before submission: {exc}") from exc
             return f"Cycle contract identity could not be verified: {exc}"
-        return self._bind_cycle_account(cycle)
+        message = self._bind_cycle_account(cycle, defer_unavailable=True)
+        try:
+            self._require_recovery_connection()
+        except _RecoveryReadDeferred as exc:
+            raise _IdentityReadDeferred(str(exc)) from exc
+        return message
 
     def _contract_for_strategy(self, settings: StrategySettings) -> QualifiedContract:
         ticker = settings.normalized_ticker()
@@ -3756,8 +4152,13 @@ class TradingController:
                     currency=active.currency,
                     sec_type="STK",
                 )
+                self._require_recovery_connection()
                 self._verify_qualified_contract(self.contract, resume_identity)
             except Exception as exc:
+                if self._recovery_read_interrupted(exc):
+                    self._defer_broker_recovery(exc)
+                    self.emit_snapshot(force=True)
+                    return
                 if exact_required:
                     active.stage = Stage.MANUAL_REVIEW
                     active.recovery_required = True
@@ -3775,7 +4176,16 @@ class TradingController:
                     return
                 self._log("WARN", f"Active cycle resumed, but contract qualification failed: {exc}", active)
             status_before_resume = self.status
-            self._recover_after_connect()
+            if self._recover_after_connect() is False:
+                self.emit_snapshot(force=True)
+                return
+            recovered = self.active_cycle or active
+            if recovered.stage == Stage.MANUAL_REVIEW or recovered.recovery_required or self._recovery_required:
+                self.status = recovered.error_message or "Recovery still requires manual review."
+                self._log("WARN", self.status, recovered)
+                self.emit_snapshot(force=True)
+                return
+            self._upstream_recovery_pending = False
             self._apply_active_strategy_edits(settings)
             current = self.active_cycle or active
             if (
@@ -3965,6 +4375,10 @@ class TradingController:
                 self._execute_actions(actions, advanced)
 
     def _adapter_recent_executions(self) -> list[dict[str, Any]]:
+        recovery_rows = getattr(self, "_recovery_execution_rows", None)
+        if recovery_rows is not None:
+            self._require_recovery_connection()
+            return list(recovery_rows)
         method = getattr(self.adapter, "recent_executions", None)
         if not callable(method):
             return []
@@ -4033,20 +4447,60 @@ class TradingController:
         )
 
     def _aggregate_recovered_executions(self, cycle: CycleState, side: str) -> tuple[int, float, float, list[dict[str, Any]]]:
-        matches = [row for row in self._adapter_recent_executions() if self._execution_matches_order(cycle, row, side)]
+        matches: list[dict[str, Any]] = []
+        by_execution_id: dict[str, dict[str, Any]] = {}
+        for row in self._adapter_recent_executions():
+            if not self._execution_matches_order(cycle, row, side):
+                continue
+            try:
+                shares = float(row.get("shares") or row.get("qty") or 0.0)
+                price = float(row.get("price") or row.get("avg_price") or row.get("avgPrice") or 0.0)
+                fee = float(row.get("commission") or 0.0)
+            except (TypeError, ValueError, OverflowError):
+                return 0, 0.0, 0.0, []
+            if (
+                not isfinite(shares) or not isfinite(price) or shares <= 0 or price <= 0
+                or not shares.is_integer() or not isfinite(shares * price) or not isfinite(fee)
+            ):
+                return 0, 0.0, 0.0, []
+            row = {**row, "shares": shares, "price": price}
+            execution_id = str(row.get("execution_id") or row.get("execId") or "").strip()
+            if not execution_id:
+                # Without IBKR's stable execution ID, a repeated refresh could
+                # insert the same partial print twice and falsely close a cycle.
+                return 0, 0.0, 0.0, []
+            if execution_id in by_execution_id:
+                previous = by_execution_id[execution_id]
+                # Repeated snapshots of one execution must not double its
+                # quantity. Conflicting economic facts are not proof of a fill.
+                try:
+                    same = all(float(previous.get(key) or 0.0) == float(row.get(key) or 0.0) for key in ("shares", "price"))
+                except (TypeError, ValueError, OverflowError):
+                    same = False
+                if not same:
+                    return 0, 0.0, 0.0, []
+                continue
+            if execution_id:
+                by_execution_id[execution_id] = row
+            matches.append(row)
         total_shares = 0.0
         total_value = 0.0
         total_commission = 0.0
         for row in matches:
             try:
-                shares = abs(float(row.get("shares") or row.get("qty") or 0.0))
+                shares = float(row.get("shares") or row.get("qty") or 0.0)
                 price = float(row.get("price") or row.get("avg_price") or row.get("avgPrice") or 0.0)
             except Exception:
                 continue
-            if shares <= 0 or price <= 0:
-                continue
+            if (
+                not isfinite(shares) or not isfinite(price) or shares <= 0 or price <= 0
+                or not shares.is_integer() or not isfinite(shares * price)
+            ):
+                return 0, 0.0, 0.0, []
             total_shares += shares
             total_value += shares * price
+            if not isfinite(total_shares) or not isfinite(total_value):
+                return 0, 0.0, 0.0, []
             try:
                 commission_value = float(row.get("commission") or 0.0)
             except Exception:
@@ -4069,16 +4523,42 @@ class TradingController:
                 total_commission += float(stored.get("commission") or 0.0)
             else:
                 total_commission += commission_value
+            if not isfinite(total_commission):
+                return 0, 0.0, 0.0, []
         if total_shares <= 0:
             return 0, 0.0, 0.0, matches
         return int(total_shares), total_value / total_shares, total_commission, matches
 
+    def _pending_execution_commission(
+        self, cycle: CycleState, execution_id: str, side: str,
+        commission: Optional[float], currency: Any,
+    ) -> tuple[Optional[float], Any, bool]:
+        """Consume a previously validated fee only after its execution exists."""
+        pending = self._pending_commissions_by_execution_id.get(execution_id)
+        if pending is None:
+            return commission, currency, False
+        identity = dict(pending)
+        identity["side"] = identity.get("side") or ("SELL" if side == "PROTECTIVE_SELL" else side)
+        if not self._execution_matches_order(cycle, identity, side):
+            return commission, currency, False
+        try:
+            value = float(pending["commission"])
+        except (KeyError, TypeError, ValueError, OverflowError):
+            return commission, currency, False
+        if not isfinite(value):
+            return commission, currency, False
+        self._pending_commissions_by_execution_id.pop(execution_id, None)
+        return value, pending.get("currency") or currency, True
+
     def _record_recovered_executions(self, cycle: CycleState, rows: list[dict[str, Any]], side: str) -> None:
         for row in rows:
             execution_id = str(row.get("execution_id") or row.get("execId") or "")
-            shares = float(row.get("shares") or 0.0)
-            price = float(row.get("price") or row.get("avg_price") or row.get("avgPrice") or 0.0)
-            if shares <= 0 or price <= 0:
+            try:
+                shares = float(row.get("shares") or row.get("qty") or 0.0)
+                price = float(row.get("price") or row.get("avg_price") or row.get("avgPrice") or 0.0)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if not isfinite(shares) or not isfinite(price) or shares <= 0 or price <= 0 or not shares.is_integer():
                 continue
             commission_value = row.get("commission")
             commission_authoritative = False
@@ -4090,11 +4570,14 @@ class TradingController:
                 )
             except Exception:
                 commission = None
-            if commission is not None and abs(commission) > 0.0:
+            commission, commission_currency, commission_authoritative = self._pending_execution_commission(
+                cycle, execution_id, side, commission, row.get("currency"),
+            )
+            if commission is not None and (commission_authoritative or abs(commission) > 0.0):
                 commission = self._commission_in_cycle_currency(
                     cycle,
                     commission,
-                    row.get("currency"),
+                    commission_currency,
                     execution_id=execution_id or "RECOVERED",
                     source="RECOVERED_EXECUTION_ROW",
                 )
@@ -4118,13 +4601,32 @@ class TradingController:
                 executed_at=str(row.get("executed_at") or row.get("time") or utc_now_iso()),
                 raw=row,
             )
+            self.storage.rebalance_cumulative_execution_placeholder(
+                cycle=cycle, side=side,
+                order_ref=str(row.get("order_ref") or self._order_identity_for_side(cycle, side)[0] or ""),
+            )
+
+    @staticmethod
+    def _latest_recovered_execution_time(rows: list[dict[str, Any]]) -> Optional[str]:
+        times: list[datetime] = []
+        for row in rows:
+            value = row.get("executed_at") or row.get("time")
+            try:
+                stamp = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            except (TypeError, ValueError):
+                continue
+            if stamp.tzinfo is not None:
+                times.append(stamp.astimezone(timezone.utc))
+        return max(times).isoformat() if times else None
 
     def _recover_buy_from_executions(self, cycle: CycleState) -> Optional[CycleState]:
         qty, avg_price, commission, rows = self._aggregate_recovered_executions(cycle, "BUY")
         if qty <= 0 or avg_price <= 0:
             return None
         self._record_recovered_executions(cycle, rows, "BUY")
+        commission = float(self.storage.get_execution_totals(cycle.id, "BUY").get("commission") or 0.0)
         cycle.buy_commission = commission
+        cycle.buy_filled_at = cycle.buy_filled_at or self._latest_recovered_execution_time(rows)
         recovered, actions = StrategyEngine.on_buy_fill(cycle, qty, avg_price, "Filled", commission)
         self.active_cycle = recovered
         self.storage.upsert_cycle(recovered)
@@ -4139,6 +4641,10 @@ class TradingController:
         if qty <= 0 or avg_price <= 0:
             return None
         self._record_recovered_executions(cycle, rows, "SELL")
+        # Include prior executions outside the broker's current lookback and
+        # authoritative pending fee corrections, without counting a cumulative
+        # placeholder again after its actual execution arrived.
+        qty, avg_price, commission = self._close_before_rth_sell_totals(cycle)
         close_workflow = bool(getattr(cycle, "close_before_rth_liquidation_requested", False)) or self._is_close_before_rth_market_order_ref(
             cycle.sell_order_ref
         )
@@ -4181,6 +4687,18 @@ class TradingController:
             )
             return None
         cycle.sell_commission = commission
+        cycle.sell_filled_at = cycle.sell_filled_at or self._latest_recovered_execution_time(rows)
+        stored_order = self.storage.get_order_for_cycle_ref(cycle.id, cycle.sell_order_ref or "")
+        if stored_order and cycle.sell_perm_id and stored_order.get("perm_id") == cycle.sell_perm_id:
+            exact_rows = [row for row in rows if (
+                str(row.get("order_ref") or row.get("orderRef") or "") == cycle.sell_order_ref
+                and self._optional_int(row.get("perm_id") or row.get("permId")) == cycle.sell_perm_id
+            )]
+            proven_quantity = sum(float(row["shares"]) for row in exact_rows)
+            if proven_quantity > 0 and proven_quantity == float(stored_order.get("quantity") or 0):
+                # Update only the exact latest local order proven fully filled;
+                # do not relabel a cancelled partial or an older reused ref.
+                self.storage.update_order_status(cycle.sell_order_ref or "", "Filled")
         recovered = StrategyEngine.on_sell_fill(cycle, qty, avg_price, "Filled", commission)
         self.active_cycle = recovered
         self.storage.upsert_cycle(recovered)
@@ -4192,6 +4710,12 @@ class TradingController:
         if qty <= 0 or avg_price <= 0:
             return None
         self._record_recovered_executions(cycle, rows, "PROTECTIVE_SELL")
+        totals = self.storage.get_execution_totals(cycle.id, "PROTECTIVE_SELL")
+        qty = int(round(float(totals.get("shares") or 0.0)))
+        avg_price = float(totals.get("avg_price") or 0.0)
+        commission = float(totals.get("commission") or 0.0)
+        if float(self.storage.get_execution_totals(cycle.id, "SELL").get("shares") or 0.0) > 0:
+            return None
         target_qty = max(0, int(getattr(cycle, "buy_filled_qty", 0) or 0))
         if target_qty <= 0 or qty != target_qty:
             # See _recover_sell_from_executions: recovery requires an exact
@@ -4212,6 +4736,7 @@ class TradingController:
             return None
         cycle.protective_sell_commission = commission
         cycle.sell_commission = commission
+        cycle.protective_sell_filled_at = cycle.protective_sell_filled_at or self._latest_recovered_execution_time(rows)
         recovered = StrategyEngine.on_protective_sell_fill(cycle, qty, avg_price, "Filled", commission)
         self.active_cycle = recovered
         self.storage.upsert_cycle(recovered)
@@ -4225,6 +4750,8 @@ class TradingController:
         binder = getattr(self, "_bind_cycle_account", None)
         if callable(binder):
             message = binder(cycle)
+            if getattr(self, "_recovery_read_active", False):
+                self._require_recovery_connection()
             if message:
                 self._mark_recovery_required(cycle, message)
                 return False
@@ -4240,6 +4767,35 @@ class TradingController:
         ):
             self._mark_recovery_required(cycle, "Cannot establish the exact account and contract for position recovery.")
             return False
+
+        # Acquire the authoritative read before ledger writes. A timed-out
+        # position request must not touch the saved cycle on every retry. The
+        # comparison remains below, after fills project the current remainder.
+        method = getattr(self.adapter, "position_size", None)
+        recovery_method = getattr(self.adapter, "recovery_position_size", None)
+        recovering = bool(getattr(self, "_recovery_read_active", False))
+        position = None
+        try:
+            if recovering:
+                self._require_recovery_connection()
+            if recovering and exact_required and callable(recovery_method):
+                position = recovery_method(self.contract, account=cycle.account)
+            elif callable(method):
+                if exact_required:
+                    # Production adapters must complete an authoritative refresh;
+                    # never fall back to a cached position after a refresh error.
+                    position = method(self.contract, account=cycle.account, refresh=True)
+                else:
+                    position = method(self.contract, account=cycle.account)
+            if getattr(self, "_recovery_read_active", False):
+                self._require_recovery_connection()
+            quantity = float(position) if position is not None else float("nan")
+        except _RecoveryReadDeferred:
+            raise
+        except Exception as exc:
+            if recovering:
+                raise _RecoveryReadDeferred(f"Position refresh did not complete: {exc}") from exc
+            quantity = float("nan")
 
         # Recover exact-ref fills before comparing positions. In particular, a
         # protective partial reduces the app-owned remainder; it must not be
@@ -4265,19 +4821,6 @@ class TradingController:
         if cycle.stage != Stage.WAIT_RISE_TRIGGER:
             self._mark_recovery_required(cycle, "Recovered executions require manual review before position recovery.")
             return False
-        method = getattr(self.adapter, "position_size", None)
-        position = None
-        try:
-            if callable(method):
-                if exact_required:
-                    # Production adapters must complete an authoritative refresh;
-                    # never fall back to a cached position after a refresh error.
-                    position = method(self.contract, account=cycle.account, refresh=True)
-                else:
-                    position = method(self.contract, account=cycle.account)
-            quantity = float(position) if position is not None else float("nan")
-        except Exception:
-            quantity = float("nan")
         unsold = self._app_unsold_quantity(cycle)
         if not isfinite(quantity) or quantity + 1e-9 < unsold:
             detail = "unavailable" if not isfinite(quantity) else f"{quantity:g} shares"
@@ -4478,6 +5021,16 @@ class TradingController:
         self._submit_requested_market_close(cycle)
         return True
 
+    def _defer_requested_market_close(self, cycle: CycleState, exc: Exception) -> None:
+        self._deferred_market_close_cycle_id = cycle.id
+        # The operator requested an exit. A SELL that fills during the outage
+        # must not auto-repeat before this queued request can be revalidated.
+        if not cycle.stop_after_current_cycle:
+            cycle.stop_after_current_cycle = True
+            cycle.touch()
+            self.storage.upsert_cycle(cycle)
+        self._defer_broker_recovery(exc)
+
     def _request_market_close_for_app_position(self, cycle: CycleState) -> None:
         """Cancel app orders and sell the app-bought unsold quantity with a market order.
 
@@ -4486,7 +5039,11 @@ class TradingController:
         sending the market SELL. That avoids two app-created SELL orders working
         for the same shares at the same time.
         """
-        identity_message = self._execution_identity_message(cycle)
+        try:
+            identity_message = self._execution_identity_message(cycle)
+        except _IdentityReadDeferred as exc:
+            self._defer_requested_market_close(cycle, exc)
+            return
         if identity_message:
             self._mark_recovery_required(cycle, identity_message)
             return
@@ -4503,16 +5060,15 @@ class TradingController:
             require_reconciliation_complete=True,
         )
         if connectivity_message:
-            cycle.error_message = connectivity_message
-            cycle.touch()
-            self.active_cycle = cycle
-            self.storage.upsert_cycle(cycle)
-            self.status = connectivity_message
-            self._log("WARN", connectivity_message, cycle)
+            self._defer_requested_market_close(cycle, _IdentityReadDeferred(connectivity_message))
             return
         unsold = self._app_unsold_quantity(cycle)
         if unsold > 0 or self._working_sell_order_exists(cycle):
-            message = self._manual_close_preflight_message(cycle, unsold)
+            try:
+                message = self._manual_close_preflight_message(cycle, unsold)
+            except _IdentityReadDeferred as exc:
+                self._defer_requested_market_close(cycle, exc)
+                return
             if message:
                 cycle.error_message = message
                 cycle.touch()
@@ -4616,7 +5172,11 @@ class TradingController:
             self.storage.upsert_cycle(cycle)
             self._log("INFO", cycle.error_message, cycle)
             return True
-        message = self._manual_close_preflight_message(cycle, remaining)
+        try:
+            message = self._manual_close_preflight_message(cycle, remaining)
+        except _IdentityReadDeferred as exc:
+            self._defer_broker_recovery(exc)
+            return False
         if message:
             self._mark_recovery_required(cycle, "Manual-close replacement is blocked after prior orders became terminal: " + message)
             return False
@@ -4762,7 +5322,9 @@ class TradingController:
                 )
                 self._log("WARN", self.status, self.active_cycle)
             else:
-                self._recover_after_connect()
+                if self._recover_after_connect() is False:
+                    self.emit_snapshot(force=True)
+                    return False
             if not self._startup_resume_required:
                 self._refresh_confirmed_market_data_if_due(force=True)
             self.emit_snapshot(force=True)
@@ -5026,7 +5588,8 @@ class TradingController:
         self._upstream_recovery_pending = False
         try:
             self._refresh_display_accounts()
-            self._recover_after_connect()
+            if self._recover_after_connect() is False:
+                return False
             self._refresh_confirmed_market_data_if_due(force=True)
         except BrokerAdapterError as exc:
             self._upstream_recovery_pending = True
@@ -6945,6 +7508,7 @@ class TradingController:
 
     def _mark_recovery_required(self, cycle: CycleState, message: str) -> None:
         """Move an unclear state into a formal recovery-required/manual-review mode."""
+        stage_before = cycle.stage.value
         cycle.stage = Stage.MANUAL_REVIEW
         cycle.error_message = "RECOVERY REQUIRED: " + message
         try:
@@ -6959,7 +7523,7 @@ class TradingController:
             event_type="RECOVERY_REQUIRED",
             message=cycle.error_message,
             cycle=cycle,
-            stage_before=None,
+            stage_before=stage_before,
             stage_after=cycle.stage.value,
             decision_result="manual_review",
         )
@@ -7171,269 +7735,6 @@ class TradingController:
         if move > max_move:
             return f"Volatility guard blocked BUY: recent {window}s price range {move:.2f}% exceeds max {max_move:.2f}%."
         return None
-
-    def _buy_partial_fill_elapsed_seconds(
-        self,
-        cycle: CycleState,
-        *,
-        now_utc: Optional[datetime] = None,
-    ) -> float:
-        """Return elapsed time since the first positive BUY fill.
-
-        ``buy_filled_at`` already survives reconnects, watchdog replacement,
-        and application restarts. Reusing it keeps the timeout deterministic
-        without adding another database column. A missing legacy timestamp
-        starts a new grace period rather than cancelling from an unknown age.
-        """
-        now = now_utc or datetime.now(timezone.utc)
-        if now.tzinfo is None:
-            now = now.replace(tzinfo=timezone.utc)
-        else:
-            now = now.astimezone(timezone.utc)
-        started = self._safe_parse_utc_iso(cycle.buy_filled_at)
-        if started is None or started > now:
-            # A missing/malformed legacy value or a wall-clock rollback must
-            # not leave a marketable remainder working indefinitely. Start a
-            # fresh bounded grace period from the current observation instead.
-            cycle.buy_filled_at = now.isoformat()
-            return 0.0
-        return max(0.0, (now - started).total_seconds())
-
-    def _buy_partial_market_session_safety_reason(
-        self,
-        cycle: CycleState,
-    ) -> Optional[tuple[str, str]]:
-        """Return a configured safety reason for cancelling a BUY remainder.
-
-        Portfolio limits and what-if checks are intentionally excluded: those
-        decide whether a new order may be submitted. After a positive fill,
-        only market-data and session conditions that make the still-working
-        marketable remainder unsafe are reconsidered.
-        """
-        if bool(getattr(cycle, "rth_only", True)):
-            # Refresh through the adapter on every partial-fill safety check.
-            # The adapter keeps its own bounded cache and closes cached windows
-            # at the exact session boundary, so an old GUI snapshot cannot keep
-            # a remainder working after RTH has ended.
-            rth = self._update_rth_status(self.contract)
-            if not bool(rth.get("is_open", False)):
-                detail = str(
-                    rth.get("message")
-                    or rth.get("source")
-                    or "regular trading hours are closed"
-                )
-                return (
-                    "rth_closed",
-                    f"RTH safety changed while the BUY was filling: {detail}",
-                )
-
-        delayed = self._delayed_live_data_blocker_for_buy(cycle)
-        if delayed is not None:
-            return (
-                str(delayed.get("code") or "non_live_data"),
-                str(
-                    delayed.get("message")
-                    or "Live market-data mode is no longer confirmed."
-                ),
-            )
-
-        stale_message = self._stale_data_guard_message_for_buy(cycle, for_working_order=True)
-        if stale_message:
-            return "stale_data", stale_message
-
-        spread_message = self._spread_guard_message_for_buy(cycle)
-        if spread_message:
-            return "spread", spread_message
-
-        if bool(getattr(cycle, "session_timing_guard_enabled", False)):
-            cutoff = int(
-                getattr(cycle, "cancel_buy_before_close_minutes", 0) or 0
-            )
-            if cutoff > 0:
-                timing = self._session_minutes_from_rth_status()
-                if not timing.get("available"):
-                    detail = str(
-                        timing.get("message")
-                        or "regular-session boundaries are unavailable"
-                    )
-                    return (
-                        "session_timing_unavailable",
-                        "Session timing safety changed while the BUY was filling: "
-                        f"{detail}",
-                    )
-                minutes_to_close = timing.get("minutes_to_close")
-                if (
-                    minutes_to_close is not None
-                    and 0 <= float(minutes_to_close) <= cutoff
-                ):
-                    close_text = str(
-                        timing.get("session_close_display")
-                        or "the regular-session close"
-                    )
-                    return (
-                        "session_close",
-                        "Session timing safety changed while the BUY was filling: "
-                        f"{float(minutes_to_close):.1f} minutes remain before "
-                        f"{close_text} (configured cutoff {cutoff} minutes).",
-                    )
-
-        volatility_message = self._volatility_guard_message_for_buy(cycle)
-        if volatility_message:
-            return "volatility", volatility_message
-
-        hard_limits_enabled = bool(
-            getattr(cycle, "hard_risk_limits_enabled", False)
-        )
-        snapshot = self.price_snapshot or {}
-        if hard_limits_enabled:
-            current_price = self._positive_float(
-                snapshot.get("strategy_price")
-                or snapshot.get("price")
-                or cycle.last_price
-            )
-            min_trade_price = float(
-                getattr(cycle, "min_trade_price", 0.0) or 0.0
-            )
-            if (
-                min_trade_price > 0
-                and current_price is not None
-                and current_price < min_trade_price
-            ):
-                return (
-                    "min_trade_price",
-                    "BUY remainder safety changed: current price "
-                    f"{current_price:.4f} is below the configured minimum "
-                    f"trade price {min_trade_price:.4f}.",
-                )
-
-            max_gap = float(
-                getattr(cycle, "max_gap_from_prev_close_pct", 0.0) or 0.0
-            )
-            if max_gap > 0:
-                close = self._positive_float(
-                    self._snapshot_field(snapshot, "close", "delayedClose")
-                )
-                market_price = self._positive_float(
-                    self._snapshot_field(
-                        snapshot,
-                        "marketPrice",
-                        "bidAskMidpoint",
-                        "delayedBidAskMidpoint",
-                        "last",
-                        "delayedLast",
-                    )
-                )
-                if close is None or market_price is None:
-                    return (
-                        "gap_unverified",
-                        "BUY remainder safety changed: the current gap from "
-                        "the previous close cannot be verified.",
-                    )
-                gap_pct = abs((market_price / close) - 1.0) * 100.0
-                if gap_pct > max_gap:
-                    return (
-                        "gap",
-                        "BUY remainder safety changed: current gap from close "
-                        f"{gap_pct:.2f}% exceeds max {max_gap:.2f}%.",
-                    )
-        return None
-
-    def _buy_partial_remainder_cancel_action(
-        self,
-        cycle: CycleState,
-        polled: PolledOrderState,
-        cumulative_qty: int,
-        *,
-        now_utc: Optional[datetime] = None,
-    ) -> tuple[Optional[StrategyAction], Optional[dict[str, Any]]]:
-        """Build a delayed or safety-triggered remainder cancellation action."""
-        status = str(polled.status or "").strip()
-        terminal = {
-            "Filled",
-            "Cancelled",
-            "ApiCancelled",
-            "Inactive",
-            "Rejected",
-        }
-        if status in terminal:
-            return None, None
-        if bool(getattr(cycle, "buy_remainder_cancel_requested", False)):
-            return None, None
-        if status in {"CancelRequested", "PendingCancel"} or str(
-            cycle.buy_status or ""
-        ).strip() in {"CancelRequested", "PendingCancel"}:
-            return None, None
-
-        target_qty = max(0, int(cycle.quantity or 0))
-        expected_remaining = max(0, target_qty - max(0, int(cumulative_qty)))
-        reported_remaining = max(0, int(polled.remaining or 0))
-        remaining_qty = max(expected_remaining, reported_remaining)
-        if cumulative_qty <= 0 or remaining_qty <= 0 or not cycle.buy_order_ref:
-            return None, None
-
-        elapsed = self._buy_partial_fill_elapsed_seconds(
-            cycle,
-            now_utc=now_utc,
-        )
-        grace = max(0.1, float(self.BUY_PARTIAL_FILL_GRACE_SECONDS))
-        safety = self._buy_partial_market_session_safety_reason(cycle)
-        if safety is not None:
-            code, detail = safety
-            trigger = "safety"
-            reason = (
-                f"Partial BUY fill is {cumulative_qty} of {target_qty}; "
-                f"cancelling the {remaining_qty}-share remainder immediately "
-                "because a market/session safety condition changed: "
-                f"{detail}"
-            )
-        elif elapsed >= grace:
-            code = "partial_fill_timeout"
-            detail = (
-                "The triggered marketable BUY did not reach a terminal status "
-                "within the grace period."
-            )
-            trigger = "timeout"
-            reason = (
-                f"Partial BUY fill is {cumulative_qty} of {target_qty}; the "
-                f"marketable order remained nonterminal for {elapsed:.2f}s "
-                "after the first fill, so BouncyBot is cancelling the "
-                f"{remaining_qty}-share remainder after the {grace:.1f}s "
-                "grace period."
-            )
-        else:
-            return None, {
-                "trigger": "grace",
-                "code": "partial_fill_grace",
-                "detail": (
-                    "Waiting briefly for the triggered marketable BUY to "
-                    "finish normally."
-                ),
-                "elapsed_seconds": elapsed,
-                "grace_seconds": grace,
-                "filled_quantity": cumulative_qty,
-                "remaining_quantity": remaining_qty,
-            }
-
-        decision = {
-            "trigger": trigger,
-            "code": code,
-            "detail": detail,
-            "elapsed_seconds": elapsed,
-            "grace_seconds": grace,
-            "filled_quantity": cumulative_qty,
-            "remaining_quantity": remaining_qty,
-        }
-        action = StrategyAction(
-            "CANCEL_ORDER",
-            {
-                "order_ref": cycle.buy_order_ref,
-                "order_id": cycle.buy_order_id or polled.order_id,
-                "role": "buy_remainder",
-                "reason": reason,
-                "cancel_decision": dict(decision),
-            },
-        )
-        return action, decision
 
     def _cancel_buy_before_close_if_needed(self, cycle: CycleState) -> None:
         if cycle.stage != Stage.BUY_TRAIL_ACTIVE or not cycle.buy_order_ref:
@@ -8093,6 +8394,17 @@ class TradingController:
                                 raw={"partial_fill_policy": decision},
                             )
                         self._log("INFO", action.payload.get("reason", "Cancel requested."), cycle)
+                    except _IdentityReadDeferred as exc:
+                        # The read-only handoff check failed before cancel_order.
+                        # Keep the live protective order and discard only the
+                        # strategy's planned cancellation flag.
+                        if cycle.protective_sell_cancel_requested:
+                            cycle.protective_sell_cancel_requested = False
+                            cycle.touch()
+                            self.storage.upsert_cycle(cycle)
+                        self.active_cycle = cycle
+                        self._defer_broker_recovery(exc)
+                        return
                     except BrokerAdapterError as exc:
                         if action.payload.get("role") == "protective_sell":
                             self._pause_failed_protective_cancellation(cycle, exc)
@@ -8127,6 +8439,8 @@ class TradingController:
                     self.storage.upsert_cycle(self.active_cycle)
                 self._handle_broker_connection_problem(exc)
                 self._log("WARN", message, self.active_cycle or cycle)
+            if self._upstream_recovery_pending or self._recovery_required:
+                return
 
     def _apply_buy_preflight_block(
         self,
@@ -9276,7 +9590,11 @@ class TradingController:
                 # Bind an unexposed legacy cycle before the strategy creates a
                 # planned BUY reference, which must not be mistaken for prior
                 # broker exposure by the submission identity check.
-                account_message = self._bind_cycle_account(cycle)
+                try:
+                    account_message = self._bind_cycle_account(cycle, defer_unavailable=True)
+                except _IdentityReadDeferred as exc:
+                    self._defer_broker_recovery(exc)
+                    return cycle, []
                 if account_message:
                     self._mark_recovery_required(cycle, account_message)
                     return cycle, []
@@ -9717,8 +10035,32 @@ class TradingController:
         )
         self._mark_recovery_required(cycle, message)
 
+    def _defer_unsubmitted_identity(self, cycle: CycleState, side: str, exc: Exception) -> None:
+        """Roll back only a known-unsent action; missing protection stays held."""
+        rolled = StrategyEngine.rollback_unsubmitted_order(cycle, side, str(exc))
+        if rolled.stage == Stage.MANUAL_REVIEW:
+            self.active_cycle = rolled
+            self._mark_recovery_required(
+                rolled,
+                "Configured protective SELL is not working and its replacement was not submitted. "
+                "Verify the remaining position and protection before continuing. " + str(exc),
+            )
+            return
+        rolled.error_message = None
+        if side.upper() == "BUY":
+            rolled.buy_status = None
+        else:
+            rolled.sell_status = None
+        self.active_cycle = rolled
+        self.storage.upsert_cycle(rolled)
+        self._defer_broker_recovery(exc)
+
     def _place_trailing_order(self, cycle: CycleState, action: StrategyAction, side: str, role: str = "") -> None:
-        identity_message = self._execution_identity_message(cycle)
+        try:
+            identity_message = self._execution_identity_message(cycle)
+        except _IdentityReadDeferred as exc:
+            self._defer_unsubmitted_identity(cycle, "PROTECTIVE_SELL" if role == "PROTECTIVE_SELL" else side, exc)
+            return
         if identity_message:
             self._mark_recovery_required(cycle, identity_message)
             return
@@ -9911,7 +10253,11 @@ class TradingController:
         self._log("INFO", f"Submitted {label} TRAIL order {handle.order_ref} qty={payload['quantity']} trail={payload['trailing_percent']}%, outsideRth=False.", updated)
 
     def _place_market_order(self, cycle: CycleState, action: StrategyAction, side: str) -> None:
-        identity_message = self._execution_identity_message(cycle)
+        try:
+            identity_message = self._execution_identity_message(cycle)
+        except _IdentityReadDeferred as exc:
+            self._defer_unsubmitted_identity(cycle, side, exc)
+            return
         if identity_message:
             self._mark_recovery_required(cycle, identity_message)
             return
@@ -10264,8 +10610,24 @@ class TradingController:
             kind="native_order_wait",
         )
 
+    def _normalized_order_poll_matches_cycle(self, cycle: CycleState, polled: PolledOrderState, side: str) -> bool:
+        if not (polled.raw or {}).get("filled_from_executions"):
+            return True
+        identity = {
+            **dict(polled.raw or {}),
+            "order_ref": polled.order_ref,
+            "perm_id": polled.perm_id,
+            "side": (polled.raw or {}).get("action"),
+        }
+        if self._execution_matches_order(cycle, identity, side):
+            return True
+        self._mark_recovery_required(cycle, "Completed-order executions conflict with the stored cycle account, contract, side or order identity.")
+        return False
+
     def _handle_buy_order_poll(self, cycle: CycleState, polled: PolledOrderState) -> None:
         """Reconcile a BUY until the original broker order is terminal."""
+        if not self._normalized_order_poll_matches_cycle(cycle, polled, "BUY"):
+            return
         if cycle.close_position_market_requested and not self._manual_close_poll_matches(cycle, polled, "BUY"):
             return
         self.storage.update_order_status(polled.order_ref, polled.status, polled.order_id, polled.perm_id)
@@ -10386,17 +10748,6 @@ class TradingController:
                 perm_id=polled.perm_id,
                 raw={"rejection": rejection, "cumulative_buy_quantity": cumulative_qty},
             )
-        cancel_action: Optional[StrategyAction] = None
-        cancel_decision: Optional[dict[str, Any]] = None
-        if not terminal:
-            cancel_action, cancel_decision = self._buy_partial_remainder_cancel_action(
-                next_cycle,
-                polled,
-                cumulative_qty,
-            )
-            if cancel_action is not None:
-                actions.append(cancel_action)
-
         self.active_cycle = next_cycle
         self.storage.upsert_cycle(next_cycle)
 
@@ -10406,31 +10757,40 @@ class TradingController:
 
         if not terminal:
             if cumulative_qty != previous_qty:
-                grace = max(0.1, float(self.BUY_PARTIAL_FILL_GRACE_SECONDS))
-                elapsed = float((cancel_decision or {}).get("elapsed_seconds") or 0.0)
-                remaining_grace = max(0.0, grace - elapsed)
-                if cancel_action is None:
-                    status_message = (
-                        f"The triggered marketable BUY is being allowed up to {grace:.1f}s to finish normally; "
-                        f"approximately {remaining_grace:.2f}s of grace remains."
-                    )
-                    decision_result = "awaiting_terminal_buy"
-                else:
-                    status_message = str(cancel_action.payload.get("reason") or "BUY remainder cancellation requested.")
-                    decision_result = f"cancel_{(cancel_decision or {}).get('trigger') or 'requested'}"
+                # A positive fill means the original MKT or triggered native
+                # TRAIL BUY is executing. Keep that order working until IBKR
+                # reports a terminal status; do not reapply entry guards or a
+                # partial-fill timeout. Explicit cancellation and the separately
+                # configured pre-close cancellation remain unchanged.
+                status_message = (
+                    "Waiting for the original marketable BUY to finish; "
+                    "the remaining quantity stays with the existing broker order."
+                )
+                cancel_pending = bool(next_cycle.buy_remainder_cancel_requested) or str(
+                    next_cycle.buy_status or ""
+                ).strip() in {"CancelRequested", "PendingCancel"}
+                if cancel_pending:
+                    status_message = "Waiting for the existing BUY cancellation to become terminal and reconcile all fills."
+                partial_fill_policy = {
+                    "trigger": "wait",
+                    "code": "awaiting_terminal_buy",
+                    "filled_quantity": cumulative_qty,
+                    "remaining_quantity": max(0, int(polled.remaining or 0)),
+                    "cancel_pending": cancel_pending,
+                }
                 self.storage.add_decision_event(
                     event_type="BUY_PARTIAL_FILL",
                     message=f"BUY cumulative fill is {cumulative_qty}. {status_message}",
                     cycle=next_cycle,
                     stage_before=cycle.stage.value,
                     stage_after=next_cycle.stage.value,
-                    decision_result=decision_result,
+                    decision_result="awaiting_terminal_buy",
                     broker_order_id=polled.order_id,
                     perm_id=polled.perm_id,
-                    raw={**dict(polled.raw or {}), "partial_fill_policy": dict(cancel_decision or {})},
+                    raw={**dict(polled.raw or {}), "partial_fill_policy": partial_fill_policy},
                 )
                 self._log(
-                    "INFO" if cancel_action is None else "WARN",
+                    "INFO",
                     f"Partial BUY fill reconciled: {cumulative_qty} filled, {max(0, polled.remaining)} reported remaining. "
                     f"{status_message}",
                     next_cycle,
@@ -10479,6 +10839,8 @@ class TradingController:
         logic in the same worker tick: full completion, an intermediate partial
         fill that is still working, or a fail-closed terminal quantity mismatch.
         """
+        if not self._normalized_order_poll_matches_cycle(cycle, polled, "PROTECTIVE_SELL"):
+            return True
         if self._continue_manual_close_after_cancel(cycle, polled, "PROTECTIVE_SELL"):
             return True
         self.storage.update_order_status(polled.order_ref, polled.status, polled.order_id, polled.perm_id)
@@ -10765,7 +11127,14 @@ class TradingController:
 
     def _submit_close_before_rth_market_sell(self, cycle: CycleState) -> bool:
         """Submit an RTH-only DAY market SELL after any prior exit is terminal."""
-        identity_message = self._execution_identity_message(cycle)
+        try:
+            identity_message = self._execution_identity_message(cycle)
+        except _IdentityReadDeferred as exc:
+            if StrategyEngine.protective_handoff_needs_final_sell(cycle):
+                self._mark_recovery_required(cycle, "Protective SELL is already cancelled; the close replacement could not be submitted. " + str(exc))
+            else:
+                self._defer_broker_recovery(exc)
+            return False
         if identity_message:
             self._mark_recovery_required(cycle, identity_message)
             return False
@@ -11164,6 +11533,8 @@ class TradingController:
             )
 
     def _handle_sell_order_poll(self, cycle: CycleState, polled: PolledOrderState) -> None:
+        if not self._normalized_order_poll_matches_cycle(cycle, polled, "SELL"):
+            return
         if self._continue_manual_close_after_cancel(cycle, polled, "SELL"):
             return
         if bool(getattr(cycle, "close_before_rth_liquidation_requested", False)) or self._is_close_before_rth_market_order_ref(
@@ -11300,6 +11671,8 @@ class TradingController:
                 )
             return
         cycle.sell_commission = aggregate_commission
+        if (polled.raw or {}).get("filled_from_executions"):
+            cycle.sell_filled_at = cycle.sell_filled_at or self._latest_recovered_execution_time(polled.executions)
         next_cycle = StrategyEngine.on_sell_fill(
             cycle,
             aggregate_filled_qty,
@@ -11365,11 +11738,14 @@ class TradingController:
                     )
                 except Exception:
                     commission = None
-                if commission is not None and abs(commission) > 0.0:
+                commission, commission_currency, commission_authoritative = self._pending_execution_commission(
+                    cycle, exec_id, side_value, commission, execution.get("currency"),
+                )
+                if commission is not None and (commission_authoritative or abs(commission) > 0.0):
                     commission = self._commission_in_cycle_currency(
                         cycle,
                         commission,
-                        execution.get("currency"),
+                        commission_currency,
                         execution_id=exec_id,
                         source="ORDER_POLL_EXECUTION",
                     )
@@ -11444,7 +11820,12 @@ class TradingController:
         if cycle.stop_after_current_cycle or not self.strategy.auto_repeat:
             self._log("INFO", f"Cycle complete for {cycle.ticker}. Auto-repeat is stopped.", cycle)
             return
-        identity_message = self._execution_identity_message(cycle)
+        try:
+            identity_message = self._execution_identity_message(cycle)
+        except _IdentityReadDeferred as exc:
+            self._deferred_repeat_cycle_id = cycle.id
+            self._defer_broker_recovery(exc)
+            return
         if identity_message:
             cycle.stop_after_current_cycle = True
             self.storage.upsert_cycle(cycle)

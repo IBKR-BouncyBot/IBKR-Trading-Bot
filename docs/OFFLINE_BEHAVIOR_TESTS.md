@@ -1,12 +1,20 @@
 # Deterministic offline behavior tests
 
-The v5.6.0 regressions target the fifteen reported GUI defects: manual/ATR input ownership, reconciliation confirmation and quantities, working partial orders, ticker/graph identity, historical flowcharts, filtered exports, protective-exit classification, audit values and completed-history refresh. See the [release note](V5_6_0_TARGETED_GUI_FIXES.md#verification-boundaries) and the root [implementation and test report](../IMPLEMENTATION_TEST_REPORT.txt) for actual results and remaining platform checks. The retained v5.5.1 history tests cover all-ticker totals, shared filters, more than 500 matching cycles and obsolete-result rejection; the retained v5.5.0 GUI tests cover connection/freshness separation, RTH headline priority, fault visibility and actual-update timestamps.
+The v5.7.0 regressions cover keeping an already partially filled marketable BUY working, including the supplied audit and market-data capture, elapsed time, changed entry/data guards, later execution/fee updates, restart, and retained explicit cancellation paths. See the [partial-BUY completion release note](V5_7_0_PARTIAL_BUY_COMPLETION.md#verification-boundaries) and the root [implementation and test report](../IMPLEMENTATION_TEST_REPORT.txt) for executed results and platform limits.
+
+The retained v5.6.2 recovery regressions cover executions hidden by stale or completed-order summary counters, exact order/account/contract ownership, repeated evidence and commission timing. See the [completed-order recovery release note](legacy/V5_6_2_COMPLETED_ORDER_RECOVERY.md#verification-boundaries) and the root [implementation and test report](../IMPLEMENTATION_TEST_REPORT.txt) for executed results and target-platform limits.
+
+The [v5.6.2 multi-audit matrix](AUTOMATED_TEST_COVERAGE.md#v562-multi-audit-recovery-matrix) runs 296 named tests using 25 sanitized observed order shapes from six overlapping archives. The original responses and 24 controlled variants exercise strict adapter Fill normalization through controller recovery and SQLite, with deterministic broker-request boundaries. Controlled variants are not additional production incidents. Conflicting duplicate evidence must pause recovery until a consistent snapshot arrives, while repeated identical fills and legitimate fee updates remain idempotent.
+
+The retained v5.6.1 regressions cover incomplete broker reads and explicit reconciliation of the two supported legacy outage holds, including rejection of uncertain submissions, identity conflicts and insufficient positions. Their original scope is recorded in the [archived outage release note](legacy/V5_6_1_OUTAGE_RECOVERY.md).
+
+The retained v5.6.0 regressions target the fifteen reported GUI defects: manual/ATR input ownership, reconciliation confirmation and quantities, working partial orders, ticker/graph identity, historical flowcharts, filtered exports, protective-exit classification, audit values and completed-history refresh. See the [release note](legacy/V5_6_0_TARGETED_GUI_FIXES.md#verification-boundaries) and the root [implementation and test report](../IMPLEMENTATION_TEST_REPORT.txt) for actual results and remaining platform checks. The retained v5.5.1 history tests cover all-ticker totals, shared filters, more than 500 matching cycles and obsolete-result rejection; the retained v5.5.0 GUI tests cover connection/freshness separation, RTH headline priority, fault visibility and actual-update timestamps.
 
 `tests/test_v540_deferred_backups.py` covers queue deferral and retained order/fill behavior. `tests/test_v540_storage_reliability.py` covers schema stamps, legacy migration copies, future-version rejection, full restore validation and retention ordering. The existing v4.0.0 ATR memory and close-persistence tests cover the revised age boundary and retained checkpoint guards.
 
 The retained v5.4.0 reliability layer covers deferred order/fill backups, schema-aware startup copies, future-schema rejection, 20-file retention after full validation, and the 24-hour ATR seed age limit. See the [archived release note](legacy/V5_4_0_RELIABILITY.md#verification-boundaries) and [5.4.0 report](legacy/V5_4_0_IMPLEMENTATION_TEST_REPORT.txt) for that release's execution results and platform limits. The [archived v5.3.0 GUI note](legacy/V5_3_0_GUI_LAYOUT.md#verification-boundaries) records the retained layout coverage.
 
-This document describes the current non-GUI, non-Windows, non-network test layer in v5.6.0. Here, non-GUI excludes native widget rendering; GUI contracts are exercised with Qt doubles. It covers strategy behavior, controller state transitions, audit diagnostic coalescing, BUY partial-fill grace/timeout safety, broker-event handling, persistence and recovery, shutdown checkpoints, GUI contracts, and bounded performance behavior.
+This document describes the current non-GUI, non-Windows, non-network test layer in v5.7.0. Here, non-GUI excludes native widget rendering; GUI contracts are exercised with Qt doubles. It covers strategy behavior, controller state transitions, audit diagnostic coalescing, BUY partial-fill completion and explicit cancellation, broker-event handling, persistence and recovery, shutdown checkpoints, GUI contracts, and bounded performance behavior.
 
 The 5.2.0 layer adds `test_v520_manual_marker_index.py` and `test_v520_backup_validation.py` for index/query equivalence, table-row preservation, WAL-consistent backup validation and failure/cleanup/retention behavior. The [archived release note](legacy/V5_2_0_STORAGE_PERFORMANCE.md#verification-and-measurement-boundaries) maps their coverage; the [archived verification report](legacy/V5_2_0_IMPLEMENTATION_TEST_REPORT.txt) records the 5.2.0 results.
 
@@ -16,7 +24,7 @@ The suite deliberately avoids:
 - Windows-specific executable, registry, process, DPI, or native-widget behavior;
 - a real TWS or IB Gateway process;
 - paper or live IBKR accounts;
-- real market data, account data, orders, fills, or network traffic.
+- live market/account data, real orders or fills, or network traffic. Sanitized recorded data supplies selected deterministic replay fixtures.
 
 The tests use temporary SQLite databases, deterministic clocks and prices, protocol-shaped broker doubles, subprocesses, and generated event sequences. They verify the application contract at its internal and adapter boundaries, not the behavior of IBKR's external systems.
 
@@ -93,11 +101,11 @@ The deterministic assertions verify that:
 
 `tests/test_v390_audit_diagnostic_coalescing.py` drives the real controller and headless Price Data Monitor through persistent diagnostic conditions. It verifies stable reason-based keys, bounded entry/summary/recovery events, changing-age suppression, a 705-observation NBIS-style stale-ask sequence, GUI-only non-price callbacks, immediate near-trigger invalid evidence, native-order normal/anomaly cadence, reconnect aggregation/recovery, BUY-preflight recovery, and live Stage-3 status rendering. The tests assert that every source observation remains counted while SQLite event production stays bounded and all existing trading guards continue to run.
 
-### v3.8.0 BUY partial-fill grace and cancellation sequences
+### v5.7.0 partial-BUY completion and cancellation sequences
 
-`tests/test_v380_buy_partial_fill_grace.py` drives real controller, strategy, storage, and deterministic broker boundaries through the revised Stage-2 policy. It verifies a fixed 3.0-second grace from the first positive fill, full native-TRAIL and MKT completion without cancellation, a timeout that is not reset by later partial progress, immediate cancellation when enabled RTH/data/session/volatility/minimum-price/gap/spread safeguards become unsafe, retry and duplicate suppression, clock-rollback recovery, terminal partial settlement, and complete reconciliation when the remaining shares fill after cancellation was requested.
+`tests/test_v380_buy_partial_fill_grace.py` retains its historical filename while testing the current controller policy: no automatic partial-fill deadline or changed-entry-guard cancellation, continued Stage-2 supervision, terminal partial settlement and complete reconciliation of later executions. Explicit operator and configured pre-close cancellation remain separate paths. The supplied audit/capture replay adds the observed stale-bid case and controlled later fills; a simulated completion demonstrates the policy, not what the historical broker would have done.
 
-The historical NBIS replay now proves that the second 28-share print can complete inside the grace without an unnecessary cancellation. Separate focused tests age the persisted first-fill timestamp to exercise the timeout and cancellation-race branches deterministically.
+The retained NBIS replay verifies that its second 28-share print completes without an unnecessary remainder cancellation. Cancellation-race controls use an explicit request or terminal broker response; they no longer rely on expiry of a removed timer.
 
 ### Bounded soak tests
 
@@ -113,7 +121,7 @@ The tests check configured deque limits, ATR history limits, price-history limit
 
 ### Sanitized production-incident replay
 
-`tests/test_production_incident_replays.py` uses compact fixtures reduced from the available IREN, NBIS, and VWRA audit evidence. `tests/test_v370_stage3_market_data_guard.py` adds the field-level CHIP cycle-3 incident reconstruction without retaining account-identifying data. The tests drive production controller, storage, strategy, and adapter-normalization paths for invalid-price rejection, BUY multi-print/grace behavior and cancellation races, late commissions, strict foreign-`OrderRef` isolation, delayed data, broker-valid Stage-3 SELL rounding, and LSE session characterization. `tests/test_v321_incident_gap_fixes.py` verifies the corrected LSE/LSEETF continuous boundary, stable repeated-block throttling, and the distinct `PreflightBlocked` status. `tests/test_incident_fixture_integrity.py` enforces fixture provenance and privacy. See [`PRODUCTION_INCIDENT_REPLAY_TESTS.md`](PRODUCTION_INCIDENT_REPLAY_TESTS.md).
+`tests/test_production_incident_replays.py` uses compact fixtures reduced from the available IREN, NBIS, and VWRA audit evidence. `tests/test_v370_stage3_market_data_guard.py` adds the field-level CHIP cycle-3 incident reconstruction without retaining account-identifying data. The tests drive production controller, storage, strategy, and adapter-normalization paths for invalid-price rejection, BUY multi-print completion behavior and cancellation races, late commissions, strict foreign-`OrderRef` isolation, delayed data, broker-valid Stage-3 SELL rounding, and LSE session characterization. `tests/test_v321_incident_gap_fixes.py` verifies the corrected LSE/LSEETF continuous boundary, stable repeated-block throttling, and the distinct `PreflightBlocked` status. `tests/test_incident_fixture_integrity.py` enforces fixture provenance and privacy. See [`PRODUCTION_INCIDENT_REPLAY_TESTS.md`](PRODUCTION_INCIDENT_REPLAY_TESTS.md).
 
 ### Safety mutation smoke gate
 
@@ -186,7 +194,7 @@ Use [`TEST_PLAN.md`](TEST_PLAN.md) for those manual and integration checks.
 
 `test_v400_atr_memory_and_order_edits.py` covers first-session warmup, weekend/restart reuse, session and contract separation, corrupt/future/expired estimates, bounded persistence failures, live takeover, same-contract volatility-history preservation, and explicit next-order guard persistence/isolation. `test_v400_gui.py` checks amber LIVE status, retained error colors, removal of only the profit banner, risk-field/manual locks, saved ATR provenance, and non-selling dialog defaults. `test_v400_release.py` checks metadata, documentation layout, compatibility, and unchanged order/broker modules.
 
-Historical corrected v4.0.0 results are preserved in [`legacy/V4_0_0_IMPLEMENTATION_TEST_REPORT.txt`](legacy/V4_0_0_IMPLEMENTATION_TEST_REPORT.txt). The root `IMPLEMENTATION_TEST_REPORT.txt` records the current v5.6.0 verification.
+Historical corrected v4.0.0 results are preserved in [`legacy/V4_0_0_IMPLEMENTATION_TEST_REPORT.txt`](legacy/V4_0_0_IMPLEMENTATION_TEST_REPORT.txt). The root `IMPLEMENTATION_TEST_REPORT.txt` records the current v5.7.0 verification.
 
 
 ## v5.0.0 GUI regression layer

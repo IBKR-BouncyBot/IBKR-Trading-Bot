@@ -551,14 +551,26 @@ class BrokerAdapter:
     def open_app_orders(self) -> list[PolledOrderState]:
         raise NotImplementedError
 
+    def recovery_open_app_orders(self) -> list[PolledOrderState]:
+        """Read recovery facts; deterministic adapters use their ordinary read."""
+        return self.open_app_orders()
+
     def recent_executions(self) -> list[dict[str, Any]]:
         return []
+
+    def recovery_recent_executions(self) -> list[dict[str, Any]]:
+        """Read recovery facts; deterministic adapters use their ordinary read."""
+        return self.recent_executions()
 
     def drain_broker_events(self) -> list[dict[str, Any]]:
         return []
 
     def position_size(self, contract: QualifiedContract, account: str = "", *, refresh: bool = False) -> Optional[float]:
         return None
+
+    def recovery_position_size(self, contract: QualifiedContract, account: str) -> Optional[float]:
+        """Read a fresh position through compatible deterministic adapters."""
+        return self.position_size(contract, account=account, refresh=True)
 
     def regular_trading_hours_status(self, contract: QualifiedContract) -> RthStatus:
         return RthStatus(True, "not_implemented", "RTH status not implemented by this adapter.", utc_now_iso())
@@ -1350,6 +1362,11 @@ class IbAsyncTwsAdapter(BrokerAdapter):
         self._register_broker_event_handlers()
         was_connected = bool(self.ib.isConnected())
         if not was_connected:
+            # Trade handles belong to the old local API session. In particular,
+            # an order filled while disconnected will not be returned as open
+            # by the new session; retaining its old handle masks that absence.
+            self._trades_by_ref.clear()
+            self._last_open_trades_refresh_monotonic = 0.0
             # A disconnected/reconnected TWS session invalidates previously cached
             # Ticker objects. They can look valid in Python while the socket feed
             # is gone, so the next price read must create fresh reqMktData handles.
@@ -3505,6 +3522,92 @@ class IbAsyncTwsAdapter(BrokerAdapter):
                 self._trades_by_ref[ref] = trade
                 self._bind_pending_order_errors(trade)
 
+    @staticmethod
+    def _completed_order_execution_fills(trade: Any) -> Optional[list[Any]]:
+        """Validate complete attached executions for an empty completed-order counter.
+
+        IBKR completed orders can carry zero orderStatus counters and omit
+        totalQuantity. Their filledQuantity is only corroboration: exact,
+        uniquely identified executions must independently prove that quantity.
+        This deliberately does not change normal live/partial order polling.
+        """
+        order = getattr(trade, "order", None)
+        contract = getattr(trade, "contract", None)
+
+        def positive_whole(value: Any) -> Optional[int]:
+            try:
+                number = float(value)
+                return int(number) if isfinite(number) and number > 0 and number.is_integer() else None
+            except (TypeError, ValueError, OverflowError):
+                return None
+
+        account = str(getattr(order, "account", "") or "").strip()
+        con_id = positive_whole(getattr(contract, "conId", None))
+        ref = str(getattr(order, "orderRef", "") or "").strip()
+        action = str(getattr(order, "action", "") or "").upper().strip()
+        perm_id = positive_whole(getattr(order, "permId", None))
+        order_id = positive_whole(getattr(order, "orderId", None))
+        total_quantity = getattr(order, "totalQuantity", None)
+        quantity = positive_whole(total_quantity)
+        if total_quantity in (None, 0):
+            quantity = positive_whole(getattr(order, "filledQuantity", None))
+        if not account or con_id is None or not ref or action not in {"BUY", "SELL"} or perm_id is None or quantity is None:
+            return None
+        if str(getattr(contract, "secType", "STK") or "STK").upper() != "STK":
+            return None
+        status_perm_id = positive_whole(getattr(getattr(trade, "orderStatus", None), "permId", None))
+        if status_perm_id is not None and status_perm_id != perm_id:
+            return None
+        unique: dict[str, tuple[Any, ...]] = {}
+        result: list[Any] = []
+        total = 0
+        try:
+            for fill in list(getattr(trade, "fills", []) or []):
+                execution = getattr(fill, "execution", None)
+                fill_contract = getattr(fill, "contract", None)
+                report = getattr(fill, "commissionReport", None)
+                execution_id = str(getattr(execution, "execId", "") or "").strip()
+                shares = positive_whole(getattr(execution, "shares", None))
+                price = float(getattr(execution, "price", 0) or 0)
+                commission = float(getattr(report, "commission", 0) or 0)
+                currency = str(getattr(report, "currency", "") or "").upper().strip()
+                exec_order_id = positive_whole(getattr(execution, "orderId", None))
+                if (
+                    not execution_id or shares is None or not isfinite(price) or price <= 0
+                    or not isfinite(commission) or abs(commission) >= 1e100
+                    or str(getattr(execution, "acctNumber", "") or "").strip() != account
+                    or positive_whole(getattr(fill_contract, "conId", None)) != con_id
+                    or str(getattr(fill_contract, "secType", "STK") or "STK").upper() != "STK"
+                    or str(getattr(execution, "orderRef", "") or "").strip() != ref
+                    or positive_whole(getattr(execution, "permId", None)) != perm_id
+                    or (order_id is not None and exec_order_id != order_id)
+                    or str(getattr(execution, "side", "") or "").upper().strip()
+                    not in ({"BUY", "BOT"} if action == "BUY" else {"SELL", "SLD"})
+                ):
+                    return None
+                if not isfinite(shares * price):
+                    return None
+                for alternate_ref in (
+                    getattr(fill, "orderRef", ""),
+                    getattr(getattr(fill, "order", None), "orderRef", ""),
+                ):
+                    if alternate_ref and str(alternate_ref).strip() != ref:
+                        return None
+                report_id = str(getattr(report, "execId", "") or "").strip()
+                if report_id and report_id != execution_id:
+                    return None
+                fingerprint = (shares, price, commission, currency, exec_order_id)
+                if execution_id in unique:
+                    if unique[execution_id] != fingerprint:
+                        return None
+                    continue
+                unique[execution_id] = fingerprint
+                result.append(fill)
+                total += shares
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return result if result and total == quantity else None
+
     def _to_polled_order_state(self, trade: Any) -> Optional[PolledOrderState]:
         order = getattr(trade, "order", None)
         order_status = getattr(trade, "orderStatus", None)
@@ -3523,8 +3626,14 @@ class IbAsyncTwsAdapter(BrokerAdapter):
         commission_currencies: set[str] = set()
         execution_value = 0.0
         execution_shares = 0.0
+        fills = getattr(trade, "fills", []) or []
+        completed_fills = None
+        if str(getattr(order_status, "status", "")) == "Filled" and not filled and not remaining:
+            completed_fills = self._completed_order_execution_fills(trade)
+            if completed_fills is not None:
+                fills = completed_fills
         try:
-            for fill in list(getattr(trade, "fills", []) or []):
+            for fill in list(fills):
                 execution = getattr(fill, "execution", None)
                 commission_report = getattr(fill, "commissionReport", None)
                 commission = float(getattr(commission_report, "commission", 0.0) or 0.0)
@@ -3559,6 +3668,9 @@ class IbAsyncTwsAdapter(BrokerAdapter):
             execution_shares = 0.0
         if (not avg_fill_price or float(avg_fill_price) <= 0) and execution_shares > 0:
             avg_fill_price = execution_value / execution_shares
+        if completed_fills is not None and execution_shares > 0:
+            filled = execution_shares
+            avg_fill_price = execution_value / execution_shares
         broker_errors = self._order_errors_for(
             ref,
             int(order_id) if order_id is not None else None,
@@ -3579,6 +3691,7 @@ class IbAsyncTwsAdapter(BrokerAdapter):
                 "action": getattr(order, "action", ""),
                 "orderType": getattr(order, "orderType", ""),
                 "totalQuantity": getattr(order, "totalQuantity", None),
+                "filled_from_executions": completed_fills is not None,
                 "executions": executions,
                 "commission_currencies": sorted(commission_currencies),
                 "broker_errors": broker_errors,
@@ -3824,6 +3937,94 @@ class IbAsyncTwsAdapter(BrokerAdapter):
                 result.append(state)
         return result
 
+    def _require_recovery_connection(self, operation: str) -> None:
+        status = self.connectivity_status()
+        if not status.local_connected or status.upstream_connected is not True:
+            raise BrokerAdapterError(f"{operation}: broker connectivity is unavailable.")
+
+    def _request_recovery_rows(self, method_name: str, operation: str) -> list[Any]:
+        """Require completion of a bounded read, never an error-shaped empty list.
+
+        ib_async's synchronous requests wait for their corresponding End callback.
+        Its default RaiseRequestErrors=False can turn request errors into empty
+        results. Scope strict behavior to this worker's recovery request and
+        restore the previous settings even if the request loses its connection.
+        """
+        self._require_recovery_connection(operation)
+        previous_raise = self.ib.RaiseRequestErrors
+        previous_timeout = self.ib.RequestTimeout
+        try:
+            self.ib.RaiseRequestErrors = True
+            timeout = float(previous_timeout or 0.0)
+            self.ib.RequestTimeout = min(timeout, 10.0) if timeout > 0 else 10.0
+            rows = getattr(self.ib, method_name)()
+            self._require_recovery_connection(operation)
+            if rows is None:
+                raise BrokerAdapterError(f"{operation}: broker returned no completed result.")
+            return list(rows)
+        except BrokerAdapterError:
+            raise
+        except Exception as exc:
+            raise BrokerAdapterError(f"{operation} failed: {exc}") from exc
+        finally:
+            self.ib.RaiseRequestErrors = previous_raise
+            self.ib.RequestTimeout = previous_timeout
+
+    def recovery_open_app_orders(self) -> list[PolledOrderState]:
+        """Refresh this client's orders and reject an incomplete recovery read."""
+        operation = "Recovery open-order refresh"
+        requested_trades = self._request_recovery_rows("reqOpenOrders", operation)
+        try:
+            def identity(trade: Any) -> tuple[Any, ...]:
+                order = getattr(trade, "order", None)
+                ref = str(getattr(order, "orderRef", "") or "")
+                account = str(getattr(order, "account", "") or "")
+                con_id = self._as_optional_int(getattr(getattr(trade, "contract", None), "conId", None))
+                perm_id = self._as_optional_int(getattr(order, "permId", None))
+                if perm_id is not None:
+                    broker_id = ("perm", perm_id)
+                else:
+                    order_id = getattr(order, "orderId", None)
+                    client_id = getattr(order, "clientId", None)
+                    if order_id is None or client_id is None:
+                        raise BrokerAdapterError(f"{operation}: open-order identity is incomplete.")
+                    broker_id = ("session", int(client_id), int(order_id))
+                if not account or con_id is None:
+                    raise BrokerAdapterError(f"{operation}: open-order ownership is incomplete.")
+                return ref, account, con_id, broker_id
+
+            requested = {
+                identity(trade)
+                for trade in requested_trades
+                if self._app_order_ref_from_trade(trade)
+            }
+            requested_refs = {key[0] for key in requested}
+            # Use the synchronized current states after openOrderEnd: an order
+            # may have filled/cancelled while the blocking request was running.
+            # A cache-only handle is not fresh open-order evidence: it may still
+            # say PreSubmitted for an order executed during an upstream outage.
+            trades = self.ib.openTrades()
+            if trades is None:
+                raise BrokerAdapterError(f"{operation}: current open orders are unavailable.")
+            result: list[PolledOrderState] = []
+            for trade in trades:
+                if self._app_order_ref_from_trade(trade) not in requested_refs:
+                    continue
+                if identity(trade) not in requested:
+                    continue
+                state = self._to_polled_order_state(trade)
+                if state is not None:
+                    result.append(state)
+                    self._trades_by_ref[state.order_ref] = trade
+                    self._bind_pending_order_errors(trade)
+            self._require_recovery_connection(operation)
+            self._last_open_trades_refresh_monotonic = time.monotonic()
+            return result
+        except BrokerAdapterError:
+            raise
+        except Exception as exc:
+            raise BrokerAdapterError(f"{operation} failed: {exc}") from exc
+
     def _execution_dict_from_fill(self, fill: Any) -> Optional[dict[str, Any]]:
         execution = getattr(fill, "execution", None)
         if execution is None:
@@ -3941,11 +4142,33 @@ class IbAsyncTwsAdapter(BrokerAdapter):
         except Exception:
             pass
 
+        return self._execution_rows_from_fills(fills)
+
+    def recovery_recent_executions(self) -> list[dict[str, Any]]:
+        """Require a completed execution request before using the fill ledger."""
+        operation = "Recovery execution refresh"
+        requested = self._request_recovery_rows("reqExecutions", operation)
+        try:
+            cached = self.ib.fills()
+            if cached is None:
+                raise BrokerAdapterError(f"{operation}: current executions are unavailable.")
+            result = self._execution_rows_from_fills(list(cached) + requested, strict=True)
+            self._require_recovery_connection(operation)
+            return result
+        except BrokerAdapterError:
+            raise
+        except Exception as exc:
+            raise BrokerAdapterError(f"{operation} failed: {exc}") from exc
+
+    def _execution_rows_from_fills(self, fills: list[Any], *, strict: bool = False) -> list[dict[str, Any]]:
         result: list[dict[str, Any]] = []
         seen: set[str] = set()
+        evidence: dict[str, tuple[tuple[Any, ...], int]] = {}
         for fill in fills:
             item = self._execution_dict_from_fill(fill)
             if not item:
+                if strict and getattr(getattr(fill, "execution", None), "execId", None):
+                    raise BrokerAdapterError("Recovery execution refresh: an identified execution has invalid fill data.")
                 continue
             key = str(
                 item.get("execution_id")
@@ -3958,6 +4181,35 @@ class IbAsyncTwsAdapter(BrokerAdapter):
                     f"{item.get('shares')}|{item.get('price')}|{item.get('executed_at') or item.get('time')}"
                 )
             )
+            if strict:
+                # One execution ID names one economic event. Dropping a later
+                # conflicting cache/request row would hide uncertainty from
+                # the controller and could falsely complete the cycle.
+                side = str(item.get("side") or "").upper()
+                if side in {"BOT", "BUY"}:
+                    side = "BUY"
+                elif side in {"SLD", "SELL"}:
+                    side = "SELL"
+                fingerprint = (
+                    item.get("account"), item.get("con_id"), item.get("ticker"),
+                    item.get("sec_type"), item.get("order_ref"), item.get("perm_id"),
+                    side, item.get("shares"), item.get("price"),
+                )
+                previous = evidence.get(key)
+                if previous is not None:
+                    old_fingerprint, index = previous
+                    if old_fingerprint != fingerprint:
+                        raise BrokerAdapterError("Recovery execution refresh: one execution ID has conflicting fill evidence.")
+                    report = getattr(fill, "commissionReport", None)
+                    report_id = str(getattr(report, "execId", "") or "").strip()
+                    report_currency = str(getattr(report, "currency", "") or "").strip()
+                    # A late commission callback can update an otherwise
+                    # identical execution, including an explicit zero fee.
+                    # An empty default report must not erase a known fee.
+                    if report_id == str(item.get("execution_id") or "").strip() and report_id and report_currency:
+                        result[index] = item
+                    continue
+                evidence[key] = (fingerprint, len(result))
             if key in seen:
                 continue
             seen.add(key)
@@ -3968,7 +4220,6 @@ class IbAsyncTwsAdapter(BrokerAdapter):
         if not self.is_connected():
             return None
         wanted_con_id = int(contract.con_id or getattr(contract.raw, "conId", 0) or 0)
-        wanted_symbol = str(contract.ticker or getattr(contract.raw, "symbol", "") or "").upper()
         account = account.strip()
         if refresh and (wanted_con_id <= 0 or not account):
             return None
@@ -3984,6 +4235,38 @@ class IbAsyncTwsAdapter(BrokerAdapter):
                 self.ib.sleep(0.5)
             except Exception:
                 return None
+        return self._position_size_from_rows(contract, account, positions, refresh=refresh)
+
+    def recovery_position_size(self, contract: QualifiedContract, account: str) -> Optional[float]:
+        """Require a completed exact-account/conId position request for recovery."""
+        operation = "Recovery position refresh"
+        wanted_con_id = int(contract.con_id or getattr(contract.raw, "conId", 0) or 0)
+        account = account.strip()
+        if wanted_con_id <= 0 or not account:
+            raise BrokerAdapterError(f"{operation}: an exact account and contract are required.")
+        positions = self._request_recovery_rows("reqPositions", operation)
+        try:
+            result = self._position_size_from_rows(
+                contract, account, positions, refresh=True, strict=True,
+            )
+            self._require_recovery_connection(operation)
+            return result
+        except BrokerAdapterError:
+            raise
+        except Exception as exc:
+            raise BrokerAdapterError(f"{operation} failed: {exc}") from exc
+
+    @staticmethod
+    def _position_size_from_rows(
+        contract: QualifiedContract,
+        account: str,
+        positions: list[Any],
+        *,
+        refresh: bool,
+        strict: bool = False,
+    ) -> Optional[float]:
+        wanted_con_id = int(contract.con_id or getattr(contract.raw, "conId", 0) or 0)
+        wanted_symbol = str(contract.ticker or getattr(contract.raw, "symbol", "") or "").upper()
         total = 0.0
         found = False
         for pos in positions:
@@ -3999,9 +4282,16 @@ class IbAsyncTwsAdapter(BrokerAdapter):
                 matches_contract = bool(wanted_symbol and pos_symbol == wanted_symbol)
             if matches_contract:
                 try:
-                    total += float(getattr(pos, "position", 0.0) or 0.0)
+                    value = getattr(pos, "position", None)
+                    if strict and (value is None or not isfinite(float(value))):
+                        return None
+                    total += float(value or 0.0)
                     found = True
                 except Exception:
+                    if strict:
+                        return None
                     pass
         # A completed authoritative empty snapshot proves a zero position.
+        if strict and not isfinite(total):
+            return None
         return total if found or refresh else None

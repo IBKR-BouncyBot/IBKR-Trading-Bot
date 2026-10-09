@@ -1,0 +1,164 @@
+BouncyBot v5.6.1 - Implementation and verification report
+Date: 2026-10-05
+Scope: Gateway outage recovery, evidence-based reconciliation and outage display
+Baseline: exact previously delivered 5.6.0 source ZIP
+Baseline source ZIP SHA256:
+1bb2a0e6342d8a4a8d7f65b25140ca19dde5d330c5230c471212c363bb08cbd1
+
+INCIDENT FINDINGS
+
+At 11:51:23 UTC / 13:51:23 Europe/Amsterdam, both supplied instances recorded
+another API disconnection immediately after reconnecting. PURR persisted a
+manual-review hold after contract qualification returned Not connected to TWS.
+ASML persisted a hold because its pinned account was not confirmed. A temporary
+empty account response is supported by source and timing; the failing response
+itself was not archived. Later diagnostics again contained ASML's pinned account.
+PURR's later probe reported 702 shares, matching its recorded holding.
+
+Reconcile and resume called recovery, but recovery returned immediately when it
+saw an existing manual-review flag. It never rechecked either cause. Restarting
+therefore preserved the same hold. The exact same guard and false-hold paths
+exist in the earliest available source baseline, 5.5.0. The supplied bundles do
+not identify the running version or establish the release that introduced it.
+The other bot instances were not supplied; they cannot individually be diagnosed
+from these two bundles.
+
+CHANGES
+
+1. Incomplete recovery reads now defer while preserving the current stage.
+   Authoritative open-order, execution and exact-position requests require a
+   completed response and confirmed local/upstream connectivity before/after.
+   A failed request cannot silently become an empty result or cached substitute.
+   Request errors are enabled and timeouts bounded to at most ten seconds only
+   around these recovery requests; prior adapter settings are restored afterward.
+   Ordinary cached polling remains separate and retains its existing behavior.
+
+2. Recovery callers retain the pending pause until reconciliation succeeds.
+   Empty managed-account snapshots wait; a completed nonempty snapshot excluding
+   the pinned account remains a real discrepancy. Definite contract mismatch,
+   insufficient/invalid completed position evidence and missing expected orders
+   retain fail-closed review. The existing ten-second local reconnect and
+   two-second pending-recovery intervals remain unchanged. Identical incomplete
+   requests are coalesced, and position acquisition precedes ledger writes so
+   repeated position timeouts do not repeatedly rewrite cycles/executions.
+
+3. Reconcile and resume can clear the two observed legacy waiting-stage holds
+   after fresh evidence proves them resolved. It requires one unresolved cycle,
+   matching hold/prior-stage audit evidence, pinned account and positive conId,
+   fresh complete broker reads and sufficient exact position. Stage 1 must have
+   no order/fill evidence. Stage 3 must have a settled exact BUY and matching
+   execution ledger. Contradictory structured or archived ownership evidence,
+   working orders, new/conflicting fills, pending exits and protection transitions
+   cannot pass this narrow classifier. Current holdings alone cannot infer stage.
+   No temporarily cleared cycle is persisted before validation finishes.
+   Successful restoration records OUTAGE_HOLD_RECONCILED. Failed proof reports
+   the current reason. A same-cycle operator request survives transient retries
+   in memory, ending on completed assessment or explicit Disconnect; restarting
+   does not confer permission to clear an old hold automatically.
+
+4. Outage status uses amber Waiting/Reconnecting and paused Trading presentation.
+   Explicit operator Disconnect is distinguished from an active automatic retry.
+   Genuine manual review, storage faults and unrelated guard failures retain
+   their fault presentation. Start does not falsely report successful resumption
+   when recovery remains incomplete or requires review.
+
+5. Read-only identity failures immediately before transmission are also checked.
+   Proven-unsent ordinary orders and queued close/repeat workflows now wait
+   for unavailable broker evidence; genuine identity discrepancies stay held. An order
+   that may already have reached IBKR remains SUBMISSION_UNKNOWN and is never
+   blindly retried. Missing required protection remains a real exposure concern.
+   A preflight-interrupted protective cancellation retains the working order.
+   A repeated outage preserves queued close intent; actual uncertain cancellation
+   remains a hold. Late legacy account-evidence reads also require completion.
+
+SCOPE AND REVIEW
+
+Runtime changes are confined to app/controller.py, app/ib_adapter.py,
+app/storage.py and app/gui.py. Storage adds a bounded read-only lookup for
+reconciliation evidence, with no schema migration. The pure strategy engine,
+models, sizing calculations, RTH/ATR thresholds, quote guard requirements,
+backup policy, dependencies, main.py and all 27 Images files are unchanged.
+Current release metadata, documentation and corresponding metadata tests are
+updated. The 5.6.0 release note and byte-identical prior verification report are
+preserved under docs/legacy.
+
+Independent reviews reproduced both incident paths, checked adapter request
+completion, and exercised legacy-hold restoration. Reviews found additional
+mixed-identity evidence, negative conId, pending BUY cancellation, repeated
+position-timeout write and manual-Disconnect display edges; these were corrected
+with regressions. Legacy broker repr text is parsed as literal AST evidence,
+never evaluated. No live broker connection, live order or cancellation occurs
+in this work.
+
+SUPPLIED DATABASE REPLAY
+
+Disposable copies of both supplied databases were exercised with the actual
+controller. Complete matching account/contract/open-order/execution/position
+replies were supplied by deterministic broker doubles. These are explicit test
+assumptions, not confirmation of the user's current live broker state.
+
+- PURR cycle 5 restored Stage 3 with 702 shares and unchanged owned quantity.
+- ASML cycle 8 restored Stage 1 with no order/fill ledger.
+- Repeated explicit resume was idempotent; neither scenario sent/cancelled orders.
+- Disconnecting during the authoritative position request retained the original
+  saved manual-review hold on separate copies.
+- Both original database hashes remained unchanged.
+
+No user database, actual account identifier or complete audit bundle is included
+in the release archives.
+
+EXECUTED VERIFICATION
+
+- Standard-library unittest: 707 tests run, zero failures/errors. Seven skip
+  records comprise five methods and two class-setup skips for unavailable
+  native PySide6/PowerShell. These are not silently counted as passing checks.
+- 131 new unittest methods passed: 25 adapter reads, 38 legacy-hold evidence,
+  15 GUI outage display, 33 recovery/retry, and 20 pre-transmit outage methods.
+- Limited function-test fallback: 1,479 real project cases passed, zero failed
+  cases and zero module errors across 135 function-test modules. This is NOT
+  pytest and establishes no coverage percentage. Its six self-tests also pass.
+- Existing mutation smoke: 17/17 safety mutants killed.
+- Existing CSV simulations: 58 scenarios passed across 54 price-path files.
+- Both supplied database-copy restoration/repeated-resume scenarios and both
+  interrupted-position scenarios passed; zero broker mutations, originals intact.
+- Independent final review reverified protective-cancel preflight, repeated
+  manual-close outage, legacy account-read boundaries, normal-tick auto-repeat,
+  and actual transmitted-unknown behavior; 62 targeted methods passed (overlap).
+- All 219 tracked/new Python sources parse. git diff --check passes. A bounded
+  documentation check resolved 337 local file/anchor references with no failures.
+- Source scope checks confirm only the four named app modules changed; all other
+  app modules, main.py, requirements.txt and 27 Images files match the baseline.
+- Packaging reconstructs both patch and file-overlay updates from the exact
+  5.6.0 ZIP, compares every released file byte-for-byte, checks ZIP contents/CRC,
+  preserves the archived 5.6.0 report exactly, and records SHA256 manifests.
+  The release-files archive includes the executed-test and review evidence.
+
+The counts from focused and full runs overlap and must not be added together.
+The retained 5.6.0 report describes its historical validation, not this release.
+
+VALIDATION LIMITS
+
+The available host is Linux with CPython 3.12.14 and SQLite 3.53.1. The supported
+application runtime remains standard GIL-enabled CPython 3.14.x. Fresh bounded
+attempts to install Python 3.14 and the exact project requirements returned
+HTTP 403. Actual pytest, coverage, Ruff, Pyright, PySide6, ib_async, PyInstaller
+and PowerShell are unavailable. The required runtime and quality gates therefore
+DO NOT PASS on this host. Dependencies and requirements were not weakened.
+
+Standard-library unittest execution and the explicitly limited function-test
+fallback run real project test bodies with temporary databases and deterministic
+broker/Qt doubles. They do not establish pytest plugin/fixture equivalence,
+coverage, Ruff/Pyright success, native Qt/DPI behavior or a Windows executable
+build. No live connectivity or brokerage execution is claimed. Run the existing
+run_all_tests.bat with the supported Windows/Python 3.14 toolchain and rebuild
+before deploying an executable. The archive supplies reviewed source files,
+not a prebuilt or broker-certified executable.
+
+UPDATE
+
+Follow docs/V5_6_1_OUTAGE_RECOVERY.md and README_UPDATE.txt in the release-files
+archive. Preserve each instance's database/settings/account/client ID. Connect,
+refresh Reconciliation, and use Reconcile and resume for an existing supported
+outage hold. Do not replace the live database with an audit copy or mark an
+unresolved holding manually handled simply to bypass a hold. If another reason
+remains, provide that instance's fresh audit bundle and displayed reason.

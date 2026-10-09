@@ -1,6 +1,6 @@
 # Troubleshooting
 
-This guide describes v5.6.0. Keep the source, installed dependencies, and packaged executable version aligned when investigating an issue.
+This guide describes v5.7.0. Keep the source, installed dependencies, and packaged executable version aligned when investigating an issue.
 
 ## The application cannot connect
 
@@ -25,6 +25,20 @@ This is a local reconciliation block, not proof of a failed IBKR connection or u
 For completed/stopped historical blockers, use **Review historical blockers** in Reconciliation only after independently verifying the exact IBKR orders, executions and remaining shares. An old `CancelRequested` status must not be assumed harmless: additional fills may be missing from the local ledger. If the position/order was handled outside the app, the separate acknowledgement preserves the active cycle and records operator responsibility. Otherwise leave it blocked until the discrepancy is resolved. See [historical recovery](RECOVERY_AND_FAILSAFE.md#historical-cycles-blocking-start).
 
 When several installations are affected, retain a fresh audit bundle from each distinct failure. A connected snapshot and blocked Start in one installation do not establish why another installation cannot connect or resume.
+
+## Manual review persists after a Gateway outage
+
+The two supplied outage cases stored a permanent hold after recovery ran during another disconnect: PURR reported **Cannot qualify the stored position contract: Not connected to TWS**; ASML reported that its stored cycle account was **not confirmed in the broker managed accounts**. In earlier code, Reconciliation refreshed broker data and then stopped immediately at the already-set manual-review flag.
+
+Version 5.6.1 defers incomplete recovery reads without discarding the stage. For an existing hold with one of these two exact reasons, inspect TWS/Gateway, connect, press **Refresh from IBKR/TWS**, compare the current facts, then use **Reconcile and resume**. The action requires matching prior waiting-stage audit evidence, a settled local ledger and fresh identity/order/execution/position checks. If a read is temporarily incomplete, the explicit request is retained in memory for that same cycle across recovery retries. It is cleared when the attempt finishes or the operator disconnects, and is not restored after an application restart. It cannot restore an arbitrary or ambiguous cycle.
+
+If it still reports manual review, preserve a fresh audit bundle and the displayed reason. A different failure, working/uncertain order, pending exit/protection transition, missing audit evidence, mismatched account/contract or insufficient position remains blocked. Do not edit SQLite or mark the cycle manually handled solely to make it resume. See [legacy outage holds](RECOVERY_AND_FAILSAFE.md#legacy-outage-holds) and the [release note](legacy/V5_6_1_OUTAGE_RECOVERY.md).
+
+## Stage 4 remains visible after IBKR has sold the position
+
+Compare the exact application order reference and broker execution before taking any SELL action. In the confirmed 5.6.1 incident, IBKR executed the native trailing SELL during a Gateway outage, but a completed-order object reported `Filled` with zero summary quantity. The matching execution was present, yet the bot did not add it to the local ledger and incorrectly reported successful reconciliation.
+
+Version 5.6.2 recovers matching executions even when an order object exists. Upgrade, resume the saved cycle through the normal startup/reconciliation path, and check the cycle's recorded executions, SELL quantity and result. A complete supported execution can finish Stage 5; unresolved identity or quantity evidence remains blocked. If recovery still fails, export a fresh audit bundle and retain the exact broker execution/order history. Do not manually sell again solely because the old local stage shows a holding. See [upgrade and recovery](legacy/V5_6_2_COMPLETED_ORDER_RECOVERY.md#upgrade-and-recovery).
 
 ## Start is red after a successful resume
 
@@ -77,10 +91,13 @@ In Stage 3, the general **Running** status does not establish that the separate 
 
 Connection and data readiness are displayed separately:
 
-- **Gateway only:** the local socket is alive, but IBKR reported upstream connectivity unavailable (normally code 1100 or 2110). Trading, app-order polling, strategy advancement, and broker-dependent workflow commands are paused.
+- **Reconnecting:** an active cycle has temporarily lost the local socket. The Connection box is amber while automatic connection attempts continue.
+- **Waiting for IBKR:** the local socket is alive, but IBKR reported upstream connectivity unavailable (normally code 1100 or 2110). Trading, app-order polling, strategy advancement, and broker-dependent workflow commands are paused.
 - **Reconciling:** code 1101/1102 restored the upstream link, but app-owned open orders and recent executions are still being checked.
 - **Connected:** both broker links are available and reconciliation is complete. It does not establish that a fresh usable quote has arrived.
 - **Stale or waiting data:** the Data box and tooltip explain the market-data state. If no new post-connect/post-recovery ticker event has arrived, cached fields remain non-tradeable. A known old last update is shown as stale even while that additional event is awaited.
+
+For these temporary waits, affected workflow cards are amber **Waiting** and Trading reports **Paused: reconnecting** or **Paused: reconciling**. A genuine manual-review or trading-risk fault stays red and must still be resolved; amber does not mean a BUY or SELL is authorized.
 
 Inspect Gateway/TWS messages, the Data tooltip and contract-specific RTH. Old data and waiting for another update can coexist normally while the market is closed; the last actual update appearing before versus after a farm notification should not make two healthy connections look different. The app still requires a new event after its freshness invalidation.
 
@@ -291,7 +308,7 @@ Check TWS/Gateway first. Confirm whether the original trailing SELL or replaceme
 
 ## A partial BUY was not cancelled immediately
 
-After the first positive fill, BouncyBot gives the triggered marketable BUY a fixed 3.0-second grace period to finish an ordinary multi-print execution. The order remains in Stage 2 during that interval. If it is still nonterminal after the timeout, or an enabled market/session safety check becomes unsafe, BouncyBot requests cancellation of the working remainder once.
+After the first positive fill, BouncyBot keeps the original marketable BUY working in Stage 2 until the broker reports it terminal. Version 5.7.0 removes the former three-second timeout and automatic remainder cancellation when market-data or entry guards change. An old bid timestamp can still block a new order but does not cancel a partially filled BUY. Explicit Stop/close and separately configured pre-close cancellation remain active. If IBKR cancels or rejects the original remainder, the acquired quantity is settled without submitting a top-up order.
 
 More fills can still arrive before or after the cancellation request because cancellation and exchange execution race each other. Compare IBKR cumulative filled quantity with the cycle BUY quantity and execution table. Duplicate execution IDs should appear only once; late commission reports should enrich the existing row. If a late BUY arrives after an exit order already exists, BouncyBot stops in `ERROR` for manual quantity reconciliation.
 

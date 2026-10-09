@@ -138,7 +138,10 @@ def test_restoration_reconciliation_failure_keeps_trading_paused(
 
     assert controller._upstream_recovery_pending is True
     assert controller._order_submission_connectivity_message("BUY")
-    assert "reconciliation failed" in controller.status.lower()
+    assert "waiting for complete broker data" in controller.status.lower()
+    assert "trading remains paused" in controller.status.lower()
+    assert controller.active_cycle.stage == Stage.WAIT_INITIAL_DROP
+    assert controller.active_cycle.recovery_required is False
 
     broker.fail_operations.remove("open_orders")
     controller._last_upstream_recovery_attempt_monotonic = 0.0

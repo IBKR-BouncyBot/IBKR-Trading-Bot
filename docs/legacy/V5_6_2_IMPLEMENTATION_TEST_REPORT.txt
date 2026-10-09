@@ -1,0 +1,206 @@
+BouncyBot v5.6.2 - Implementation and verification report
+Date: 2026-10-08
+Scope: completed-order execution recovery after an IB Gateway outage
+Baseline: exact previously delivered 5.6.1 source, git tag v5.6.1 (6ca84fe)
+Baseline source ZIP SHA256:
+01aa4e325d22aef17110137e70942c843b873b4ef596882a9f53d2b3362cbd9f
+
+CONFIRMED DEFECT
+
+The supplied audit bundle records a full native SELL during a local Gateway/API
+outage. The user confirmed this instance was running 5.6.1. After reconnect,
+the bot kept Stage 4, recorded no SELL execution and could report fully reconciled.
+Broker evidence already contained the exact execution and its commission.
+The original broker-side SELL was not missing. The precise delay after the
+recorded opening cannot be explained without IBKR order/trigger history.
+
+Two broker representations exposed the defect: an old cached PreSubmitted
+Trade and a completed Trade with Filled status but zero summary counters.
+The latter contained the real execution and order.filledQuantity, while
+order.totalQuantity and the session order ID were absent/default zero.
+The adapter extracted the execution price but trusted the empty status counter.
+Controller recovery preferred any returned order object over execution history.
+Commission reports waited for the missing execution rather than creating it.
+
+CHANGES
+
+1. New local API sessions discard obsolete adapter Trade handles. A completed
+   recovery open-order request establishes membership; synchronized current
+   handles supply updated quantities/status only for those returned identities.
+   Cache-only entries cannot masquerade as fresh open orders.
+
+2. A completed Filled order with empty counters can use attached executions only
+   after exact account, contract, side, reference and permanent identity checks.
+   Positive finite whole-share executions with unique execution IDs must sum to
+   the expected quantity. filledQuantity corroborates them when totalQuantity is
+   unavailable; it cannot establish a fill by itself. Duplicate observations do
+   not double quantity or fees; inconsistent duplicates cannot prove completion.
+   Normal live/partial order polling retains its existing counter interpretation.
+   The strict recovery execution request also validates duplicate IDs before
+   deduplication. Conflicting economic/ownership facts defer that snapshot without
+   ledger writes. Identical fills retain valid late commission corrections,
+   including explicit zero fees; empty default reports cannot erase known fees.
+
+3. When the fresh open-order snapshot no longer contains the normal final SELL,
+   exact execution evidence can recover the exit despite a stale zero/partial
+   cached order. The existing execution ledger supplies cumulative totals, fees
+   and known prior fills. The cycle completes only when validated quantities
+   exactly close its app-owned holding. Working remainders, terminal partials,
+   oversells and contradictory ownership retain the appropriate safety checks.
+   Explicit cancellation/replacement workflows keep their existing terminal
+   order proof and remaining-quantity handling.
+
+4. Pending authoritative commissions are applied only alongside a validated
+   matching execution, including corrected and zero fees. Residual cumulative
+   placeholders are rebalanced when individual executions arrive. Missing cycle
+   fill timestamps use valid broker execution timestamps where available.
+   New execution-derived polled fills are checked against the stored cycle in
+   BUY, final SELL and protective SELL handlers before being accepted.
+
+5. Reconciliation confidence no longer reports fully reconciled for an explicit
+   unknown/invalid position, invalidated or mismatching probe, pending recovery,
+   or an inconsistent Filled Stage-4 quantity. This is a reporting correction;
+   a zero account position alone never creates an execution or completes a cycle.
+
+SCOPE
+
+Runtime behavior changes are confined to app/ib_adapter.py and app/controller.py.
+app/gui.py changes only its three release-version strings. Models, the pure
+strategy engine, storage implementation/schema, sizing, RTH/ATR/quote guards,
+main.py, dependencies, normal polling and backup intervals are unchanged.
+All 27 image assets are unchanged. Existing 5.6.1 outage protections remain.
+Documentation and release metadata are synchronized; the 5.6.1 release note and
+byte-identical implementation report are archived under docs/legacy.
+
+REVIEW AND TEST DESIGN
+
+The previous tests generally supplied normalized Filled states with positive
+summary quantities. The earlier outage tests concentrated on interrupted reads
+and waiting-stage holds. They did not exercise the combined raw completed-order
+response, stale cache, missed callback and subsequent controller recovery.
+Passing those tests did not establish this missing recovery contract.
+
+New regressions exercise the broker-shaped response before normalization, plus
+controller recovery, execution ledger, cycle quantity/stage, fees, timestamps and
+absence of another SELL. Selected new tests are also run against unchanged
+5.6.1 to prove that they detect the original defects, rather than merely agree
+with the new implementation.
+
+Independent review and the broad suite identified additional edges in the draft:
+- An internally consistent completed Trade still needed comparison against the
+  stored cycle's account/contract/side/order identity in all three fill handlers.
+- A pending corrected/zero commission needed to survive recovery through polling.
+- Explicit manual-close and close-before-RTH cancellation proof must retain its
+  existing replacement path rather than be mistaken for an incomplete final exit.
+- Recovered execution identity must support idempotent ledger insertion.
+- Finite individual values must not overflow when multiplied or accumulated.
+- Strict raw Fill normalization must not discard contradictory duplicate IDs
+  before the controller can see them. Twelve expanded matrix failures exposed
+  this additional gap; the strict adapter request now rejects that snapshot.
+These findings are included in the final review and regression evidence.
+
+SUPPLIED EVIDENCE REPLAY
+
+The exact archived Trade/Fill data is decoded using allowlisted AST constructors;
+no repr text is evaluated. The controller is exercised on disposable database
+copies with deterministic broker responses. The actual database and uploaded
+archive remain unchanged. No live broker connection, order or cancellation is
+performed by this verification. Synthetic variations are test inputs, not claims
+about other live instances or the user's current net position.
+
+The replay checks completion, stale zero/partial counters, authoritative fresh
+open-order membership, repeated recovery, duplicate execution IDs, commission
+ordering/corrections, wrong account/contract/side/reference/permanent ID, partial
+quantity, excess quantity and missing evidence. Exact results follow below.
+
+The committed multi-audit matrix uses 25 sanitized observed order shapes from
+six supplied archives: 15 completed orders (six BUY and nine SELL), six working
+orders and four cancellations. The archives have overlapping histories and are
+not six independent databases. Observed quantities, prices, fees, times, statuses
+and missing-field shapes are retained; private ownership identifiers are replaced.
+
+There are 296 individually named tests applying 25 replay conditions where
+relevant: the original observation plus 24 controlled variants. These exercise
+the real adapter normalization, controller recovery and temporary SQLite ledger
+through deterministic broker request boundaries. They cover EUR/USD, native
+trailing and market orders, multiple executions, empty completed counters, stale
+or absent caches, new sessions, repeated reconnects, event ordering, commissions,
+wrong ownership/side/identity, missing IDs, duplicate/conflicting executions,
+invalid quantities, missing evidence, working remainders, cancel/fill races and
+single-next-cycle auto-repeat. Assertions check quantities, weighted prices,
+fees, P/L, ledger uniqueness, stage and unexpected orders/cancellations.
+
+This is not a complete Cartesian product or proof of every possible broker
+sequence. The original database-copy replay is separate from the constructed
+cycle states used by the multi-audit matrix. Tests and fixture are committed as
+tests/test_v562_multi_audit_replay.py and
+tests/fixtures/v562_audit_recovery_cases.json.
+
+EXECUTED VERIFICATION
+
+- Standard unittest discovery: 1,095 tests run, zero failures/errors, seven skip
+  records for unavailable native Qt/PowerShell checks (including class skips).
+- Limited function-test fallback: 1,479 cases passed, zero module errors. This
+  runner is not pytest and does not establish coverage or full pytest semantics.
+- New targeted modules: 388 cases passed, comprising 48 adapter, 44 controller
+  and 296 multi-audit cases. They are included in the unittest run, not additional
+  tests to add to its count. An independent reviewer also ran all 388.
+- Independent original database-copy replay: 20/20 variants passed; original
+  database hash unchanged. Four close-workflow probes passed, including full
+  fresh fills producing no extra SELL and partial fills leaving only the proven
+  remainder. Six strict request-path duplicate/commission probes passed.
+- Three selected regression tests failed by assertion on unchanged 5.6.1 with
+  zero test errors, then passed unchanged on 5.6.2.
+- Official mutation smoke: 17/17 safety mutants detected.
+- Official deterministic simulations: 58/58 scenarios over 54 CSV files passed.
+- The fallback runner's six self-tests passed. Verification promoted
+  ResourceWarning to an error; runtime/source hashes were unchanged during the
+  final full run. Earlier failing/interrupted draft runs are not these results.
+- All 222 Python source files parse; git diff --check passes. Local Markdown
+  file links resolve. Baseline comparison verifies the stated runtime scope and
+  all 27 unchanged images. Packaging separately verifies full reconstruction.
+
+Independent review found no remaining material issue in the reviewed recovery
+paths. Detailed logs, inventories, hashes and replay results accompany the
+Release_files archive. This is a scoped offline result with the limits below.
+
+PLATFORM LIMITATIONS
+
+Host: Linux, CPython 3.12.14. The supported target remains standard GIL-enabled
+CPython 3.14.x on Windows. Fresh uv attempts to install Python 3.14 and the
+unchanged project requirements failed with HTTP 403. No dependency pin or runtime
+requirement was changed to make this host appear supported.
+
+Actual pytest/coverage, Ruff, Pyright, PySide6, ib_async, PyInstaller and PowerShell
+are unavailable here. The official runtime and require-tools quality gates
+therefore fail on this host. Offline fallback execution is not a pytest run,
+coverage result, native GUI test, Windows build or paper/live broker validation.
+No prebuilt Windows executable is supplied.
+
+A concrete paper-account acceptance procedure is in docs/TEST_PLAN.md and linked
+from the release note. It uses a separate paper database/client/session, a
+connected control, an actual broker-side fill during disconnection, reconnect or
+restart plus explicit resume, repeated recovery, and ledger/stage/fees/no-extra-
+SELL checks. It must be run on the supported Windows toolchain. It has NOT been
+executed here. No test suite guarantees absence of all trading defects.
+
+UPGRADE AND RELEASE
+
+Retain each live instance's database, configuration, client ID, captures and
+backups. Use the complete Source ZIP or apply Release_files to the exact 5.6.1
+baseline. Rebuild an executable from the updated source; copying .py files beside
+an older executable does not update that executable. Start 5.6.2, connect and
+explicitly resume the stored strategy. The normal Reconcile and resume path can
+also request recovery after a fresh broker probe.
+
+Do not issue another SELL solely because the older local GUI still shows Stage4.
+If broker history is no longer available or facts conflict, keep the fresh audit
+bundle and broker trade confirmation; do not edit local quantities to bypass
+reconciliation. Existing arbitrary manual-review holds are not automatically
+cleared by this correction.
+
+The release archives include source, targeted updates, tests, documentation,
+patch and verification evidence. They exclude user databases, account IDs and
+complete audit bundles. Packaging verifies the exact baseline, applies both the
+patch and manual overlay to separate copies, compares every resulting file with
+the complete source archive, checks archive CRC/content and records SHA256 hashes.

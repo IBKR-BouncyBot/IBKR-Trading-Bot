@@ -13,8 +13,11 @@ This document is the technical companion to [`RECOVERY_AND_FAILSAFE.md`](RECOVER
 
 - Order intent is durable before the broker call; returned submission handles provide the reported status and broker IDs.
 - Definite pre-transmission failures may roll back to a waiting stage. An uncertain transmission retains the exact reference and available IDs with `SUBMISSION_UNKNOWN`, `MANUAL_REVIEW`, and recovery required; it cannot be automatically retried from an empty open-order response.
-- A positive partial BUY remains in Stage 2 until the original order is terminal. The controller allows a fixed 3.0-second completion grace, then requests one remainder cancellation after timeout or immediately when an enabled market/session safety boundary becomes unsafe; later fills and commissions are reconciled idempotently before Stage 3 begins.
+- A positive partial marketable BUY remains working in Stage 2 until the original order is terminal. No partial-fill timeout or changed entry/market-data guard automatically cancels it. Explicit operator Stop/close and configured pre-close BUY cancellation remain active; later fills and commissions are reconciled idempotently before Stage 3 begins.
 - A cycle is complete only when the locally recorded app-owned quantity has been sold/resolved.
+- Incomplete recovery snapshots preserve the saved stage, keep trading paused and use the existing retry path; disconnected, errored or timed-out requests cannot become authoritative empty results.
+- An explicit outage reconciliation request may continue through incomplete-read retries only for its original cycle. The in-memory request ends when the attempt finishes or the operator disconnects and cannot survive a restart.
+- An existing outage hold is cleared only by explicit reconciliation of the two supported reasons, with matching prior waiting-stage audit evidence, a settled local ledger and fresh broker identity/order/execution/position facts. Current holdings alone cannot prove the prior stage; uncertain submissions and exit/protection transitions stay blocked.
 - A stored active cycle requires explicit operator Start/resume after an ordinary process launch. The authenticated immediate watchdog replacement exception requires the exact prior monitored cycle and normal broker reconciliation.
 - A cached recovery-probe order row is not treated as permanently current: a newer matching terminal broker poll removes/supersedes it, while a newer broker probe remains visible.
 

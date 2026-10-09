@@ -1,6 +1,6 @@
 # Configuration reference
 
-This document describes the persisted connection and strategy settings in v5.6.0. Values shown as defaults are the dataclass defaults used for a new configuration. Saved SQLite settings override them after the first run.
+This document describes the persisted connection and strategy settings in v5.7.0. Values shown as defaults are the dataclass defaults used for a new configuration. Saved SQLite settings override them after the first run.
 
 ## Connection settings
 
@@ -57,7 +57,7 @@ A non-zero commission in the database currency is included in net P/L. A non-zer
 
 When ATR adaptation supplies a valid value, it rewrites the order-driving percentages used by the same strategy path. Manual values remain the saved fallback/configuration values and continue to apply to fields whose ATR toggle is off.
 
-When a marketable BUY reports a positive partial fill, BouncyBot uses a fixed runtime-only 3.0-second grace period before requesting cancellation of the remainder. This duration is not a GUI or SQLite setting; it was introduced in v3.8.0. The grace is bypassed when an enabled market/session safety check becomes unsafe, including RTH/data/session/volatility checks and configured minimum-price, gap, or spread limits. The timer starts at the first persisted positive fill and is not extended by later partial executions.
+When a marketable BUY reports a positive partial fill, BouncyBot lets the original order continue until IBKR reports it terminal. There is no partial-fill timeout setting or post-fill entry-guard cancellation. Direct `MKT` and triggered native `TRAIL` BUYs follow the same policy. The separately configured pre-close BUY cancellation and explicit operator Stop/close requests remain active. New-order guards are unchanged; this policy applies only after a positive fill.
 
 
 ## ATR-adaptive settings
@@ -218,7 +218,7 @@ Reviewed guards can be edited during an active cycle. Edits are saved as explici
 | Contract/account, entry budget/reinvestment after entry, parameters embedded in working native orders | Existing stage restrictions remain. A draft edit does not resize, modify, cancel, replace, or reprice a working order. |
 | Optional close-before-RTH liquidation policy | Existing restrictions remain; Stage-4 changes that would change cancellation/liquidation of a working SELL stay locked. |
 
-A working Stage-2 BUY retains its original partial-fill, safety-cancellation, and cutoff policy. A working Stage-4 SELL also retains its submitted terms. Quote-guard changes clear any first Stage-3 confirmation, so the next SELL requires fresh confirmation under the revised policy. BUY-only edits cannot retrospectively alter an already purchased position. Previously saved edits survive an application restart; reverting an edit clears the pending override. No change is made to the default values or trading formulas.
+A working Stage-2 BUY uses the current partial-fill completion policy and retains its configured pre-close cutoff. Pending next-order edits do not rewrite the working order. A working Stage-4 SELL also retains its submitted terms. Quote-guard changes clear any first Stage-3 confirmation, so the next SELL requires fresh confirmation under the revised policy. BUY-only edits cannot retrospectively alter an already purchased position. Previously saved edits survive an application restart; reverting an edit clears the pending override. No change is made to the default values or trading formulas.
 
 ## v5.0.0 guard interpretation
 

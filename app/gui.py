@@ -153,7 +153,7 @@ CURRENCY_SYMBOLS = {"USD": "$", "EUR": "€"}
 ACTIVE_CONTRACT_CURRENCY = "USD"
 CURRENCY_SYMBOL = CURRENCY_SYMBOLS[ACTIVE_CONTRACT_CURRENCY]
 
-APP_VERSION = "5.6.0"
+APP_VERSION = "5.7.0"
 DARK_MODE_APP_PROPERTY = "bouncybotDarkMode"
 
 LIGHT_FUSION_PALETTE_COLORS = {
@@ -1800,15 +1800,23 @@ class LiveStatusBar(QFrame):
         if upstream_connected not in {True, False, None}:
             upstream_connected = bool(upstream_connected)
         upstream_recovery_pending = bool(snapshot.get("upstream_recovery_pending"))
+        auto_reconnect_enabled = bool(snapshot.get("auto_reconnect_enabled"))
         awaiting_fresh_data = bool(broker_connectivity.get("awaiting_fresh_market_data"))
         connectivity_message = str(broker_connectivity.get("message") or snapshot.get("status") or "")
         connectivity_code = broker_connectivity.get("error_code")
         code_text = f"IBKR code {connectivity_code}. " if connectivity_code not in (None, "") else ""
+        active_stage = cycle.get("stage") in {
+            Stage.WAIT_INITIAL_DROP.value,
+            Stage.BUY_TRAIL_ACTIVE.value,
+            Stage.WAIT_RISE_TRIGGER.value,
+            Stage.SELL_TRAIL_ACTIVE.value,
+        }
 
         if not connected or not local_connected:
-            connection_text, connection_state = "Disconnected", "risk"
+            connection_text = "Reconnecting" if active_stage and auto_reconnect_enabled else "Disconnected"
+            connection_state = "waiting" if active_stage else "risk"
         elif upstream_connected is False:
-            connection_text, connection_state = "Gateway only", "risk"
+            connection_text, connection_state = "Waiting for IBKR", "waiting"
         elif upstream_recovery_pending:
             connection_text, connection_state = "Reconciling", "waiting"
         elif upstream_connected is True:
@@ -1881,8 +1889,10 @@ class LiveStatusBar(QFrame):
             age = price_snapshot.get("age_seconds")
         data_code = str(price_snapshot.get("api_data_state") or "")
         has_price = price_snapshot.get("price") is not None
-        if upstream_connected is False or data_code == "upstream_disconnected":
-            data_text, data_state = "IBKR link lost", "risk"
+        if active_stage and (not connected or not local_connected):
+            data_text, data_state = "Waiting for connection", "waiting"
+        elif upstream_connected is False or data_code == "upstream_disconnected":
+            data_text, data_state = "Waiting for IBKR", "waiting"
         elif event_tracking and event_tracking_available is False:
             data_text, data_state = "Update tracking unavailable", "risk"
         elif has_price and _display_data_is_stale(price_snapshot, strategy.get("max_selected_price_age_seconds")):
@@ -1926,11 +1936,38 @@ class LiveStatusBar(QFrame):
         stage = cycle.get("stage")
         trading_status = snapshot.get("trading_status") or {}
         trading_tooltip = ""
+        if not connected or not local_connected:
+            broker_pause_text = "Paused: reconnecting" if auto_reconnect_enabled else "Paused: disconnected"
+        elif upstream_connected is not True:
+            broker_pause_text = "Paused: reconnecting"
+        else:
+            broker_pause_text = "Paused: reconciling"
         if isinstance(trading_status, dict) and str(trading_status.get("summary") or "").strip():
             trading_text = str(trading_status.get("summary") or "Stopped")
             trading_state = str(trading_status.get("state") or "inactive")
             trading_tooltip = str(trading_status.get("tooltip") or trading_text)
             blockers = trading_status.get("blockers") or []
+            # A lost link pauses the current stage. Keep the broker's complete
+            # evidence in the tooltip; never disguise a durable recovery fault
+            # or an unrelated trading guard as an ordinary reconnect wait.
+            if (
+                trading_state == "waiting"
+                and active_stage
+                and not snapshot.get("recovery_required")
+                and not cycle.get("recovery_required")
+                and not snapshot.get("startup_resume_required")
+                and not (snapshot.get("storage_fault") or {}).get("active")
+                and blockers
+                and all(item.get("code") in {
+                    "disconnected", "upstream_disconnected", "upstream_recovery",
+                    "stale_data", "fresh_market_data_pending", "no_price", "rth_closed",
+                } for item in blockers)
+                and any(item.get("code") in {
+                    "disconnected", "upstream_disconnected", "upstream_recovery",
+                } for item in blockers)
+                and (not connected or not local_connected or upstream_connected is not True or upstream_recovery_pending)
+            ):
+                trading_text = broker_pause_text
             # Only simplify the ordinary closed-session wait. Preserve every
             # blocker in the tooltip and leave all other faults/headlines alone.
             if (
@@ -1951,10 +1988,13 @@ class LiveStatusBar(QFrame):
                         trading_text = f"{side} blocked: RTH closed"
         elif snapshot.get("startup_resume_required"):
             trading_text, trading_state = "Start required", "waiting"
-        elif _blocking_cycle_message(cycle):
-            trading_text, trading_state = "Guard paused", "waiting"
         elif stage in {Stage.ERROR.value, Stage.MANUAL_REVIEW.value}:
             trading_text, trading_state = "Blocked", "risk"
+        elif active_stage and (not connected or not local_connected or upstream_connected is not True or upstream_recovery_pending):
+            trading_text = broker_pause_text
+            trading_state = "waiting"
+        elif _blocking_cycle_message(cycle):
+            trading_text, trading_state = "Guard paused", "waiting"
         elif stage in {Stage.WAIT_INITIAL_DROP.value, Stage.BUY_TRAIL_ACTIVE.value, Stage.WAIT_RISE_TRIGGER.value, Stage.SELL_TRAIL_ACTIVE.value}:
             trading_text, trading_state = "Running", "active"
         elif cycle:
@@ -2056,6 +2096,7 @@ class CommandStepCard(QFrame):
         colors = {
             "done": (_theme_hex("#ecfdf5", "#123524"), _theme_hex("#16a34a", "#4ade80"), _theme_hex("#064e3b", "#a7f3d0")),
             "ready": (_theme_hex("#eff6ff", "#172554"), _theme_hex("#2563eb", "#60a5fa"), _theme_hex("#1e3a8a", "#bfdbfe")),
+            "waiting": (_theme_hex("#fffbeb", "#422006"), _theme_hex("#d97706", "#f59e0b"), _theme_hex("#78350f", "#fde68a")),
             "blocked": (_theme_hex("#fef2f2", "#450a0a"), _theme_hex("#dc2626", "#f87171"), _theme_hex("#7f1d1d", "#fecaca")),
             "error": (_theme_hex("#fef2f2", "#450a0a"), _theme_hex("#dc2626", "#f87171"), _theme_hex("#7f1d1d", "#fecaca")),
             "locked": (_theme_hex("#f3f4f6", "#273449"), _theme_hex("#6b7280", "#94a3b8"), _theme_hex("#374151", "#d1d5db")),
@@ -6863,7 +6904,7 @@ class CycleAuditDialog(QDialog):
             lines.extend([
                 "BUILT-IN EXAMPLE CYCLE",
                 "=" * 80,
-                "This is synthetic v5.6.0 paper-trading example data. It is not an actual market record, is not stored in SQLite, and cannot affect trading or risk totals.",
+                "This is synthetic v5.7.0 paper-trading example data. It is not an actual market record, is not stored in SQLite, and cannot affect trading or risk totals.",
                 "The scenario models a liquid U.S. stock pullback, a multi-execution trailing BUY fill, a temporary protective SELL, and a modest trailing-stop profit exit.",
                 "",
             ])
@@ -6988,7 +7029,7 @@ class MainWindow(QMainWindow):
         self._watchdog_shutdown_expected = False
         auto_restart_value = str(os.environ.get("IBKR_BOT_AUTO_RESTART", "1") or "1").strip().lower()
         self._watchdog_auto_restart_enabled = auto_restart_value not in {"0", "false", "no", "off"}
-        self.setWindowTitle("BouncyBot - IBKR Portable Trading Bot v5.6.0")
+        self.setWindowTitle("BouncyBot - IBKR Portable Trading Bot v5.7.0")
         icon_path = resource_path("Images", "BouncyBot_app_icon.png")
         if icon_path.is_file():
             self.setWindowIcon(QIcon(str(icon_path)))
@@ -7720,6 +7761,7 @@ class MainWindow(QMainWindow):
         local_connected = bool(broker_connectivity.get("local_connected", connected))
         upstream_connected = broker_connectivity.get("upstream_connected")
         upstream_recovery_pending = bool(snapshot.get("upstream_recovery_pending"))
+        auto_reconnect_enabled = bool(snapshot.get("auto_reconnect_enabled"))
         session_mismatch = self._connection_session_mismatch(snapshot)
         broker_ready = bool(
             connected
@@ -7738,6 +7780,18 @@ class MainWindow(QMainWindow):
             Stage.WAIT_RISE_TRIGGER.value,
             Stage.SELL_TRAIL_ACTIVE.value,
         }
+        connection_waiting = bool(
+            not broker_ready
+            and not session_mismatch
+            and (connected or active_stage or upstream_recovery_pending)
+        )
+        unavailable_state = "Waiting" if connection_waiting else "Blocked"
+        recovery_fault = bool(
+            stage_value in {Stage.ERROR.value, Stage.MANUAL_REVIEW.value}
+            or snapshot.get("recovery_required")
+            or cycle.get("recovery_required")
+            or (snapshot.get("storage_fault") or {}).get("active")
+        )
         startup_resume_required = bool(snapshot.get("startup_resume_required"))
         guard_blocker = _blocking_cycle_message(cycle) if cycle else ""
         connection_error = "error" in status_text.lower()
@@ -7753,18 +7807,21 @@ class MainWindow(QMainWindow):
                 self.command_step_buttons["connect"].setText(connect_text)
         if session_mismatch:
             self.command_steps["connect"].set_state("Ready", True, "Reconnect to apply the selected profile")
+        elif connection_waiting and (not connected or not local_connected):
+            if auto_reconnect_enabled:
+                self.command_steps["connect"].set_state("Waiting", True, "Waiting for the local API connection; reconnect is available")
+            else:
+                self.command_steps["connect"].set_state("Ready", True, "Connect to resume broker monitoring")
         elif connection_error and not connected:
             self.command_steps["connect"].set_state("Error", True, status_text[:80])
-        elif connected and not local_connected:
-            self.command_steps["connect"].set_state("Error", True, "Local API socket is not available")
         elif connected and upstream_connected is not True:
             self.command_steps["connect"].set_state(
-                "Blocked",
+                "Waiting",
                 False,
                 "Gateway/TWS is local-only; waiting for its IBKR server connection",
             )
         elif connected and upstream_recovery_pending:
-            self.command_steps["connect"].set_state("Blocked", False, "Broker state is being reconciled")
+            self.command_steps["connect"].set_state("Waiting", False, "Broker state is being reconciled")
         elif connected:
             self.command_steps["connect"].set_state("Done", False, "Local and upstream broker links are ready")
         else:
@@ -7785,7 +7842,7 @@ class MainWindow(QMainWindow):
         else:
             if not broker_ready:
                 detail = "Wait for broker reconciliation" if upstream_recovery_pending else "IBKR server connection is not ready"
-                self.command_steps["ticker"].set_state("Blocked", False, detail)
+                self.command_steps["ticker"].set_state(unavailable_state, False, detail)
             elif has_selected_contract:
                 self.command_steps["ticker"].set_state("Done", True, "Contract selected")
             elif ticker_text:
@@ -7794,20 +7851,22 @@ class MainWindow(QMainWindow):
                 self.command_steps["ticker"].set_state("Not ready", False, "Enter ticker")
             if not broker_ready:
                 detail = "Wait for broker reconciliation" if upstream_recovery_pending else "IBKR server connection is not ready"
-                self.command_steps["confirm"].set_state("Blocked", False, detail)
+                self.command_steps["confirm"].set_state(unavailable_state, False, detail)
             elif has_price:
                 self.command_steps["confirm"].set_state("Done", True, "First usable price received")
             elif has_selected_contract or ticker_text:
                 self.command_steps["confirm"].set_state("Ready", True, "Confirm ticker and read price")
             else:
                 self.command_steps["confirm"].set_state("Not ready", False, "Search/select ticker first")
-        if not broker_ready:
+        if recovery_fault and not (startup_resume_required and broker_ready):
+            self.command_steps["start"].set_state("Error", False, "Resolve recovery state")
+        elif not broker_ready:
             detail = (
                 "Reconnect to apply the selected profile" if session_mismatch
                 else "Wait for broker reconciliation" if upstream_recovery_pending
                 else "IBKR server connection is not ready"
             )
-            self.command_steps["start"].set_state("Blocked", False, detail)
+            self.command_steps["start"].set_state(unavailable_state, False, detail)
         elif startup_resume_required:
             self.command_steps["start"].set_state("Ready", True, "Click to resume stored cycle")
         elif stage_value == Stage.WAIT_INITIAL_DROP.value and guard_blocker:
@@ -7818,8 +7877,6 @@ class MainWindow(QMainWindow):
             self.command_steps["start"].set_state("Blocked", False, "Connect first")
         elif not has_price:
             self.command_steps["start"].set_state("Blocked", False, "Confirm ticker price first")
-        elif cycle.get("stage") in {Stage.ERROR.value, Stage.MANUAL_REVIEW.value}:
-            self.command_steps["start"].set_state("Error", False, "Resolve recovery state")
         else:
             self.command_steps["start"].set_state("Ready", True, "Start strategy")
 
