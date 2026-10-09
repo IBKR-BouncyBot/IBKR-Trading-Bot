@@ -2,9 +2,18 @@
 
 These files document superseded releases and implementation history. They are retained for traceability, but they may describe old labels, defaults, layouts, tests, or limitations.
 
-For current behavior, use the [project README](../../README.md), the [current documentation index](../README.md), the [changelog](../../CHANGELOG.md), and the current [`v5.6.0 release note`](../V5_6_0_TARGETED_GUI_FIXES.md).
+For current behavior, use the [project README](../../README.md), the [current documentation index](../README.md), the [changelog](../../CHANGELOG.md), and the current [`v5.7.0 release note`](../V5_7_0_PARTIAL_BUY_COMPLETION.md).
 
 ## Version 5 release notes
+
+- [`V5_6_2_COMPLETED_ORDER_RECOVERY.md`](V5_6_2_COMPLETED_ORDER_RECOVERY.md) - archived exact-execution recovery for stale or incomplete order counters.
+- [`V5_6_2_IMPLEMENTATION_TEST_REPORT.txt`](V5_6_2_IMPLEMENTATION_TEST_REPORT.txt) - byte-preserved final 5.6.2 verification record.
+
+- [`V5_6_1_OUTAGE_RECOVERY.md`](V5_6_1_OUTAGE_RECOVERY.md) - archived interrupted broker-read recovery and evidence-based reconciliation of two legacy outage holds.
+- [`V5_6_1_IMPLEMENTATION_TEST_REPORT.txt`](V5_6_1_IMPLEMENTATION_TEST_REPORT.txt) - preserved final 5.6.1 verification record.
+
+- [`V5_6_0_TARGETED_GUI_FIXES.md`](V5_6_0_TARGETED_GUI_FIXES.md) - archived fifteen targeted GUI corrections and support-address updates.
+- [`V5_6_0_IMPLEMENTATION_TEST_REPORT.txt`](V5_6_0_IMPLEMENTATION_TEST_REPORT.txt) - preserved final 5.6.0 verification record.
 
 - [`V5_5_1_HISTORY_SUMMARY.md`](V5_5_1_HISTORY_SUMMARY.md) - archived full-database history summary and shared filter changes.
 - [`V5_5_1_IMPLEMENTATION_TEST_REPORT.txt`](V5_5_1_IMPLEMENTATION_TEST_REPORT.txt) - preserved final 5.5.1 verification record.

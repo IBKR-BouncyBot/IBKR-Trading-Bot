@@ -5,9 +5,9 @@ Recovery reconciles local application state with app-owned broker facts after st
 ## Core recovery principles
 
 1. **Ordinary startup remains manual.** A stored active cycle remains visible, but a normal launch requires the operator to connect and explicitly Start/resume monitoring. The only automatic exception is an authenticated immediate watchdog replacement of the same already-running supervision session, and that exception must pass the exact-cycle and normal broker-reconciliation gates described below.
-2. **App-owned orders only.** Broker order recovery requires a complete `OrderRef` already persisted by this installation; the shared `IBKRBOT|` prefix alone is not ownership proof.
+2. **App-owned orders only.** Broker order recovery uses the complete `OrderRef` already persisted by this installation. Recent-execution recovery also supports an omitted legacy reference when a recorded permanent ID proves ownership and available account/contract/side evidence does not conflict. The shared `IBKRBOT|` prefix or numeric order ID alone is not ownership proof.
 3. **Executions outrank assumptions.** A recent app-owned execution can update local fill state even when an expected callback was missed.
-4. **Unknown state fails closed.** The application enters recovery-required/manual-review rather than inventing an order or fill.
+4. **Unknown state fails closed.** Incomplete broker recovery reads pause and retry without changing the saved stage. A confirmed inconsistency or unresolved order ambiguity requires manual review; the app never invents an order or fill.
 5. **One app SELL transition at a time.** A replacement/final/market SELL waits for a potentially working app SELL to be confirmed nonworking.
 6. **Local position scope.** The unsold application quantity is reconstructed from persisted app fills, not the account-wide IBKR position.
 7. **Probe freshness matters.** A recovery probe is a point-in-time snapshot. A newer terminal broker poll for the same app order supersedes an older working-order row; a later probe that still reports the order remains authoritative and visible.
@@ -73,6 +73,8 @@ When IBKR reports restoration:
 - app-owned open orders and recent executions are reconciled before normal processing resumes;
 - a post-recovery ticker event is required before prices become strategy-usable.
 
+Recovery checks connectivity around broker reads and requires completed authoritative open-order, recent-execution and position requests. A timeout, request error, lost connection or temporarily empty managed-account snapshot keeps recovery pending and trading paused; it is not evidence that orders, fills or an account are absent. The existing retry path runs again when the connection is ready. Normal recovery does not clear an existing manual-review hold.
+
 The controller does not cancel a native order solely because connectivity was interrupted. Any status/fill that occurred during the gap is imported when the broker can report it. A restored local socket does not resume strategy processing until upstream connectivity, exact-contract qualification, broker reconciliation, and a new actual market-data event are all confirmed.
 
 ## Contract and currency recovery checks
@@ -115,13 +117,13 @@ Recovery may:
 
 - reattach to the matching open app BUY;
 - import one or more missing BUY executions;
-- preserve the first persisted positive-fill time and allow the triggered marketable BUY a fixed 3.0-second completion grace;
-- cancel a still-working remainder after that grace expires, or immediately when an enabled RTH, data-freshness/type, pre-close, volatility, minimum-price, gap, or spread safety boundary becomes unsafe;
+- preserve the first persisted positive-fill time as execution evidence and keep the original partially filled marketable BUY working;
+- retain any explicit operator or separately configured pre-close cancellation and reconcile fills while awaiting its terminal result;
 - advance to post-BUY management using the recorded fill;
 - stop in `ERROR` when an unfilled order is `Inactive`/`Rejected` or carries a substantive broker validation error;
 - require review when multiple/conflicting BUY orders or unidentified facts exist.
 
-A partial BUY remains in Stage 2 until the original broker order is terminal. Fills and commissions that arrive before or during the cancellation race continue to update the app-owned quantity, weighted average price, and execution ledger. The grace origin reuses `buy_filled_at`, so reconnect and watchdog replacement do not restart an already elapsed timeout; a missing, malformed, or future timestamp starts one new bounded grace period rather than cancelling from an unprovable age.
+A partial BUY remains in Stage 2 until the original broker order is terminal. There is no elapsed partial-fill timeout to expire during reconnect or restart. Fills and commissions continue to update the app-owned quantity, weighted average price and execution ledger. Explicit operator cancellation and configured pre-close cancellation remain supervised until broker confirmation; fills racing such a request still count. A previously accepted cancellation cannot be undone by upgrading, and a terminal partial does not cause an automatic top-up order.
 
 A broker rejection is not converted into a fresh entry setup. The rejected order reference and broker identifiers remain attached to the stopped cycle so the operator can reconcile the exact request. A normal confirmed cancellation without a substantive rejection remains recoverable and can reset Stage 2 to Stage 1 when no shares filled, or advance to Stage 3 with the final app-owned quantity when a positive fill exists.
 
@@ -132,6 +134,12 @@ Recovery accounts for protective SELL status/fills and computes the remaining lo
 ### Final SELL stage
 
 Recovery may reattach to the matching final SELL, import missing SELL executions, complete the cycle when local app quantity is fully sold, or require review when the broker/local quantities or order identities conflict. When a normal order poll reports the final SELL terminal, it updates/removes the matching row in the cached recovery probe so a safe completed cycle is not presented as having an active order.
+
+### Executions hidden by stale or completed-order counters
+
+An order object can exist while its summary fill counters are stale or zero. Starting in 5.6.2, that object no longer prevents recovery from applying the exact matching broker executions. A fully evidenced final SELL updates the local ledger and can complete Stage 5. A partial SELL with no confirmed working exit remains incomplete and requires review; explicit close workflows retain their existing remainder rules. Repeated observations use the execution ID to avoid recording the same shares twice. Valid broker timestamps populate missing fill timestamps, and validated pending commissions are applied only with the matching execution record.
+
+The status label `Filled`, a missing open order or a zero account position alone does not prove a fill's quantity or price. Recovery requires exact recorded order identity through its complete `OrderRef` or, for an omitted legacy reference, a proven recorded permanent ID. Available account, contract and side evidence must not conflict. New completed-order counter normalization requires complete matching attached execution identities and quantity; the separate recent-execution fallback retains the legacy-compatible identity checks. Unresolved or contradictory evidence must remain visible rather than being reported as fully reconciled. If the expected execution is unavailable or a discrepancy persists, preserve the audit and broker execution history. Do not send another SELL simply because the old local cycle still shows Stage 4. See the [5.6.2 release note](legacy/V5_6_2_COMPLETED_ORDER_RECOVERY.md).
 
 ## Reconciliation tab
 
@@ -145,7 +153,7 @@ The status beside the refresh button reports **Not refreshed**, **Current**, **S
 
 The guided actions are:
 
-- **Reconcile and resume** — rerun the controlled recovery path;
+- **Reconcile and resume** — rerun the controlled recovery path, including the narrowly supported legacy outage-hold checks described below;
 - **Stop after current cycle** — set the local stop-after-cycle intent without direct broker action;
 - **Cancel visible app-owned orders** — cancel visible app-owned order(s), not arbitrary account orders;
 - **Mark manually handled** — record that the operator resolved the situation outside the application.
@@ -153,6 +161,14 @@ The guided actions are:
 The Advanced row contains only **Sell app-bought unsold position** and **Leave orders working**. Reconcile/resume, cancellation, market SELL, and leave-working require a current probe and recheck freshness when clicked. **Mark manually handled** remains a manual override; without a current probe, its confirmation requires independent TWS verification. **Export audit bundle** remains available.
 
 During ATR warmup or another ordinary guard/strategy wait, resolution actions are disabled because there is no recovery mismatch. Use an audit export before manually changing an ambiguous state.
+
+## Legacy outage holds
+
+Version 5.6.1 supports explicit revalidation of two previously persisted recovery reasons: failure to qualify the stored position contract with **Not connected to TWS**, and a cycle account reported as **not confirmed in the broker managed accounts**. This is the **Reconcile and resume** button, also referred to as “Reconcile and continue”. A normal reconnect or Start does not automatically clear these holds. Once explicitly requested, reconciliation may continue across incomplete-read retries for that same cycle. This intention is kept only in memory and is cleared when the attempt finishes or the operator disconnects; a restart does not restore it or automatically release a persisted hold.
+
+The audit must prove the same hold and a preceding waiting stage. Stage 1 must have no order or execution evidence; Stage 3 must have one fully filled BUY with a matching settled execution ledger and no exit/protective-order transition. Fresh broker evidence must confirm the pinned account and exact contract, complete order/execution reads, and a sufficient exact-account/contract position. Restoration is rejected if local evidence changes during those reads. Current holdings alone cannot establish the prior stage or ownership.
+
+The path does not clear arbitrary manual-review reasons, uncertain submissions, working orders, pending exit/cancellation/protection transitions, missing or conflicting audit/ledger evidence, wrong identities or insufficient positions. It records a successful restoration as `OUTAGE_HOLD_RECONCILED` and then applies the ordinary recovery and trading guards. If it remains blocked after a fresh comparison, export a new audit bundle; do not edit SQLite or use **Mark manually handled** merely to remove the hold. See the [5.6.1 release note](legacy/V5_6_1_OUTAGE_RECOVERY.md) for the supplied evidence and upgrade steps.
 
 ## Mark manually handled
 

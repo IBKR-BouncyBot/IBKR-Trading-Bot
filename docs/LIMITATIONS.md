@@ -1,6 +1,6 @@
 # Limitations and non-goals
 
-This document states the boundaries of v5.6.0. Treat each limitation as an operational constraint, not as a future guarantee.
+This document states the boundaries of v5.7.0. Treat each limitation as an operational constraint, not as a future guarantee.
 
 ## Strategy scope
 
@@ -13,7 +13,7 @@ This document states the boundaries of v5.6.0. Treat each limitation as an opera
 ## Execution limits
 
 - Native IBKR trailing orders trigger market-style execution. The displayed stop is not a guaranteed fill price.
-- The Stage-2 partial-BUY grace, introduced in v3.8.0, is fixed at 3.0 seconds. It is not a persisted setting and cannot guarantee that a cancellation reaches IBKR before additional or complete fills occur.
+- A partially filled marketable BUY remains working without an application completion timeout. This permits further execution but cannot guarantee a complete fill, execution time or price. Native order/session restrictions, broker cancellation/rejection, explicit Stop/close and configured pre-close BUY cancellation still apply. Protection is not placed until the BUY is terminal.
 - A configured minimum-profit percentage is a pre-submission stop-level condition. It does not guarantee net profit after slippage, gaps, partial fills, commissions, fees, or broker adjustments.
 - The optional slippage buffer changes planning math only. It is not a limit order and does not cap slippage.
 - The protective SELL is placed only after the BUY is terminal with a positive filled quantity; nonterminal partial fills remain under remainder supervision first. It cannot guarantee protection during gaps, market closures, halts, disconnections, rejection, or insufficient liquidity.
@@ -75,7 +75,7 @@ Use separate accounts or deliberate operating procedures when strict position se
 - Replacement attempts are rate-limited. After three rapid attempts in 15 minutes, the current fail-closed process waits five minutes between further attempts; persistent faults can therefore require operator intervention.
 - Ordinary startup recovery is conservative and requires explicit operator action for a stored active cycle. The only automatic exception is a short-lived authenticated watchdog replacement of an already monitored exact cycle, and it still uses the normal broker reconciliation gates.
 - Orderly Windows update/sign-out/shutdown requests receive a final resume checkpoint, but a sudden power cut, forced process kill, operating-system crash, or storage failure cannot execute that hook. Only state already committed to SQLite is recoverable in those cases.
-- Broker responses and recent execution windows may be incomplete; ambiguous states are moved to manual review rather than guessed. A cached recovery probe is only a point-in-time view. Newer normal order polls can supersede its matching rows, but any later explicit probe that still reports an order must be investigated.
+- Broker responses and recent execution windows may be incomplete. Failed or incomplete recovery requests pause and retry without changing the saved stage; completed snapshots that leave order/ownership ambiguity remain subject to manual review. Only the two specifically supported legacy outage holds can be explicitly revalidated, and only with prior waiting-stage audit evidence, a settled local ledger and fresh broker facts. A cached recovery probe is only a point-in-time view. Newer normal order polls can supersede its matching rows, but any later explicit probe that still reports an order must be investigated.
 - The single-instance lock protects one portable folder. It cannot prevent a separately copied folder, different database, or different client ID from running elsewhere.
 - Incomplete RAM-only market captures are lost on shutdown by design.
 

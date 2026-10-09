@@ -1,6 +1,6 @@
 # GUI review accompanying 5.5.1
 
-**Resolution in 5.6.0:** the fifteen findings below are addressed by the targeted changes described in the [5.6.0 release note](V5_6_0_TARGETED_GUI_FIXES.md). The original findings and reproductions are retained here as historical evidence. For executed validation and remaining platform gates, use the current [implementation and test report](../IMPLEMENTATION_TEST_REPORT.txt).
+**Resolution in 5.6.0:** the fifteen findings below are addressed by the targeted changes described in the [5.6.0 release note](legacy/V5_6_0_TARGETED_GUI_FIXES.md). The original findings and reproductions are retained here as historical evidence. For executed validation and remaining platform gates, use the current [implementation and test report](../IMPLEMENTATION_TEST_REPORT.txt).
 
 Reviewed on 2026-10-04 against the exact released 5.5.0 source and the proposed 5.5.1 reporting changes. The review covered the main ribbon, price monitor and graph, live settings, command and lock controls, reconciliation, historical flowcharts, Trade history, CSV export and Cycle audit views/worker lifecycle.
 

@@ -4,7 +4,7 @@ This replay layer converts selected real BouncyBot incidents into small, determi
 
 ## Included incident regressions
 
-The committed fixtures cover six observed incidents:
+The original incident fixtures cover six observed incidents; the additional 5.7.0 audit/capture replay is described below:
 
 1. **IREN invalid trailing-BUY price**
    - preserves `ContractDetails.minTick=0.0001`, SMART market rule 557, the applicable one-cent price band, the malformed historical what-if response, and the broker's invalid-price rejection;
@@ -12,8 +12,8 @@ The committed fixtures cover six observed incidents:
 
 2. **NBIS partial-fill multi-print/cancellation race**
    - preserves two 28-share BUY executions and late commissions from the original incident shape;
-   - verifies that v3.8.0 does not cancel on the first partial during the fixed completion grace, Stage 2 remains active until the original BUY is terminal, all 56 shares are reconciled, commissions are idempotent, and the app-owned unsold quantity is correct;
-   - separate controller regressions age the same persisted first-fill clock beyond the grace, request one remainder cancellation, and prove that later fills during that cancellation race are still included.
+   - verifies that the current policy does not cancel a partially filled marketable BUY, Stage 2 remains active until the original BUY is terminal, all 56 shares are reconciled, commissions are idempotent, and the app-owned unsold quantity is correct;
+   - separate controller regressions exercise explicit cancellation and prove that later fills during that cancellation race are still included.
 
 3. **Cross-instance Master-client callbacks**
    - preserves foreign NBIS/LAC commission and order-error callback shapes while the local cycle is IREN;
@@ -30,6 +30,14 @@ The committed fixtures cover six observed incidents:
 6. **VWRA LSE continuous-close mismatch**
    - preserves IBKR `liquidHours` ending at 16:50 London time and the independently identified 16:30 continuous-session close;
    - verifies that `LSE`/`LSEETF` timing-sensitive actions use the earlier 16:30 continuous-session boundary while retaining the raw IBKR boundary for diagnostics.
+
+## v5.7.0 partial-BUY audit and capture replay
+
+[`test_v570_amd_partial_buy_replay.py`](../tests/test_v570_amd_partial_buy_replay.py) uses the [sanitized AMD fixture](../tests/fixtures/v570_amd_partial_buy.json) from the supplied audit and BUY-fill market-data capture. It preserves the observed 15-share order, 10-share execution at 655.72, stale bid age of 9.4356 seconds against a seven-second limit, fresh ask age of 0.1918 seconds, subsequent bid update and terminal cancellation of the remaining five shares.
+
+The real controller and SQLite paths must now leave that nonterminal partial working, including after more than three seconds and across restart/reconnect. Replaying the actual terminal cancellation must still settle ten acquired shares without a top-up BUY. Controlled MKT and later-fill variants test completion to fifteen shares, multiple prints, duplicate callbacks, delayed fees, terminal gating, a pending-cancel/full-fill race and protective SELL sizing only after terminal completion. Those additional completions are test inputs, not observed executions from the historical order.
+
+The fixture excludes original private broker/account/order/execution identifiers and raw database/capture archives. Consult the root [implementation and test report](../IMPLEMENTATION_TEST_REPORT.txt) for executed results and remaining platform gates.
 
 ## Retained incident regressions
 

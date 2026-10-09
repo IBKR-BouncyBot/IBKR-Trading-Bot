@@ -67,7 +67,7 @@ The fixed five-button command bar is the dashboard workflow control surface. The
 - refresh market-data and RTH diagnostics;
 - maintain current-session RTH ATR observations regardless of whether adaptation is enabled, aggregate bounded OHLC bars incrementally, and apply ready percentages only when adaptation is enabled;
 - evaluate BUY/SELL blockers, including the field-level Stage-3 quote/spread/executable-bid gate and its two distinct confirmations;
-- own the persisted-time Stage-2 partial-BUY grace and any timeout/safety-triggered remainder cancellation, while the pure strategy layer only reconciles cumulative fill facts;
+- supervise the original partially filled Stage-2 marketable BUY until terminal, including any explicit operator or configured pre-close cancellation, while the pure strategy layer reconciles cumulative fill facts;
 - advance the pure strategy state;
 - submit, cancel, and poll app-owned orders;
 - persist cycle/order/execution/audit state;

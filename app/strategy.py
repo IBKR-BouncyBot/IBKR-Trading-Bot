@@ -411,9 +411,9 @@ class StrategyEngine:
 
         A triggered marketable BUY may report several partial executions before
         IBKR reaches a terminal status. The pure strategy layer records those
-        cumulative facts and keeps Stage 2 active; the controller owns the
-        time- and market-dependent decision to cancel a remainder after a short
-        grace period or when a configured safety condition becomes unsafe.
+        cumulative facts and keeps Stage 2 active. The controller leaves the
+        original order working unless an explicit operator request or configured
+        pre-close cancellation applies; there is no partial-fill timeout.
         Only the final terminal quantity is used to enter Stage 3 and size any
         protective SELL.
         """

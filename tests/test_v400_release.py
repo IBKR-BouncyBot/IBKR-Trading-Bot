@@ -7,10 +7,10 @@ NOTE = "V4_0_0_ATR_SESSION_MEMORY_AND_ORDER_EDITING.md"
 
 def test_current_metadata_and_windows_build_version():
     gui = (ROOT / "app/gui.py").read_text(encoding="utf-8")
-    assert 'APP_VERSION = "5.6.0"' in gui
-    assert 'version = "5.6.0"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert '$version = "5.6.0"' in (ROOT / "scripts/build_windows.ps1").read_text(encoding="utf-8")
-    assert "**Current release: v5.6.0**" in (ROOT / "README.md").read_text(encoding="utf-8")
+    assert 'APP_VERSION = "5.7.0"' in gui
+    assert 'version = "5.7.0"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert '$version = "5.7.0"' in (ROOT / "scripts/build_windows.ps1").read_text(encoding="utf-8")
+    assert "**Current release: v5.7.0**" in (ROOT / "README.md").read_text(encoding="utf-8")
 
 
 def test_current_note_and_archived_v390_material():
@@ -40,4 +40,4 @@ def test_existing_order_and_worker_guards_remain_explicit():
     assert "SELL_MARKET_DATA_REVALIDATION_BLOCKED" in controller
     assert "PROTECTIVE_SELL_PARTIAL_TERMINAL" in controller
     assert "SELL_QUANTITY_MISMATCH" in controller
-    assert "BUY_PARTIAL_FILL_GRACE_SECONDS = 3.0" in controller
+    assert "Waiting for the original marketable BUY to finish;" in controller

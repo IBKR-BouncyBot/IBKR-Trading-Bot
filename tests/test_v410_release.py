@@ -5,16 +5,16 @@ import ast
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-NOTE = 'V5_6_0_TARGETED_GUI_FIXES.md'
+NOTE = 'V5_7_0_PARTIAL_BUY_COMPLETION.md'
 
 
 def test_metadata_agrees_with_gui_about_windows_and_package():
     gui = (ROOT / 'app/gui.py').read_text(encoding='utf-8')
-    assert 'APP_VERSION = "5.6.0"' in gui
-    assert 'BouncyBot - IBKR Portable Trading Bot v5.6.0' in gui
-    assert 'version = "5.6.0"' in (ROOT / 'pyproject.toml').read_text(encoding='utf-8')
-    assert '$version = "5.6.0"' in (ROOT / 'scripts/build_windows.ps1').read_text(encoding='utf-8')
-    assert '**Current release: v5.6.0**' in (ROOT / 'README.md').read_text(encoding='utf-8')
+    assert 'APP_VERSION = "5.7.0"' in gui
+    assert 'BouncyBot - IBKR Portable Trading Bot v5.7.0' in gui
+    assert 'version = "5.7.0"' in (ROOT / 'pyproject.toml').read_text(encoding='utf-8')
+    assert '$version = "5.7.0"' in (ROOT / 'scripts/build_windows.ps1').read_text(encoding='utf-8')
+    assert '**Current release: v5.7.0**' in (ROOT / 'README.md').read_text(encoding='utf-8')
 
 
 def test_current_note_and_corrected_v400_history_are_retained():
@@ -52,7 +52,7 @@ def test_cost_helper_has_no_controller_storage_or_broker_dependency():
 
 def test_release_preserves_native_order_and_atr_safety_boundaries():
     controller = (ROOT / 'app/controller.py').read_text(encoding='utf-8')
-    for token in ['STAGE3_SELL_CONFIRMATIONS_REQUIRED = 2', 'BUY_PARTIAL_FILL_GRACE_SECONDS = 3.0',
+    for token in ['STAGE3_SELL_CONFIRMATIONS_REQUIRED = 2', 'Waiting for the original marketable BUY to finish;',
                   'SELL_MARKET_DATA_REVALIDATION_BLOCKED', 'PROTECTIVE_SELL_PARTIAL_TERMINAL',
                   'SELL_QUANTITY_MISMATCH']:
         assert token in controller

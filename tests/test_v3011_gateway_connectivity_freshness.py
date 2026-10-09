@@ -381,7 +381,10 @@ def test_new_buy_and_sell_orders_are_blocked_while_upstream_is_unavailable(tmp_p
     controller._place_market_order(buy_cycle, buy_action, "BUY")
     assert adapter.market_order_calls == 0
     assert controller.active_cycle.stage == Stage.WAIT_INITIAL_DROP
-    assert "IBKR server connectivity is not confirmed" in str(controller.active_cycle.error_message)
+    assert controller.active_cycle.error_message is None
+    assert controller.active_cycle.recovery_required is False
+    assert controller._upstream_recovery_pending is True
+    assert "waiting for complete broker data" in controller.status
 
     # The BUY scenario was never submitted and is resolved before testing SELL.
     buy_cycle.stage = Stage.STOPPED
@@ -398,7 +401,10 @@ def test_new_buy_and_sell_orders_are_blocked_while_upstream_is_unavailable(tmp_p
     controller._place_market_order(sell_cycle, sell_action, "SELL")
     assert adapter.market_order_calls == 0
     assert controller.active_cycle.stage == Stage.WAIT_RISE_TRIGGER
-    assert "IBKR server connectivity is not confirmed" in str(controller.active_cycle.error_message)
+    assert controller.active_cycle.error_message is None
+    assert controller.active_cycle.recovery_required is False
+    assert controller._upstream_recovery_pending is True
+    assert "waiting for complete broker data" in controller.status
 
 
 def test_restored_connectivity_blocks_orders_until_reconciliation_finishes(tmp_path, monkeypatch):
@@ -693,7 +699,10 @@ def test_stop_side_broker_actions_are_blocked_during_upstream_outage(tmp_path, m
     assert adapter.market_order_calls == 0
     assert controller.active_cycle.stage == Stage.WAIT_RISE_TRIGGER
     assert controller.active_cycle.close_position_market_requested is False
-    assert "IBKR server connectivity is not confirmed" in str(controller.active_cycle.error_message)
+    assert controller.active_cycle.error_message is None
+    assert controller.active_cycle.recovery_required is False
+    assert controller._upstream_recovery_pending is True
+    assert "waiting for complete broker data" in controller.status
 
 def test_initial_connect_consumes_handshake_restore_reconciliation_once(tmp_path, monkeypatch):
     class _HandshakeRestoredAdapter(_ConnectivityAdapter):
@@ -740,9 +749,10 @@ def test_command_bar_requires_local_and_upstream_broker_readiness():
     assert "broker_ready = bool(" in method
     assert "and upstream_connected is True" in method
     assert "and not upstream_recovery_pending" in method
-    assert 'self.command_steps["ticker"].set_state("Blocked", False, detail)' in method
-    assert 'self.command_steps["confirm"].set_state("Blocked", False, detail)' in method
-    assert 'self.command_steps["start"].set_state("Blocked", False, detail)' in method
+    assert 'unavailable_state = "Waiting" if connection_waiting else "Blocked"' in method
+    assert 'self.command_steps["ticker"].set_state(unavailable_state, False, detail)' in method
+    assert 'self.command_steps["confirm"].set_state(unavailable_state, False, detail)' in method
+    assert 'self.command_steps["start"].set_state(unavailable_state, False, detail)' in method
 
 
 

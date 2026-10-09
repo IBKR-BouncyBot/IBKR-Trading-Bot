@@ -2,12 +2,35 @@
 
 Each version has one consolidated entry describing its delivered changes. Current behavior is documented in [README.md](README.md) and the [current guides](docs/README.md); older entries and archived notes describe their historical releases.
 
+## v5.7.0
+
+- Keep the original partially filled marketable BUY working until terminal instead of cancelling its remainder after three seconds or when entry/data guards change. Applies to direct `MKT` BUYs and native `TRAIL` BUYs after they trigger and begin filling.
+- Retain explicit operator Stop/close and the separately configured pre-close BUY cancellation, broker-terminal settlement, and late-fill/commission reconciliation. A terminal partial settles the actual acquired quantity without a replacement top-up BUY. New-order checks, native RTH restrictions, SELL logic and recovery remain unchanged.
+- Add targeted controller regressions based on the supplied audit and BUY-fill market-data capture, with controlled later-fill cases kept distinct from observed evidence. Update current policy documentation and version metadata; no database migration, dependency, GUI layout or polling/backup cadence change is introduced. See the [release note](docs/V5_7_0_PARTIAL_BUY_COMPLETION.md) and [implementation and test report](IMPLEMENTATION_TEST_REPORT.txt) for scope and executed verification.
+
+## v5.6.2
+
+- Recover exact app-owned executions after reconnect even when an existing cached or completed-order object has stale or zero summary fill counters. A matching completed SELL can now update the ledger, complete Stage 5 and record the realised result instead of leaving Stage 4 running.
+- Retain exact recorded order identity, account/contract checks and execution-ID deduplication. Preserve broker fill timestamps when local ones are missing, reconcile prior ledger quantities and cumulative placeholders, and apply validated pending commissions only with the matching execution. Partial SELLs without a confirmed working exit remain incomplete under recovery checks; a `Filled` label or zero account position alone cannot create a fill or authorize a replacement order.
+- Reject conflicting economic or ownership evidence for a repeated execution ID during strict recovery snapshots; defer until a consistent snapshot arrives instead of silently discarding the conflict. Retain legitimate late commission updates, including authoritative zero, and existing normal execution polling.
+- Keep unresolved fill evidence visible during recovery instead of reporting the cycle fully reconciled. Preserve the outage waiting/retry protections introduced in 5.6.1.
+- Add focused regressions and a 296-test multi-audit matrix through strict adapter normalization, controller recovery and SQLite, using sanitized observed shapes and controlled variants. Update current documentation and release metadata. No database schema migration, strategy threshold, RTH/ATR rule or backup-policy change is introduced. See the [release note](docs/legacy/V5_6_2_COMPLETED_ORDER_RECOVERY.md) and [implementation and test report](docs/legacy/V5_6_2_IMPLEMENTATION_TEST_REPORT.txt) for the exact scope and executed validation.
+
+## v5.6.1
+
+- Keep recovery paused and preserve the saved stage when connectivity drops during broker reads, managed accounts are not yet available, or authoritative order/execution/position requests do not complete. Reuse the existing recovery retry cadence and require fresh post-recovery market data.
+- Add strict recovery snapshots that reject request errors, timeouts and disconnected reads instead of treating cached or empty fallback results as complete broker evidence.
+- Defer unavailable identity reads before transmission without turning proven-unsent ordinary BUY/SELL plans into permanent errors. Preserve queued operator-close and auto-repeat intent during recovery, including Stop-after-current-cycle for a requested close; retain review for uncertain transmissions and missing required protection.
+- Allow explicit **Reconcile and resume** to revalidate the two observed legacy outage holds only when matching audit history proves Stage 1 or Stage 3, the local ledger is settled, and fresh broker account/contract/order/execution/position evidence agrees. Retain manual review for uncertain submissions, unresolved exit/protection transitions, missing evidence, identity conflicts and position shortfalls.
+- Show temporary active-cycle connection/reconciliation waits in amber with paused Trading status, while retaining red presentation for actual manual-review and trading-risk faults. Keep an explicit reconciliation request for the same cycle across incomplete-read retries; clear it when the attempt finishes or the operator disconnects, without restoring it after restart.
+- Add focused recovery regressions and update release metadata and operator documentation. No schema migration, new background worker or backup-policy change is introduced. See the [release note](docs/legacy/V5_6_1_OUTAGE_RECOVERY.md) and [implementation and test report](docs/legacy/V5_6_1_IMPLEMENTATION_TEST_REPORT.txt) for scope and executed validation.
+
 ## v5.6.0
 
 - Correct all fifteen findings from the 5.5.1 GUI review with targeted changes: protect manual percentages against queued ATR updates; align the Reconciliation market-SELL confirmation with Stop; compare full position quantities and retain nonterminal partial orders as working.
 - Keep ticker identity and graph data consistent after changing instruments; limit estimated trailing stops to the applicable order's lifetime; retain historical flowchart selections by cycle ID and display their saved settings; restore next-cycle manual protective-percentage editing under existing permissions.
 - Apply all Trade history filters to full-result CSV exports, classify protective exits from execution evidence, use weighted-average completion markers, preserve zero-valued audit settings and read available order-type/timing fields. Refresh completed-history rows and selectors only when the relevant history changes.
-- Update the ADA, ETH, NIGHT, SOL, XRP and ZEC support addresses in About > Info and README; add targeted regressions and synchronize current documentation and release metadata. See the [release note](docs/V5_6_0_TARGETED_GUI_FIXES.md) and [implementation and test report](IMPLEMENTATION_TEST_REPORT.txt) for scope and executed validation.
+- Update the ADA, ETH, NIGHT, SOL, XRP and ZEC support addresses in About > Info and README; add targeted regressions and synchronize current documentation and release metadata. See the [release note](docs/legacy/V5_6_0_TARGETED_GUI_FIXES.md) and [implementation and test report](docs/legacy/V5_6_0_IMPLEMENTATION_TEST_REPORT.txt) for scope and executed validation.
 
 ## v5.5.1
 

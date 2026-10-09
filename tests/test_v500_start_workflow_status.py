@@ -91,14 +91,14 @@ class StartWorkflowStatusTests(unittest.TestCase):
             "Ready", True, "Click to resume stored cycle"
         )
 
-    def test_disconnected_and_pending_reconciliation_still_block_start(self):
+    def test_disconnected_and_pending_reconciliation_wait_without_enabling_start(self):
         for overrides in ({"connected": False}, {"upstream_recovery_pending": True}):
             with self.subTest(overrides=overrides):
                 snapshot = self.snapshot()
                 snapshot.update(overrides)
                 cards = self.render(snapshot)
                 state, enabled, _detail = cards["start"].set_state.call_args.args
-                self.assertEqual(state, "Blocked")
+                self.assertEqual(state, "Waiting")
                 self.assertFalse(enabled)
 
     def test_recovery_error_stages_still_require_resolution(self):

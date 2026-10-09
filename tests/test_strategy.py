@@ -45,8 +45,8 @@ def test_partial_buy_fill_waits_for_terminal_buy_status_without_pure_strategy_ca
     # Minimum profit is protected versus the actual average buy fill.
     # Avg buy 95, min profit 3%, sell trail 1% => trigger 95 * 1.03 / 0.99.
     assert round(cycle.rise_trigger_price, 2) == 98.84
-    # The controller now owns the short grace timer and any safety-triggered
-    # cancellation. The pure strategy layer only reconciles cumulative fills.
+    # The original BUY remains working until terminal. The pure strategy only
+    # reconciles cumulative fills; explicit cancellation remains supported.
     assert actions == []
     assert cycle.buy_remainder_cancel_requested is False
 

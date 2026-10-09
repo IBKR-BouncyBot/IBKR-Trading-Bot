@@ -37,6 +37,7 @@ def _snapshot(*, invalidated: bool = False) -> dict:
     blockers = [_blocker("fresh_market_data_pending" if invalidated else "stale_data"), _blocker("rth_closed")]
     return {
         "connected": True,
+        "auto_reconnect_enabled": True,
         "connection": {"trading_mode": "paper"},
         "broker_connectivity": {
             "local_connected": True,
@@ -140,9 +141,9 @@ class StatusPresentationTests(unittest.TestCase):
 
     def test_disconnection_and_recovery_connection_states_remain_prominent(self):
         cases = (
-            ({"connected": False}, {}, "Disconnected", "risk"),
-            ({}, {"local_connected": False}, "Disconnected", "risk"),
-            ({}, {"upstream_connected": False}, "Gateway only", "risk"),
+            ({"connected": False}, {}, "Reconnecting", "waiting"),
+            ({}, {"local_connected": False}, "Reconnecting", "waiting"),
+            ({}, {"upstream_connected": False}, "Waiting for IBKR", "waiting"),
             ({"upstream_recovery_pending": True}, {}, "Reconciling", "waiting"),
             ({}, {"upstream_connected": None}, "Checking link", "waiting"),
         )
@@ -171,8 +172,8 @@ class StatusPresentationTests(unittest.TestCase):
                 snapshot["broker_connectivity"]["upstream_connected"] = upstream
                 snapshot["price_snapshot"]["market_data_event_tracking_available"] = False
                 bar = self.render(snapshot)
-                self.assertEqual(bar.pills["Data"]._state, "risk")
-                expected = "Update tracking unavailable" if upstream else "IBKR link lost"
+                self.assertEqual(bar.pills["Data"]._state, "risk" if upstream else "waiting")
+                expected = "Update tracking unavailable" if upstream else "Waiting for IBKR"
                 self.assertEqual(bar.pills["Data"].value.text(), expected)
 
     def test_price_never_received_is_not_presented_as_an_old_cached_price(self):

@@ -1,6 +1,16 @@
 # Testing, simulation, and quality gates
 
-The v5.6.0 regressions target the fifteen reported GUI defects: manual/ATR input ownership, reconciliation confirmation and quantities, working partial orders, ticker/graph identity, historical flowcharts, filtered exports, protective-exit classification, audit values and completed-history refresh. See the [release note](V5_6_0_TARGETED_GUI_FIXES.md#verification-boundaries) and the root [implementation and test report](../IMPLEMENTATION_TEST_REPORT.txt) for actual results and remaining platform checks. The retained v5.5.1 history tests cover all-ticker totals, shared filters, more than 500 matching cycles and obsolete-result rejection; the retained v5.5.0 GUI tests cover connection/freshness separation, RTH headline priority, fault visibility and actual-update timestamps.
+The v5.7.0 regressions cover keeping an already partially filled marketable BUY working, including the supplied audit and market-data capture, elapsed time, changed entry/data guards, later execution/fee updates, restart, and retained explicit cancellation paths. See the [partial-BUY completion release note](V5_7_0_PARTIAL_BUY_COMPLETION.md#verification-boundaries) and the root [implementation and test report](../IMPLEMENTATION_TEST_REPORT.txt) for executed results and platform limits.
+
+The retained v5.6.2 recovery regressions cover executions hidden by stale or completed-order summary counters, exact order/account/contract ownership, repeated evidence and commission timing. See the [completed-order recovery release note](legacy/V5_6_2_COMPLETED_ORDER_RECOVERY.md#verification-boundaries) and the root [implementation and test report](../IMPLEMENTATION_TEST_REPORT.txt) for executed results and target-platform limits.
+
+The [multi-audit matrix](AUTOMATED_TEST_COVERAGE.md#v562-multi-audit-recovery-matrix) adds 296 named tests from 25 sanitized observed order shapes in six overlapping supplied archives, using the original response and 24 controlled variants where applicable. It exercises actual strict adapter Fill normalization, controller recovery and SQLite with deterministic broker-request responses. Conflicting duplicate execution evidence must defer recovery, a consistent later snapshot must recover without another order, and legitimate late fees including zero must remain intact. These finite offline cases do not replace the separate broker integration gate.
+
+The [paper-account acceptance gate](TEST_PLAN.md#windowspython-314-paper-account-acceptance-gate) covers a broker-native SELL that fills while the app is disconnected, followed by reconnect and explicit resume on Windows/Python 3.14. It includes normal connected and partial-fill controls and requires proof that recovery sends no extra SELL. This is a separate outstanding integration procedure, not a completed host-test result.
+
+The retained v5.6.1 regressions cover incomplete broker reads and explicit reconciliation of the two supported legacy outage holds, including rejection of uncertain submissions, identity conflicts and insufficient positions. Their original scope is recorded in the [archived outage release note](legacy/V5_6_1_OUTAGE_RECOVERY.md).
+
+The retained v5.6.0 regressions target the fifteen reported GUI defects: manual/ATR input ownership, reconciliation confirmation and quantities, working partial orders, ticker/graph identity, historical flowcharts, filtered exports, protective-exit classification, audit values and completed-history refresh. See the [release note](legacy/V5_6_0_TARGETED_GUI_FIXES.md#verification-boundaries) and the root [implementation and test report](../IMPLEMENTATION_TEST_REPORT.txt) for actual results and remaining platform checks. The retained v5.5.1 history tests cover all-ticker totals, shared filters, more than 500 matching cycles and obsolete-result rejection; the retained v5.5.0 GUI tests cover connection/freshness separation, RTH headline priority, fault visibility and actual-update timestamps.
 
 `tests/test_v540_deferred_backups.py` covers queue deferral and retained order/fill behavior. `tests/test_v540_storage_reliability.py` covers schema stamps, legacy migration copies, future-version rejection, full restore validation and retention ordering. The existing v4.0.0 ATR memory and close-persistence tests cover the revised age boundary and retained checkpoint guards.
 
@@ -128,9 +138,9 @@ The focused v3.2.1 suite verifies the 08:00-16:30 `Europe/London` continuous-ses
 
 The focused v3.9.0 suite verifies stable diagnostic condition keys and reason codes, changing-age suppression, condition entry/summary/recovery lifecycle, structured counts and maximum metrics, and bounded one-minute/five-minute/15-minute cadence. An NBIS-shaped 705-observation stale-ask sequence is reduced to a small bounded audit sequence while retaining every observation in the live condition state. Additional tests cover GUI-only cached/non-price callbacks, immediate near-trigger invalid evidence, invalidated first SELL confirmation, native trailing-order normal/anomaly cadence, reconnect aggregation and recovery, BUY-preflight recovery, and Price Data Monitor rendering. Existing Stage-3 field freshness, two-observation confirmation, pre-submit revalidation, order handling, risk, recovery, and persistence tests remain unchanged.
 
-### v3.8.0 BUY partial-fill grace and safety regressions
+### v5.7.0 partial-BUY completion regressions
 
-The focused v3.8.0 suite verifies the revised Stage-2 settlement policy for both native trailing and zero-trail market BUYs: the first positive partial remains working, a complete multi-print fill inside the fixed 3.0-second grace is not cancelled, the first-fill timestamp survives reload, later partial progress does not restart the grace clock, and a still-nonterminal remainder receives one cancellation after timeout. Safety-path tests cover RTH closure, required live-data loss, stale data, unavailable or pre-close session timing, recent-volatility limits, minimum-price and previous-close-gap limits, and unavailable, crossed, or excessive bid/ask spreads. The suite also covers failed-cancel retry, duplicate suppression, future-timestamp recovery, broker-terminal partial settlement, and full late-fill reconciliation after a cancellation request. The historical NBIS multi-execution replay confirms that a second fill can complete normally during the grace rather than being raced by an immediate cancellation.
+Focused cases verify that direct MKT and triggered native TRAIL BUY remainders remain working after a positive partial fill despite elapsed time or changed entry/data guards. Stage 2 remains active until broker-terminal evidence arrives, and every later execution/commission contributes to the final quantity and average price without a replacement top-up order. Explicit Stop/close, configured pre-close cancellation, confirmed broker cancellation/rejection and cancellation-race accounting retain their existing contracts. The historical NBIS multi-execution replay and the supplied audit/market-data replay exercise the controller and SQLite with deterministic broker boundaries; neither claims an actual broker integration run.
 
 ### v3.7.0 field-level market-data and Stage-3 SELL regressions
 
@@ -162,7 +172,7 @@ Use test adapters/headless signals to validate:
 - 1100/1101/1102 upstream connectivity, subscription recreation/retention, actual event identity/age, cached-read exclusion, fail-closed missing-event handling, worker pausing, stale SELL presentation, and order-submission gating;
 - guard-versus-recovery action gating;
 - stop/window-close/market-close sequencing based on the persisted app-owned ledger;
-- Stage-2 BUY partial-fill grace, timeout/safety cancellation, and late-fill reconciliation;
+- Stage-2 partial-BUY completion, retained explicit cancellation paths, and late-fill reconciliation;
 - capture/report hooks.
 
 ### Storage tests
@@ -266,7 +276,7 @@ Automated tests cannot prove end-to-end broker behavior. Before live deployment,
 
 `test_v400_atr_memory_and_order_edits.py` covers first-session warmup, weekend/restart reuse, session and contract separation, corrupt/future/expired estimates, bounded persistence failures, live takeover, same-contract volatility-history preservation, and explicit next-order guard persistence/isolation. `test_v400_gui.py` checks amber LIVE status, retained error colors, removal of only the profit banner, risk-field/manual locks, saved ATR provenance, and non-selling dialog defaults. `test_v400_release.py` checks metadata, documentation layout, compatibility, and unchanged order/broker modules.
 
-Historical corrected v4.0.0 results are preserved in [`legacy/V4_0_0_IMPLEMENTATION_TEST_REPORT.txt`](legacy/V4_0_0_IMPLEMENTATION_TEST_REPORT.txt). The root `IMPLEMENTATION_TEST_REPORT.txt` records the current v5.6.0 verification.
+Historical corrected v4.0.0 results are preserved in [`legacy/V4_0_0_IMPLEMENTATION_TEST_REPORT.txt`](legacy/V4_0_0_IMPLEMENTATION_TEST_REPORT.txt). The root `IMPLEMENTATION_TEST_REPORT.txt` records the current v5.7.0 verification.
 
 
 ## v5.0.0 GUI regression layer

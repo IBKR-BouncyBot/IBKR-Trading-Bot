@@ -1,4 +1,4 @@
-"""v3.8.0 delayed BUY-partial remainder cancellation regressions."""
+"""BUY partial-fill regressions, updated for the v5.7.0 completion policy."""
 
 from __future__ import annotations
 
@@ -128,435 +128,169 @@ def _partial(
     return state
 
 
-def _expire_grace(controller: Any) -> None:
+def _age_first_fill(controller: Any) -> None:
     assert controller.active_cycle is not None
     controller.active_cycle.buy_filled_at = (
-        dt.datetime.now(dt.timezone.utc)
-        - dt.timedelta(
-            seconds=controller.BUY_PARTIAL_FILL_GRACE_SECONDS + 1.0,
-        )
+        dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=1)
     ).isoformat()
     controller.storage.upsert_cycle(controller.active_cycle)
 
 
-def test_first_partial_fill_stays_working_during_grace(tmp_path, monkeypatch) -> None:
-    controller, broker = _controller(tmp_path, monkeypatch)
-    cycle = _buy_cycle(controller, broker)
-    state = _partial(broker, cycle)
+def _request_preclose_cancel(controller: Any) -> None:
+    cycle = controller.active_cycle
+    cycle.session_timing_guard_enabled = True
+    cycle.cancel_buy_before_close_minutes = 5
+    controller._session_minutes_from_rth_status = lambda: {
+        "available": True,
+        "minutes_to_close": 2.0,
+        "session_close_display": "21:00 UTC",
+    }
+    controller._cancel_buy_before_close_if_needed(cycle)
 
-    controller._handle_buy_order_poll(cycle, state)
 
+def _assert_waiting(controller: Any, broker: DeterministicBrokerAdapter, quantity: int = 4) -> None:
     active = controller.active_cycle
     assert active is not None
     assert active.stage == Stage.BUY_TRAIL_ACTIVE
-    assert active.buy_filled_qty == 4
+    assert active.buy_filled_qty == quantity
     assert active.buy_remainder_cancel_requested is False
     assert broker.cancelled_orders == []
-    events = controller.storage.cycle_audit_details(cycle.id)["decision_events"]
+    assert len(broker.placed_orders) == 1
+    events = controller.storage.cycle_audit_details(active.id)["decision_events"]
+    assert not any(row["event_type"] == "BUY_REMAINDER_CANCEL_REQUESTED" for row in events)
     partial_event = next(row for row in events if row["event_type"] == "BUY_PARTIAL_FILL")
     assert partial_event["decision_result"] == "awaiting_terminal_buy"
-    assert _decision_raw(partial_event)["partial_fill_policy"]["trigger"] == "grace"
+    assert _decision_raw(partial_event)["partial_fill_policy"]["trigger"] == "wait"
+    assert "grace" not in partial_event["message"]
 
 
-def test_partial_market_buy_uses_the_same_grace_policy(tmp_path, monkeypatch) -> None:
+@pytest.mark.parametrize("market", [False, True])
+def test_first_partial_fill_keeps_original_order_working(tmp_path, monkeypatch, market) -> None:
     controller, broker = _controller(tmp_path, monkeypatch)
-    cycle = _buy_cycle(controller, broker, market=True)
+    cycle = _buy_cycle(controller, broker, market=market)
+    controller._handle_buy_order_poll(cycle, _partial(broker, cycle))
+    _assert_waiting(controller, broker)
+
+
+@pytest.mark.parametrize("market", [False, True])
+@pytest.mark.parametrize("condition", [
+    "elapsed", "rth_closed", "session_unavailable", "stale_bid", "non_live",
+    "volatility", "spread", "missing_bid", "minimum_price", "gap",
+])
+def test_changed_market_conditions_do_not_cancel_executing_buy(
+    tmp_path, monkeypatch, market, condition,
+) -> None:
+    controller, broker = _controller(tmp_path, monkeypatch)
+    cycle = _buy_cycle(controller, broker, market=market)
     state = _partial(broker, cycle)
+    controller._handle_buy_order_poll(cycle, state)
+    _age_first_fill(controller)
+    cycle = controller.active_cycle
+    first_fill_at = cycle.buy_filled_at
+    if condition == "rth_closed":
+        broker.rth_open = False
+    elif condition == "session_unavailable":
+        cycle.session_timing_guard_enabled = True
+        cycle.cancel_buy_before_close_minutes = 5
+        controller._session_minutes_from_rth_status = lambda: {"available": False}
+    elif condition == "stale_bid":
+        cycle.stale_data_guard_enabled = True
+        cycle.max_bid_ask_age_seconds = 1.0
+        old = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=30)).isoformat()
+        controller.price_snapshot["field_update_received_at"]["bid"] = old
+        controller.price_snapshot["field_update_age_seconds"]["bid"] = 30.0
+        assert "independent bid/ask" in controller._stale_data_guard_message_for_buy(cycle)
+    elif condition == "non_live":
+        controller.connection.trading_mode = "live"
+        cycle.block_delayed_data_in_live = True
+        controller.price_snapshot["subscription_market_data_type"] = None
+        controller.price_snapshot["selected_market_data_type"] = 3
+        assert controller._delayed_live_data_blocker_for_buy(cycle) is not None
+    elif condition == "volatility":
+        cycle.volatility_filter_enabled = True
+        cycle.max_recent_price_move_pct = 1.0
+        now = time.monotonic()
+        controller._price_history.clear()
+        controller._price_history.extend([(now - 2, 100.0), (now - 1, 102.0), (now, 101.0)])
+        assert controller._volatility_guard_message_for_buy(cycle) is not None
+    elif condition in {"spread", "missing_bid"}:
+        cycle.max_spread_pct = 0.5
+        controller.price_snapshot["fields"].update(
+            bid=99.0 if condition == "spread" else None, ask=101.0,
+        )
+        assert controller._spread_guard_message_for_buy(cycle) is not None
+    elif condition == "minimum_price":
+        cycle.hard_risk_limits_enabled = True
+        cycle.min_trade_price = 101.0
+    elif condition == "gap":
+        cycle.hard_risk_limits_enabled = True
+        cycle.max_gap_from_prev_close_pct = 1.0
+        controller.price_snapshot["fields"].update(close=95.0, marketPrice=100.0)
 
     controller._handle_buy_order_poll(cycle, state)
 
-    active = controller.active_cycle
-    assert active is not None
-    assert active.stage == Stage.BUY_TRAIL_ACTIVE
-    assert active.buy_filled_qty == 4
-    assert active.buy_remainder_cancel_requested is False
-    assert broker.cancelled_orders == []
-
-
-def test_full_fill_inside_grace_completes_without_cancellation(tmp_path, monkeypatch) -> None:
-    controller, broker = _controller(tmp_path, monkeypatch)
-    cycle = _buy_cycle(controller, broker)
-    first = _partial(broker, cycle)
-    controller._handle_buy_order_poll(cycle, first)
-
+    _assert_waiting(controller, broker)
+    assert controller.active_cycle.buy_filled_at == first_fill_at
     terminal = broker.fill_order(
-        str(cycle.buy_order_ref),
-        shares=6,
-        price=100.1,
-        commission=0.15,
-        execution_id="PART-6",
-        terminal=True,
+        str(cycle.buy_order_ref), shares=6, price=100.1, commission=0.15,
+        execution_id="REMAINDER-6", terminal=True,
     )
     broker.events.clear()
     controller._handle_buy_order_poll(controller.active_cycle, terminal)
-
-    active = controller.active_cycle
-    assert active is not None
-    assert active.stage == Stage.WAIT_RISE_TRIGGER
-    assert active.buy_filled_qty == 10
-    assert active.buy_remainder_cancel_requested is False
+    assert controller.active_cycle.stage == Stage.WAIT_RISE_TRIGGER
+    assert controller.active_cycle.buy_filled_qty == 10
+    assert controller.storage.get_execution_totals(cycle.id, "BUY")["shares"] == 10
     assert broker.cancelled_orders == []
+    assert len(broker.placed_orders) == 1
 
 
-def test_later_partial_progress_does_not_restart_the_grace_clock(
-    tmp_path,
-    monkeypatch,
-) -> None:
+def test_later_partial_progress_preserves_first_fill_time_without_cancel(tmp_path, monkeypatch) -> None:
     controller, broker = _controller(tmp_path, monkeypatch)
     cycle = _buy_cycle(controller, broker)
-    first = _partial(broker, cycle, shares=2)
-    controller._handle_buy_order_poll(cycle, first)
-
-    first_fill_at = (
-        dt.datetime.now(dt.timezone.utc)
-        - dt.timedelta(seconds=controller.BUY_PARTIAL_FILL_GRACE_SECONDS + 1.0)
-    ).isoformat()
-    controller.active_cycle.buy_filled_at = first_fill_at
-    controller.storage.upsert_cycle(controller.active_cycle)
+    controller._handle_buy_order_poll(cycle, _partial(broker, cycle, shares=2))
+    _age_first_fill(controller)
+    first_fill_at = controller.active_cycle.buy_filled_at
     second = broker.fill_order(
-        str(cycle.buy_order_ref),
-        shares=2,
-        price=100.1,
-        commission=0.05,
-        execution_id="PART-LATER-2",
-        terminal=False,
+        str(cycle.buy_order_ref), shares=2, price=100.1, commission=0.05,
+        execution_id="PART-LATER-2", terminal=False,
     )
     broker.events.clear()
-
     controller._handle_buy_order_poll(controller.active_cycle, second)
+    _assert_waiting(controller, broker)
+    assert controller.active_cycle.buy_filled_at == first_fill_at
 
-    active = controller.active_cycle
-    assert active is not None
-    assert active.buy_filled_qty == 4
-    assert active.buy_filled_at == first_fill_at
-    assert active.buy_remainder_cancel_requested is True
+
+@pytest.mark.parametrize("market", [False, True])
+def test_configured_preclose_cancel_still_cancels_partial_buy(tmp_path, monkeypatch, market) -> None:
+    controller, broker = _controller(tmp_path, monkeypatch)
+    cycle = _buy_cycle(controller, broker, market=market)
+    controller._handle_buy_order_poll(cycle, _partial(broker, cycle))
+    _request_preclose_cancel(controller)
+    assert controller.active_cycle.buy_remainder_cancel_requested is True
     assert broker.cancelled_orders == [cycle.buy_order_ref]
+    controller._handle_buy_order_poll(controller.active_cycle, broker.poll_order(str(cycle.buy_order_ref)))
+    assert controller.active_cycle.stage == Stage.WAIT_RISE_TRIGGER
+    assert controller.active_cycle.buy_filled_qty == 4
+    assert len(broker.placed_orders) == 1
 
 
-def test_full_fill_during_cancel_race_is_still_reconciled(tmp_path, monkeypatch) -> None:
+def test_full_fill_during_configured_cancel_race_is_still_reconciled(tmp_path, monkeypatch) -> None:
     controller, broker = _controller(tmp_path, monkeypatch)
     cycle = _buy_cycle(controller, broker)
-    first = _partial(broker, cycle)
-    controller._handle_buy_order_poll(cycle, first)
-    _expire_grace(controller)
-    controller._handle_buy_order_poll(controller.active_cycle, first)
+    controller._handle_buy_order_poll(cycle, _partial(broker, cycle))
+    _request_preclose_cancel(controller)
     assert broker.cancelled_orders == [cycle.buy_order_ref]
-
-    late_terminal = broker.fill_order(
-        str(cycle.buy_order_ref),
-        shares=6,
-        price=100.2,
-        commission=0.15,
-        execution_id="PART-AFTER-CANCEL",
-        terminal=True,
+    late = broker.fill_order(
+        str(cycle.buy_order_ref), shares=6, price=100.2, commission=0.15,
+        execution_id="PART-AFTER-CANCEL", terminal=True,
     )
     broker.events.clear()
-    controller._handle_buy_order_poll(controller.active_cycle, late_terminal)
-
-    active = controller.active_cycle
-    assert active is not None
-    assert active.stage == Stage.WAIT_RISE_TRIGGER
-    assert active.buy_filled_qty == 10
-    assert active.buy_remainder_cancel_requested is False
+    controller._handle_buy_order_poll(controller.active_cycle, late)
+    assert controller.active_cycle.stage == Stage.WAIT_RISE_TRIGGER
+    assert controller.active_cycle.buy_filled_qty == 10
+    assert controller.active_cycle.buy_remainder_cancel_requested is False
     rows = controller.storage.get_cycle_audit_bundle(cycle.id)["executions"]
-    assert {row["execution_id"] for row in rows} == {
-        "PART-4",
-        "PART-AFTER-CANCEL",
-    }
-
-
-def test_nonterminal_partial_is_cancelled_after_grace_timeout(tmp_path, monkeypatch) -> None:
-    controller, broker = _controller(tmp_path, monkeypatch)
-    cycle = _buy_cycle(controller, broker)
-    state = _partial(broker, cycle)
-    controller._handle_buy_order_poll(cycle, state)
-    _expire_grace(controller)
-
-    controller._handle_buy_order_poll(controller.active_cycle, state)
-
-    active = controller.active_cycle
-    assert active is not None
-    assert active.buy_remainder_cancel_requested is True
-    assert active.buy_status == "CancelRequested"
-    assert broker.cancelled_orders == [cycle.buy_order_ref]
-    events = controller.storage.cycle_audit_details(cycle.id)["decision_events"]
-    requested = [
-        row
-        for row in events
-        if row["event_type"] == "BUY_REMAINDER_CANCEL_REQUESTED"
-    ]
-    assert len(requested) == 1
-    assert requested[0]["decision_result"] == "timeout"
-    assert _decision_raw(requested[0])["partial_fill_policy"]["code"] == "partial_fill_timeout"
-
-
-def test_rth_close_cancels_partial_remainder_before_timeout(tmp_path, monkeypatch) -> None:
-    controller, broker = _controller(tmp_path, monkeypatch)
-    cycle = _buy_cycle(controller, broker)
-    state = _partial(broker, cycle)
-    broker.rth_open = False
-
-    controller._handle_buy_order_poll(cycle, state)
-
-    active = controller.active_cycle
-    assert active is not None
-    assert active.buy_remainder_cancel_requested is True
-    assert broker.cancelled_orders == [cycle.buy_order_ref]
-    events = controller.storage.cycle_audit_details(cycle.id)["decision_events"]
-    requested = next(
-        row
-        for row in events
-        if row["event_type"] == "BUY_REMAINDER_CANCEL_REQUESTED"
-    )
-    assert requested["decision_result"] == "safety"
-    assert _decision_raw(requested)["partial_fill_policy"]["code"] == "rth_closed"
-
-
-def test_session_close_cutoff_cancels_partial_remainder_before_timeout(
-    tmp_path,
-    monkeypatch,
-) -> None:
-    controller, broker = _controller(tmp_path, monkeypatch)
-    controller.strategy.session_timing_guard_enabled = True
-    controller.strategy.cancel_buy_before_close_minutes = 5
-    cycle = _buy_cycle(controller, broker)
-    cycle.session_timing_guard_enabled = True
-    cycle.cancel_buy_before_close_minutes = 5
-    controller.active_cycle = cycle
-    controller.storage.upsert_cycle(cycle)
-    controller._session_minutes_from_rth_status = lambda: {
-        "available": True,
-        "minutes_since_open": 60.0,
-        "minutes_to_close": 2.0,
-        "session_close_display": "21:00 UTC",
-        "local_time": "test",
-        "source": "test",
-        "message": "test",
-    }
-    state = _partial(broker, cycle)
-
-    controller._handle_buy_order_poll(cycle, state)
-
-    assert controller.active_cycle.buy_remainder_cancel_requested is True
-    assert broker.cancelled_orders == [cycle.buy_order_ref]
-    events = controller.storage.cycle_audit_details(cycle.id)["decision_events"]
-    requested = next(
-        row
-        for row in events
-        if row["event_type"] == "BUY_REMAINDER_CANCEL_REQUESTED"
-    )
-    assert _decision_raw(requested)["partial_fill_policy"]["code"] == "session_close"
-
-
-def test_stale_market_data_cancels_partial_remainder_before_timeout(
-    tmp_path,
-    monkeypatch,
-) -> None:
-    controller, broker = _controller(tmp_path, monkeypatch)
-    cycle = _buy_cycle(controller, broker)
-    cycle.stale_data_guard_enabled = True
-    cycle.max_selected_price_age_seconds = 1.0
-    cycle.max_bid_ask_age_seconds = 1.0
-    controller.active_cycle = cycle
-    controller.storage.upsert_cycle(cycle)
-    controller._api_last_data_monotonic = time.monotonic() - 5.0
-    # The guard now validates each actionable field independently; an old
-    # unrelated global event clock does not invalidate a freshly stamped quote.
-    stale_at = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=5)).isoformat()
-    controller.price_snapshot["field_update_received_at"].update({
-        "bid": stale_at,
-        "ask": stale_at,
-        "last": dt.datetime.now(dt.timezone.utc).isoformat(),
-    })
-    controller.price_snapshot["field_update_age_seconds"].update(bid=5.0, ask=5.0, last=0.0)
-    assert controller.price_snapshot["selected_price_basis_fields"] == ["last"]
-    assert controller._snapshot_field_age_now(controller.price_snapshot, "last") < 1.0
-    state = _partial(broker, cycle)
-
-    controller._handle_buy_order_poll(cycle, state)
-
-    assert controller.active_cycle.buy_remainder_cancel_requested is True
-    assert broker.cancelled_orders == [cycle.buy_order_ref]
-    events = controller.storage.cycle_audit_details(cycle.id)["decision_events"]
-    requested = next(
-        row
-        for row in events
-        if row["event_type"] == "BUY_REMAINDER_CANCEL_REQUESTED"
-    )
-    assert _decision_raw(requested)["partial_fill_policy"]["code"] == "stale_data"
-
-
-def test_live_data_downgrade_cancels_partial_remainder_before_timeout(
-    tmp_path,
-    monkeypatch,
-) -> None:
-    controller, broker = _controller(tmp_path, monkeypatch)
-    controller.connection.trading_mode = "live"
-    cycle = _buy_cycle(controller, broker)
-    cycle.block_delayed_data_in_live = True
-    controller.active_cycle = cycle
-    controller.storage.upsert_cycle(cycle)
-    assert controller.price_snapshot is not None
-    controller.price_snapshot["subscription_market_data_type"] = None
-    controller.price_snapshot["selected_market_data_type"] = 3
-    state = _partial(broker, cycle)
-
-    controller._handle_buy_order_poll(cycle, state)
-
-    assert controller.active_cycle.buy_remainder_cancel_requested is True
-    assert broker.cancelled_orders == [cycle.buy_order_ref]
-    events = controller.storage.cycle_audit_details(cycle.id)["decision_events"]
-    requested = next(
-        row
-        for row in events
-        if row["event_type"] == "BUY_REMAINDER_CANCEL_REQUESTED"
-    )
-    assert _decision_raw(requested)["partial_fill_policy"]["code"] == "non_live_data"
-
-
-def test_volatility_guard_cancels_partial_remainder_before_timeout(
-    tmp_path,
-    monkeypatch,
-) -> None:
-    controller, broker = _controller(tmp_path, monkeypatch)
-    cycle = _buy_cycle(controller, broker)
-    cycle.volatility_filter_enabled = True
-    cycle.volatility_window_seconds = 300
-    cycle.max_recent_price_move_pct = 1.0
-    controller.active_cycle = cycle
-    controller.storage.upsert_cycle(cycle)
-    now = time.monotonic()
-    controller._price_history.clear()
-    controller._price_history.extend(
-        [(now - 2.0, 100.0), (now - 1.0, 102.0), (now, 101.0)]
-    )
-    state = _partial(broker, cycle)
-
-    controller._handle_buy_order_poll(cycle, state)
-
-    assert controller.active_cycle.buy_remainder_cancel_requested is True
-    assert broker.cancelled_orders == [cycle.buy_order_ref]
-    events = controller.storage.cycle_audit_details(cycle.id)["decision_events"]
-    requested = next(
-        row
-        for row in events
-        if row["event_type"] == "BUY_REMAINDER_CANCEL_REQUESTED"
-    )
-    assert _decision_raw(requested)["partial_fill_policy"]["code"] == "volatility"
-
-
-def test_excessive_spread_cancels_partial_remainder_before_timeout(
-    tmp_path,
-    monkeypatch,
-) -> None:
-    controller, broker = _controller(tmp_path, monkeypatch)
-    cycle = _buy_cycle(controller, broker)
-    cycle.hard_risk_limits_enabled = True
-    cycle.max_spread_pct = 0.5
-    controller.active_cycle = cycle
-    controller.storage.upsert_cycle(cycle)
-    publish_fresh_price(controller, broker, 100.0)
-    assert controller.price_snapshot is not None
-    controller.price_snapshot["fields"]["bid"] = 99.0
-    controller.price_snapshot["fields"]["ask"] = 101.0
-    state = _partial(broker, cycle)
-
-    controller._handle_buy_order_poll(cycle, state)
-
-    assert controller.active_cycle.buy_remainder_cancel_requested is True
-    assert broker.cancelled_orders == [cycle.buy_order_ref]
-    events = controller.storage.cycle_audit_details(cycle.id)["decision_events"]
-    requested = next(
-        row
-        for row in events
-        if row["event_type"] == "BUY_REMAINDER_CANCEL_REQUESTED"
-    )
-    assert _decision_raw(requested)["partial_fill_policy"]["code"] == "spread"
-
-
-def test_unverifiable_spread_cancels_partial_remainder_before_timeout(
-    tmp_path,
-    monkeypatch,
-) -> None:
-    controller, broker = _controller(tmp_path, monkeypatch)
-    cycle = _buy_cycle(controller, broker)
-    cycle.hard_risk_limits_enabled = True
-    cycle.max_spread_pct = 0.5
-    controller.active_cycle = cycle
-    controller.storage.upsert_cycle(cycle)
-    assert controller.price_snapshot is not None
-    controller.price_snapshot["fields"]["bid"] = None
-    state = _partial(broker, cycle)
-
-    controller._handle_buy_order_poll(cycle, state)
-
-    assert controller.active_cycle.buy_remainder_cancel_requested is True
-    assert broker.cancelled_orders == [cycle.buy_order_ref]
-    events = controller.storage.cycle_audit_details(cycle.id)["decision_events"]
-    requested = next(
-        row
-        for row in events
-        if row["event_type"] == "BUY_REMAINDER_CANCEL_REQUESTED"
-    )
-    decision = _decision_raw(requested)["partial_fill_policy"]
-    assert decision["code"] == "spread"
-    assert "complete positive non-crossed bid/ask pair is required" in decision["detail"]
-
-
-def test_minimum_trade_price_cancels_partial_remainder_before_timeout(
-    tmp_path,
-    monkeypatch,
-) -> None:
-    controller, broker = _controller(tmp_path, monkeypatch)
-    cycle = _buy_cycle(controller, broker)
-    cycle.hard_risk_limits_enabled = True
-    cycle.min_trade_price = 101.0
-    controller.active_cycle = cycle
-    controller.storage.upsert_cycle(cycle)
-    state = _partial(broker, cycle)
-
-    controller._handle_buy_order_poll(cycle, state)
-
-    assert controller.active_cycle.buy_remainder_cancel_requested is True
-    assert broker.cancelled_orders == [cycle.buy_order_ref]
-    events = controller.storage.cycle_audit_details(cycle.id)["decision_events"]
-    requested = next(
-        row
-        for row in events
-        if row["event_type"] == "BUY_REMAINDER_CANCEL_REQUESTED"
-    )
-    assert (
-        _decision_raw(requested)["partial_fill_policy"]["code"]
-        == "min_trade_price"
-    )
-
-
-def test_gap_limit_cancels_partial_remainder_before_timeout(
-    tmp_path,
-    monkeypatch,
-) -> None:
-    controller, broker = _controller(tmp_path, monkeypatch)
-    cycle = _buy_cycle(controller, broker)
-    cycle.hard_risk_limits_enabled = True
-    cycle.max_gap_from_prev_close_pct = 1.0
-    controller.active_cycle = cycle
-    controller.storage.upsert_cycle(cycle)
-    assert controller.price_snapshot is not None
-    controller.price_snapshot["fields"]["close"] = 95.0
-    controller.price_snapshot["fields"]["marketPrice"] = 100.0
-    state = _partial(broker, cycle)
-
-    controller._handle_buy_order_poll(cycle, state)
-
-    assert controller.active_cycle.buy_remainder_cancel_requested is True
-    assert broker.cancelled_orders == [cycle.buy_order_ref]
-    events = controller.storage.cycle_audit_details(cycle.id)["decision_events"]
-    requested = next(
-        row
-        for row in events
-        if row["event_type"] == "BUY_REMAINDER_CANCEL_REQUESTED"
-    )
-    assert _decision_raw(requested)["partial_fill_policy"]["code"] == "gap"
+    assert {row["execution_id"] for row in rows} == {"PART-4", "PART-AFTER-CANCEL"}
 
 
 def test_existing_cancel_request_is_not_duplicated(tmp_path, monkeypatch) -> None:
@@ -564,74 +298,30 @@ def test_existing_cancel_request_is_not_duplicated(tmp_path, monkeypatch) -> Non
     cycle = _buy_cycle(controller, broker)
     state = _partial(broker, cycle)
     controller._handle_buy_order_poll(cycle, state)
-    _expire_grace(controller)
+    _request_preclose_cancel(controller)
     controller._handle_buy_order_poll(controller.active_cycle, state)
-    assert broker.cancelled_orders == [cycle.buy_order_ref]
-
-    controller._handle_buy_order_poll(controller.active_cycle, state)
-
+    _request_preclose_cancel(controller)
     assert broker.cancelled_orders == [cycle.buy_order_ref]
 
 
-
-def test_persisted_first_fill_time_survives_reload_and_expires(tmp_path, monkeypatch) -> None:
+def test_persisted_partial_fill_stays_working_after_reload(tmp_path, monkeypatch) -> None:
     controller, broker = _controller(tmp_path, monkeypatch)
     cycle = _buy_cycle(controller, broker)
     state = _partial(broker, cycle)
     controller._handle_buy_order_poll(cycle, state)
-    _expire_grace(controller)
-
+    _age_first_fill(controller)
     reloaded = controller.storage.get_cycle(cycle.id)
     assert reloaded is not None
     controller.active_cycle = reloaded
     controller._handle_buy_order_poll(reloaded, state)
-
-    assert controller.active_cycle.buy_remainder_cancel_requested is True
-    assert broker.cancelled_orders == [cycle.buy_order_ref]
+    _assert_waiting(controller, broker)
 
 
-def test_unavailable_session_boundaries_cancel_before_timeout(tmp_path, monkeypatch) -> None:
-    controller, broker = _controller(tmp_path, monkeypatch)
-    cycle = _buy_cycle(controller, broker)
-    cycle.session_timing_guard_enabled = True
-    cycle.cancel_buy_before_close_minutes = 5
-    controller.active_cycle = cycle
-    controller.storage.upsert_cycle(cycle)
-    controller._session_minutes_from_rth_status = lambda: {
-        "available": False,
-        "minutes_since_open": None,
-        "minutes_to_close": None,
-        "message": "contract session boundaries unavailable",
-    }
-    state = _partial(broker, cycle)
-
-    controller._handle_buy_order_poll(cycle, state)
-
-    assert controller.active_cycle.buy_remainder_cancel_requested is True
-    assert broker.cancelled_orders == [cycle.buy_order_ref]
-    events = controller.storage.cycle_audit_details(cycle.id)["decision_events"]
-    requested = next(
-        row
-        for row in events
-        if row["event_type"] == "BUY_REMAINDER_CANCEL_REQUESTED"
-    )
-    assert (
-        _decision_raw(requested)["partial_fill_policy"]["code"]
-        == "session_timing_unavailable"
-    )
-
-
-
-def test_failed_remainder_cancel_is_retried_on_a_later_poll(
-    tmp_path,
-    monkeypatch,
-) -> None:
+def test_failed_configured_cancel_is_retried_without_losing_fills(tmp_path, monkeypatch) -> None:
     controller, broker = _controller(tmp_path, monkeypatch)
     cycle = _buy_cycle(controller, broker)
     state = _partial(broker, cycle)
     controller._handle_buy_order_poll(cycle, state)
-    _expire_grace(controller)
-
     original_cancel = broker.cancel_order
     attempts = 0
 
@@ -643,117 +333,58 @@ def test_failed_remainder_cancel_is_retried_on_a_later_poll(
         original_cancel(order_ref, order_id)
 
     monkeypatch.setattr(broker, "cancel_order", fail_once)
-
-    controller._handle_buy_order_poll(controller.active_cycle, state)
-
+    _request_preclose_cancel(controller)
     assert attempts == 1
     assert controller.active_cycle.buy_remainder_cancel_requested is False
+    assert controller.active_cycle.buy_filled_qty == 4
     assert broker.cancelled_orders == []
-    first_events = controller.storage.cycle_audit_details(cycle.id)["decision_events"]
-    assert not any(
-        row["event_type"] == "BUY_REMAINDER_CANCEL_REQUESTED"
-        for row in first_events
-    )
-
-    controller._handle_buy_order_poll(controller.active_cycle, state)
-
+    _request_preclose_cancel(controller)
     assert attempts == 2
     assert controller.active_cycle.buy_remainder_cancel_requested is True
     assert broker.cancelled_orders == [cycle.buy_order_ref]
-    final_events = controller.storage.cycle_audit_details(cycle.id)["decision_events"]
-    assert sum(
-        row["event_type"] == "BUY_REMAINDER_CANCEL_REQUESTED"
-        for row in final_events
-    ) == 1
 
 
-def test_pending_cancel_status_does_not_send_a_duplicate_request(
-    tmp_path,
-    monkeypatch,
-) -> None:
+def test_pending_cancel_status_does_not_send_duplicate_request(tmp_path, monkeypatch) -> None:
     controller, broker = _controller(tmp_path, monkeypatch)
     cycle = _buy_cycle(controller, broker)
     state = _partial(broker, cycle)
-    controller._handle_buy_order_poll(cycle, state)
-    _expire_grace(controller)
     pending = PolledOrderState(
-        order_ref=state.order_ref,
-        order_id=state.order_id,
-        perm_id=state.perm_id,
-        status="PendingCancel",
-        filled=state.filled,
-        remaining=state.remaining,
-        avg_fill_price=state.avg_fill_price,
-        commission=state.commission,
-        executions=list(state.executions),
-        raw={**dict(state.raw or {}), "status": "PendingCancel"},
+        order_ref=state.order_ref, order_id=state.order_id, perm_id=state.perm_id,
+        status="PendingCancel", filled=state.filled, remaining=state.remaining,
+        avg_fill_price=state.avg_fill_price, commission=state.commission,
+        executions=list(state.executions), raw={"status": "PendingCancel"},
     )
-
-    controller._handle_buy_order_poll(controller.active_cycle, pending)
-
+    controller._handle_buy_order_poll(cycle, pending)
     assert broker.cancelled_orders == []
     assert controller.active_cycle.buy_status == "PendingCancel"
+    events = controller.storage.cycle_audit_details(cycle.id)["decision_events"]
+    event = next(row for row in events if row["event_type"] == "BUY_PARTIAL_FILL")
+    assert _decision_raw(event)["partial_fill_policy"]["cancel_pending"] is True
+    assert "existing BUY cancellation" in event["message"]
 
 
-def test_missing_first_fill_timestamp_starts_a_fresh_bounded_grace(
-    tmp_path,
-    monkeypatch,
-) -> None:
+@pytest.mark.parametrize("first_fill_at", [None, "invalid", "2099-01-01T00:00:00+00:00"])
+def test_missing_or_future_timestamp_does_not_cancel_partial_buy(tmp_path, monkeypatch, first_fill_at) -> None:
     controller, broker = _controller(tmp_path, monkeypatch)
     cycle = _buy_cycle(controller, broker)
     state = _partial(broker, cycle)
+    cycle.buy_filled_at = first_fill_at
     controller._handle_buy_order_poll(cycle, state)
-    controller.active_cycle.buy_filled_at = None
-    controller.storage.upsert_cycle(controller.active_cycle)
-
-    controller._handle_buy_order_poll(controller.active_cycle, state)
-
-    active = controller.active_cycle
-    assert active is not None
-    assert active.buy_remainder_cancel_requested is False
-    assert broker.cancelled_orders == []
-    assert dt.datetime.fromisoformat(str(active.buy_filled_at)).tzinfo is not None
+    _assert_waiting(controller, broker)
 
 
-def test_terminal_partial_before_timeout_settles_without_extra_cancel(
-    tmp_path,
-    monkeypatch,
-) -> None:
+@pytest.mark.parametrize("status", ["Cancelled", "ApiCancelled", "Inactive", "Rejected"])
+def test_terminal_partial_settles_actual_quantity_without_extra_cancel(tmp_path, monkeypatch, status) -> None:
     controller, broker = _controller(tmp_path, monkeypatch)
     cycle = _buy_cycle(controller, broker)
     terminal = PolledOrderState(
-        order_ref=str(cycle.buy_order_ref),
-        order_id=cycle.buy_order_id,
-        perm_id=cycle.buy_perm_id,
-        status="Cancelled",
-        filled=4,
-        remaining=6,
-        avg_fill_price=100.0,
-        commission=0.10,
-        executions=[],
-        raw={"reason": "exchange cancelled remainder"},
+        order_ref=str(cycle.buy_order_ref), order_id=cycle.buy_order_id,
+        perm_id=cycle.buy_perm_id, status=status, filled=4, remaining=6,
+        avg_fill_price=100.0, commission=0.10, executions=[],
+        raw={"reason": "broker cancelled remainder"},
     )
-
     controller._handle_buy_order_poll(cycle, terminal)
-
-    active = controller.active_cycle
-    assert active is not None
-    assert active.stage == Stage.WAIT_RISE_TRIGGER
-    assert active.buy_filled_qty == 4
-    assert active.buy_remainder_cancel_requested is False
+    assert controller.active_cycle.stage == Stage.WAIT_RISE_TRIGGER
+    assert controller.active_cycle.buy_filled_qty == 4
+    assert controller.active_cycle.buy_remainder_cancel_requested is False
     assert broker.cancelled_orders == []
-
-
-def test_future_first_fill_timestamp_starts_a_fresh_bounded_grace(
-    tmp_path,
-    monkeypatch,
-) -> None:
-    controller, broker = _controller(tmp_path, monkeypatch)
-    cycle = _buy_cycle(controller, broker)
-    now = dt.datetime.now(dt.timezone.utc)
-    cycle.buy_filled_at = (now + dt.timedelta(hours=1)).isoformat()
-
-    elapsed = controller._buy_partial_fill_elapsed_seconds(cycle, now_utc=now)
-
-    assert elapsed == 0.0
-    assert dt.datetime.fromisoformat(str(cycle.buy_filled_at)) == now

@@ -1,6 +1,6 @@
 # v5.6.0 targeted GUI corrections
 
-Version 5.6.0 addresses the fifteen findings documented in the [5.5.1 GUI review](GUI_REVIEW_5_5_1.md). It also updates the six support addresses in **About > Info > Thank me** and the root README. The review remains available as the record of the original defects; the corrections below describe the new behavior.
+Version 5.6.0 addresses the fifteen findings documented in the [5.5.1 GUI review](../GUI_REVIEW_5_5_1.md). It also updates the six support addresses in **About > Info > Thank me** and the root README. The review remains available as the record of the original defects; the corrections below describe the new behavior.
 
 ## Changes by review finding
 
@@ -40,12 +40,12 @@ Completed-history refresh reuses the existing summary metadata query and an in-m
 2. Use `IBKR_Trading_Bot_5.6.0_Source.zip`, or apply `IBKR_Trading_Bot_5.6.0_Release_files.zip` to the exact 5.5.1 baseline named in that archive.
 3. Keep standard GIL-enabled CPython 3.14.x and the unchanged project requirements. Run `run_all_tests.bat` in the supported Windows environment.
 4. Rebuild packaged executables from the updated source. Copying Python files into an old executable's directory does not update that executable.
-5. Check the affected GUI workflows using the [manual test plan](TEST_PLAN.md#targeted-gui-corrections-in-560), including native Windows scaling and both themes.
+5. Check the affected GUI workflows using the [manual test plan](../TEST_PLAN.md#targeted-gui-corrections-in-560), including native Windows scaling and both themes.
 
 ## Verification boundaries
 
-The release adds deterministic regression cases for the reported GUI paths and retains the surrounding strategy, order, storage and recovery tests. Exact test counts and results belong in the root [implementation and test report](../IMPLEMENTATION_TEST_REPORT.txt); this note does not treat planned checks as completed checks.
+The release adds deterministic regression cases for the reported GUI paths and retains the surrounding strategy, order, storage and recovery tests. Exact test counts and results belong in the archived [5.6.0 implementation and test report](V5_6_0_IMPLEMENTATION_TEST_REPORT.txt); this note does not treat planned checks as completed checks.
 
-This host provides CPython 3.12.14 and headless Qt doubles. The renewed CPython 3.14 download and exact-requirements installation attempts were blocked by HTTP 403. Headless checks and the limited function-test fallback do not establish an actual pytest/coverage run, native Qt rendering, Python 3.14 compatibility, Ruff/Pyright completion, Windows executable packaging or live-broker verification. These remain separate target-platform gates unless the root report explicitly records their completion.
+This host provides CPython 3.12.14 and headless Qt doubles. The renewed CPython 3.14 download and exact-requirements installation attempts were blocked by HTTP 403. Headless checks and the limited function-test fallback do not establish an actual pytest/coverage run, native Qt rendering, Python 3.14 compatibility, Ruff/Pyright completion, Windows executable packaging or live-broker verification. These remain separate target-platform gates unless the archived 5.6.0 report explicitly records their completion.
 
-The [5.5.1 history release note](legacy/V5_5_1_HISTORY_SUMMARY.md) and [5.5.1 implementation report](legacy/V5_5_1_IMPLEMENTATION_TEST_REPORT.txt) are retained as historical records.
+The [5.5.1 history release note](V5_5_1_HISTORY_SUMMARY.md) and [5.5.1 implementation report](V5_5_1_IMPLEMENTATION_TEST_REPORT.txt) are retained as historical records.

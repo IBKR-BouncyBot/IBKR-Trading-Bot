@@ -1,0 +1,2742 @@
+{
+  "schema_version": 1,
+  "purpose": "Sanitized broker object shapes from six supplied audit bundles; controlled variants are named in the replay test. These archives do not exhaust all possible IBKR behavior.",
+  "sanitization": "Account, symbol, conId, orderRef, orderId, permId, clientId and executionId replaced consistently. Prices, quantities, fees, timestamps, missing fields and status shapes preserved. No raw repr strings or original cycle IDs included.",
+  "archives": [
+    {
+      "id": "archive-01",
+      "filename": "ibkr_bot_audit_bundle_20261004T071431409646Z.zip",
+      "sha256": "0ea4ff941f5bdf0d4919cca2f8f8334374b8609229080f57b82c7e170d5055bc"
+    },
+    {
+      "id": "archive-02",
+      "filename": "ibkr_bot_audit_bundle_20261005T122252937500Z.zip",
+      "sha256": "0fc72f6fec4aa87c35e0cd3f306c421dcb6d9ec695f252c237a217e563a02fc6"
+    },
+    {
+      "id": "archive-03",
+      "filename": "ibkr_bot_audit_bundle_20261008T164111880704Z.zip",
+      "sha256": "b834d4085347296bda7cc3f377d66aa56976737ecdbbe627060eff717798b866"
+    },
+    {
+      "id": "archive-04",
+      "filename": "ibkr_bot_audit_bundle_20261005T122711747797Z.zip",
+      "sha256": "d9a13e79268714b657125b3b33650bdf16a6e98a05dff2b8aaf03dfed587a04c"
+    },
+    {
+      "id": "archive-05",
+      "filename": "ibkr_bot_audit_bundle_20261004T071253122753Z.zip",
+      "sha256": "9a9a2be07c408819d71f09dc20dbf3be6a78f174d6a2354cf3cb1a3479219510"
+    },
+    {
+      "id": "archive-06",
+      "filename": "ibkr_bot_audit_bundle_20261004T071052872977Z.zip",
+      "sha256": "fd546e80023bc38cdd111f6d0d74ed800c45da281d03975fd9f27d6372146d52"
+    }
+  ],
+  "cases": [
+    {
+      "id": "case-01-buy",
+      "archive": "archive-01",
+      "source": "sqlite_exports/broker_events.json",
+      "event_type": "COMMISSION_REPORT",
+      "source_row": 1007,
+      "quantity": 702,
+      "kind": "observed_complete",
+      "trade": {
+        "contract": {
+          "currency": "USD",
+          "exchange": "SMART",
+          "conId": 123,
+          "symbol": "AAPL",
+          "secType": "STK"
+        },
+        "order": {
+          "action": "BUY",
+          "filledQuantity": 702.0,
+          "orderType": "TRAIL",
+          "tif": "GTC",
+          "trailingPercent": 0.94,
+          "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-001|BUY_TRAIL",
+          "account": "SIM",
+          "permId": 900001,
+          "clientId": 7,
+          "orderId": 0
+        },
+        "orderStatus": {
+          "status": "Filled",
+          "filled": 0.0,
+          "remaining": 0.0,
+          "avgFillPrice": 0.0,
+          "lastFillPrice": 0.0,
+          "orderId": 0,
+          "permId": 0,
+          "clientId": 7
+        },
+        "fills": [
+          {
+            "contract": {
+              "currency": "USD",
+              "exchange": "SMART",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "BOT",
+              "shares": 402.0,
+              "price": 14.155,
+              "avgPrice": 14.155,
+              "cumQty": 402.0,
+              "time": "2026-09-21T14:06:37+00:00",
+              "exchange": "IBKRATS",
+              "execId": "SIM-EXEC-001-01",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-001|BUY_TRAIL",
+              "permId": 900001,
+              "clientId": 7,
+              "orderId": 10001
+            },
+            "commissionReport": {
+              "commission": 1.48964,
+              "currency": "USD",
+              "realizedPNL": 0.0,
+              "execId": "SIM-EXEC-001-01"
+            },
+            "time": "2026-09-21T14:06:37+00:00"
+          },
+          {
+            "contract": {
+              "currency": "USD",
+              "exchange": "SMART",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "BOT",
+              "shares": 300.0,
+              "price": 14.155,
+              "avgPrice": 14.155,
+              "cumQty": 702.0,
+              "time": "2026-09-21T14:06:37+00:00",
+              "exchange": "IBKRATS",
+              "execId": "SIM-EXEC-001-02",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-001|BUY_TRAIL",
+              "permId": 900001,
+              "clientId": 7,
+              "orderId": 10001
+            },
+            "commissionReport": {
+              "commission": 1.111672,
+              "currency": "USD",
+              "realizedPNL": 0.0,
+              "execId": "SIM-EXEC-001-02"
+            },
+            "time": "2026-09-21T14:06:37+00:00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "case-02-sell",
+      "archive": "archive-01",
+      "source": "sqlite_exports/broker_events.json",
+      "event_type": "COMMISSION_REPORT",
+      "source_row": 876,
+      "quantity": 793,
+      "kind": "observed_complete",
+      "trade": {
+        "contract": {
+          "currency": "USD",
+          "exchange": "SMART",
+          "conId": 123,
+          "symbol": "AAPL",
+          "secType": "STK"
+        },
+        "order": {
+          "action": "SELL",
+          "totalQuantity": 793.0,
+          "orderType": "TRAIL",
+          "tif": "GTC",
+          "trailingPercent": 1.03,
+          "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-002|SELL_TRAIL",
+          "account": "SIM",
+          "permId": 900002,
+          "clientId": 7,
+          "orderId": 10002
+        },
+        "orderStatus": {
+          "status": "Filled",
+          "filled": 793.0,
+          "remaining": 0.0,
+          "avgFillPrice": 13.691501,
+          "lastFillPrice": 13.68,
+          "orderId": 10002,
+          "permId": 900002,
+          "clientId": 7
+        },
+        "fills": [
+          {
+            "contract": {
+              "currency": "USD",
+              "exchange": "SMART",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "SLD",
+              "shares": 4.0,
+              "price": 13.71,
+              "avgPrice": 13.71,
+              "cumQty": 4.0,
+              "time": "2026-09-18T11:30:01+00:00",
+              "exchange": "NASDAQ",
+              "execId": "SIM-EXEC-002-01",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-002|SELL_TRAIL",
+              "permId": 900002,
+              "clientId": 7,
+              "orderId": 10002
+            },
+            "commissionReport": {
+              "commission": 0.364979,
+              "currency": "USD",
+              "realizedPNL": 4.200199,
+              "execId": "SIM-EXEC-002-01"
+            },
+            "time": "2026-09-18T13:30:03.520021+00:00"
+          },
+          {
+            "contract": {
+              "currency": "USD",
+              "exchange": "SMART",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "SLD",
+              "shares": 300.0,
+              "price": 13.69,
+              "avgPrice": 13.690263,
+              "cumQty": 304.0,
+              "time": "2026-09-18T11:30:02+00:00",
+              "exchange": "BATS",
+              "execId": "SIM-EXEC-002-02",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-002|SELL_TRAIL",
+              "permId": 900002,
+              "clientId": 7,
+              "orderId": 10002
+            },
+            "commissionReport": {
+              "commission": 1.818529,
+              "currency": "USD",
+              "realizedPNL": 334.569806,
+              "execId": "SIM-EXEC-002-02"
+            },
+            "time": "2026-09-18T13:30:03.825820+00:00"
+          },
+          {
+            "contract": {
+              "currency": "USD",
+              "exchange": "SMART",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "SLD",
+              "shares": 300.0,
+              "price": 13.7,
+              "avgPrice": 13.695099,
+              "cumQty": 604.0,
+              "time": "2026-09-18T11:30:02+00:00",
+              "exchange": "ARCA",
+              "execId": "SIM-EXEC-002-03",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-002|SELL_TRAIL",
+              "permId": 900002,
+              "clientId": 7,
+              "orderId": 10002
+            },
+            "commissionReport": {
+              "commission": 2.154838,
+              "currency": "USD",
+              "realizedPNL": 337.233498,
+              "execId": "SIM-EXEC-002-03"
+            },
+            "time": "2026-09-18T13:30:04.110228+00:00"
+          },
+          {
+            "contract": {
+              "currency": "USD",
+              "exchange": "SMART",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "SLD",
+              "shares": 189.0,
+              "price": 13.68,
+              "avgPrice": 13.691501,
+              "cumQty": 793.0,
+              "time": "2026-09-18T11:30:03+00:00",
+              "exchange": "IBKRATS",
+              "execId": "SIM-EXEC-002-04",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-002|SELL_TRAIL",
+              "permId": 900002,
+              "clientId": 7,
+              "orderId": 10002
+            },
+            "commissionReport": {
+              "commission": 0.79047,
+              "currency": "USD",
+              "realizedPNL": 209.244181,
+              "execId": "SIM-EXEC-002-04"
+            },
+            "time": "2026-09-18T13:30:05.189081+00:00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "case-03-observed_working",
+      "archive": "archive-01",
+      "source": "sqlite_exports/broker_events.json",
+      "event_type": "OPEN_ORDER",
+      "source_row": 772,
+      "quantity": 731,
+      "kind": "observed_working",
+      "trade": {
+        "contract": {
+          "currency": "USD",
+          "exchange": "SMART",
+          "primaryExchange": "NASDAQ",
+          "conId": 123,
+          "symbol": "AAPL",
+          "secType": "STK"
+        },
+        "order": {
+          "action": "BUY",
+          "totalQuantity": 731.0,
+          "orderType": "TRAIL",
+          "tif": "GTC",
+          "trailingPercent": 0.53,
+          "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-003|BUY_TRAIL",
+          "account": "SIM",
+          "permId": 900003,
+          "clientId": 7,
+          "orderId": 10003
+        },
+        "orderStatus": {
+          "status": "Submitted",
+          "filled": 631.0,
+          "remaining": 100.0,
+          "avgFillPrice": 13.384097,
+          "lastFillPrice": 13.38,
+          "orderId": 10003,
+          "permId": 900003,
+          "clientId": 7
+        },
+        "fills": [
+          {
+            "contract": {
+              "currency": "USD",
+              "exchange": "SMART",
+              "primaryExchange": "NASDAQ",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "BOT",
+              "shares": 117.0,
+              "price": 13.385,
+              "avgPrice": 13.385,
+              "cumQty": 117.0,
+              "time": "2026-09-18T12:08:28+00:00",
+              "exchange": "IBKRATS",
+              "execId": "SIM-EXEC-003-01",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-003|BUY_TRAIL",
+              "permId": 900003,
+              "clientId": 7,
+              "orderId": 10003
+            },
+            "commissionReport": {
+              "commission": 0.0,
+              "currency": "",
+              "realizedPNL": 0.0,
+              "execId": "SIM-EXEC-003-01"
+            },
+            "time": "2026-09-18T14:08:30.355977+00:00"
+          },
+          {
+            "contract": {
+              "currency": "USD",
+              "exchange": "SMART",
+              "primaryExchange": "NASDAQ",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "BOT",
+              "shares": 400.0,
+              "price": 13.385,
+              "avgPrice": 13.385,
+              "cumQty": 517.0,
+              "time": "2026-09-18T12:08:28+00:00",
+              "exchange": "IBKRATS",
+              "execId": "SIM-EXEC-003-02",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-003|BUY_TRAIL",
+              "permId": 900003,
+              "clientId": 7,
+              "orderId": 10003
+            },
+            "commissionReport": {
+              "commission": 0.0,
+              "currency": "",
+              "realizedPNL": 0.0,
+              "execId": "SIM-EXEC-003-02"
+            },
+            "time": "2026-09-18T14:08:30.355977+00:00"
+          },
+          {
+            "contract": {
+              "currency": "USD",
+              "exchange": "SMART",
+              "primaryExchange": "NASDAQ",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "BOT",
+              "shares": 100.0,
+              "price": 13.38,
+              "avgPrice": 13.38419,
+              "cumQty": 617.0,
+              "time": "2026-09-18T12:08:28+00:00",
+              "exchange": "IBKRATS",
+              "execId": "SIM-EXEC-003-03",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-003|BUY_TRAIL",
+              "permId": 900003,
+              "clientId": 7,
+              "orderId": 10003
+            },
+            "commissionReport": {
+              "commission": 0.0,
+              "currency": "",
+              "realizedPNL": 0.0,
+              "execId": "SIM-EXEC-003-03"
+            },
+            "time": "2026-09-18T14:08:30.355977+00:00"
+          },
+          {
+            "contract": {
+              "currency": "USD",
+              "exchange": "SMART",
+              "primaryExchange": "NASDAQ",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "BOT",
+              "shares": 14.0,
+              "price": 13.38,
+              "avgPrice": 13.384097,
+              "cumQty": 631.0,
+              "time": "2026-09-18T12:08:28+00:00",
+              "exchange": "DARK",
+              "execId": "SIM-EXEC-003-04",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-003|BUY_TRAIL",
+              "permId": 900003,
+              "clientId": 7,
+              "orderId": 10003
+            },
+            "commissionReport": {
+              "commission": 0.0,
+              "currency": "",
+              "realizedPNL": 0.0,
+              "execId": "SIM-EXEC-003-04"
+            },
+            "time": "2026-09-18T14:08:30.355977+00:00"
+          },
+          {
+            "contract": {
+              "currency": "USD",
+              "exchange": "SMART",
+              "primaryExchange": "NASDAQ",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "BOT",
+              "shares": 100.0,
+              "price": 13.375,
+              "avgPrice": 13.382852,
+              "cumQty": 731.0,
+              "time": "2026-09-18T12:08:28+00:00",
+              "exchange": "IBKRATS",
+              "execId": "SIM-EXEC-003-05",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-003|BUY_TRAIL",
+              "permId": 900003,
+              "clientId": 7,
+              "orderId": 10003
+            },
+            "commissionReport": {
+              "commission": 0.0,
+              "currency": "",
+              "realizedPNL": 0.0,
+              "execId": "SIM-EXEC-003-05"
+            },
+            "time": "2026-09-18T14:08:30.355977+00:00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "case-04-buy",
+      "archive": "archive-02",
+      "source": "sqlite_exports/broker_events.json",
+      "event_type": "COMMISSION_REPORT",
+      "source_row": 1007,
+      "quantity": 702,
+      "kind": "observed_complete",
+      "trade": {
+        "contract": {
+          "currency": "USD",
+          "exchange": "SMART",
+          "conId": 123,
+          "symbol": "AAPL",
+          "secType": "STK"
+        },
+        "order": {
+          "action": "BUY",
+          "filledQuantity": 702.0,
+          "orderType": "TRAIL",
+          "tif": "GTC",
+          "trailingPercent": 0.94,
+          "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-004|BUY_TRAIL",
+          "account": "SIM",
+          "permId": 900004,
+          "clientId": 7,
+          "orderId": 0
+        },
+        "orderStatus": {
+          "status": "Filled",
+          "filled": 0.0,
+          "remaining": 0.0,
+          "avgFillPrice": 0.0,
+          "lastFillPrice": 0.0,
+          "orderId": 0,
+          "permId": 0,
+          "clientId": 7
+        },
+        "fills": [
+          {
+            "contract": {
+              "currency": "USD",
+              "exchange": "SMART",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "BOT",
+              "shares": 402.0,
+              "price": 14.155,
+              "avgPrice": 14.155,
+              "cumQty": 402.0,
+              "time": "2026-09-21T14:06:37+00:00",
+              "exchange": "IBKRATS",
+              "execId": "SIM-EXEC-004-01",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-004|BUY_TRAIL",
+              "permId": 900004,
+              "clientId": 7,
+              "orderId": 10004
+            },
+            "commissionReport": {
+              "commission": 1.48964,
+              "currency": "USD",
+              "realizedPNL": 0.0,
+              "execId": "SIM-EXEC-004-01"
+            },
+            "time": "2026-09-21T14:06:37+00:00"
+          },
+          {
+            "contract": {
+              "currency": "USD",
+              "exchange": "SMART",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "BOT",
+              "shares": 300.0,
+              "price": 14.155,
+              "avgPrice": 14.155,
+              "cumQty": 702.0,
+              "time": "2026-09-21T14:06:37+00:00",
+              "exchange": "IBKRATS",
+              "execId": "SIM-EXEC-004-02",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-004|BUY_TRAIL",
+              "permId": 900004,
+              "clientId": 7,
+              "orderId": 10004
+            },
+            "commissionReport": {
+              "commission": 1.111672,
+              "currency": "USD",
+              "realizedPNL": 0.0,
+              "execId": "SIM-EXEC-004-02"
+            },
+            "time": "2026-09-21T14:06:37+00:00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "case-05-sell",
+      "archive": "archive-02",
+      "source": "sqlite_exports/broker_events.json",
+      "event_type": "COMMISSION_REPORT",
+      "source_row": 876,
+      "quantity": 793,
+      "kind": "observed_complete",
+      "trade": {
+        "contract": {
+          "currency": "USD",
+          "exchange": "SMART",
+          "conId": 123,
+          "symbol": "AAPL",
+          "secType": "STK"
+        },
+        "order": {
+          "action": "SELL",
+          "totalQuantity": 793.0,
+          "orderType": "TRAIL",
+          "tif": "GTC",
+          "trailingPercent": 1.03,
+          "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-005|SELL_TRAIL",
+          "account": "SIM",
+          "permId": 900005,
+          "clientId": 7,
+          "orderId": 10005
+        },
+        "orderStatus": {
+          "status": "Filled",
+          "filled": 793.0,
+          "remaining": 0.0,
+          "avgFillPrice": 13.691501,
+          "lastFillPrice": 13.68,
+          "orderId": 10005,
+          "permId": 900005,
+          "clientId": 7
+        },
+        "fills": [
+          {
+            "contract": {
+              "currency": "USD",
+              "exchange": "SMART",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "SLD",
+              "shares": 4.0,
+              "price": 13.71,
+              "avgPrice": 13.71,
+              "cumQty": 4.0,
+              "time": "2026-09-18T11:30:01+00:00",
+              "exchange": "NASDAQ",
+              "execId": "SIM-EXEC-005-01",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-005|SELL_TRAIL",
+              "permId": 900005,
+              "clientId": 7,
+              "orderId": 10005
+            },
+            "commissionReport": {
+              "commission": 0.364979,
+              "currency": "USD",
+              "realizedPNL": 4.200199,
+              "execId": "SIM-EXEC-005-01"
+            },
+            "time": "2026-09-18T13:30:03.520021+00:00"
+          },
+          {
+            "contract": {
+              "currency": "USD",
+              "exchange": "SMART",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "SLD",
+              "shares": 300.0,
+              "price": 13.69,
+              "avgPrice": 13.690263,
+              "cumQty": 304.0,
+              "time": "2026-09-18T11:30:02+00:00",
+              "exchange": "BATS",
+              "execId": "SIM-EXEC-005-02",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-005|SELL_TRAIL",
+              "permId": 900005,
+              "clientId": 7,
+              "orderId": 10005
+            },
+            "commissionReport": {
+              "commission": 1.818529,
+              "currency": "USD",
+              "realizedPNL": 334.569806,
+              "execId": "SIM-EXEC-005-02"
+            },
+            "time": "2026-09-18T13:30:03.825820+00:00"
+          },
+          {
+            "contract": {
+              "currency": "USD",
+              "exchange": "SMART",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "SLD",
+              "shares": 300.0,
+              "price": 13.7,
+              "avgPrice": 13.695099,
+              "cumQty": 604.0,
+              "time": "2026-09-18T11:30:02+00:00",
+              "exchange": "ARCA",
+              "execId": "SIM-EXEC-005-03",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-005|SELL_TRAIL",
+              "permId": 900005,
+              "clientId": 7,
+              "orderId": 10005
+            },
+            "commissionReport": {
+              "commission": 2.154838,
+              "currency": "USD",
+              "realizedPNL": 337.233498,
+              "execId": "SIM-EXEC-005-03"
+            },
+            "time": "2026-09-18T13:30:04.110228+00:00"
+          },
+          {
+            "contract": {
+              "currency": "USD",
+              "exchange": "SMART",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "SLD",
+              "shares": 189.0,
+              "price": 13.68,
+              "avgPrice": 13.691501,
+              "cumQty": 793.0,
+              "time": "2026-09-18T11:30:03+00:00",
+              "exchange": "IBKRATS",
+              "execId": "SIM-EXEC-005-04",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-005|SELL_TRAIL",
+              "permId": 900005,
+              "clientId": 7,
+              "orderId": 10005
+            },
+            "commissionReport": {
+              "commission": 0.79047,
+              "currency": "USD",
+              "realizedPNL": 209.244181,
+              "execId": "SIM-EXEC-005-04"
+            },
+            "time": "2026-09-18T13:30:05.189081+00:00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "case-06-observed_working",
+      "archive": "archive-02",
+      "source": "sqlite_exports/broker_events.json",
+      "event_type": "OPEN_ORDER",
+      "source_row": 772,
+      "quantity": 731,
+      "kind": "observed_working",
+      "trade": {
+        "contract": {
+          "currency": "USD",
+          "exchange": "SMART",
+          "primaryExchange": "NASDAQ",
+          "conId": 123,
+          "symbol": "AAPL",
+          "secType": "STK"
+        },
+        "order": {
+          "action": "BUY",
+          "totalQuantity": 731.0,
+          "orderType": "TRAIL",
+          "tif": "GTC",
+          "trailingPercent": 0.53,
+          "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-006|BUY_TRAIL",
+          "account": "SIM",
+          "permId": 900006,
+          "clientId": 7,
+          "orderId": 10006
+        },
+        "orderStatus": {
+          "status": "Submitted",
+          "filled": 631.0,
+          "remaining": 100.0,
+          "avgFillPrice": 13.384097,
+          "lastFillPrice": 13.38,
+          "orderId": 10006,
+          "permId": 900006,
+          "clientId": 7
+        },
+        "fills": [
+          {
+            "contract": {
+              "currency": "USD",
+              "exchange": "SMART",
+              "primaryExchange": "NASDAQ",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "BOT",
+              "shares": 117.0,
+              "price": 13.385,
+              "avgPrice": 13.385,
+              "cumQty": 117.0,
+              "time": "2026-09-18T12:08:28+00:00",
+              "exchange": "IBKRATS",
+              "execId": "SIM-EXEC-006-01",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-006|BUY_TRAIL",
+              "permId": 900006,
+              "clientId": 7,
+              "orderId": 10006
+            },
+            "commissionReport": {
+              "commission": 0.0,
+              "currency": "",
+              "realizedPNL": 0.0,
+              "execId": "SIM-EXEC-006-01"
+            },
+            "time": "2026-09-18T14:08:30.355977+00:00"
+          },
+          {
+            "contract": {
+              "currency": "USD",
+              "exchange": "SMART",
+              "primaryExchange": "NASDAQ",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "BOT",
+              "shares": 400.0,
+              "price": 13.385,
+              "avgPrice": 13.385,
+              "cumQty": 517.0,
+              "time": "2026-09-18T12:08:28+00:00",
+              "exchange": "IBKRATS",
+              "execId": "SIM-EXEC-006-02",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-006|BUY_TRAIL",
+              "permId": 900006,
+              "clientId": 7,
+              "orderId": 10006
+            },
+            "commissionReport": {
+              "commission": 0.0,
+              "currency": "",
+              "realizedPNL": 0.0,
+              "execId": "SIM-EXEC-006-02"
+            },
+            "time": "2026-09-18T14:08:30.355977+00:00"
+          },
+          {
+            "contract": {
+              "currency": "USD",
+              "exchange": "SMART",
+              "primaryExchange": "NASDAQ",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "BOT",
+              "shares": 100.0,
+              "price": 13.38,
+              "avgPrice": 13.38419,
+              "cumQty": 617.0,
+              "time": "2026-09-18T12:08:28+00:00",
+              "exchange": "IBKRATS",
+              "execId": "SIM-EXEC-006-03",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-006|BUY_TRAIL",
+              "permId": 900006,
+              "clientId": 7,
+              "orderId": 10006
+            },
+            "commissionReport": {
+              "commission": 0.0,
+              "currency": "",
+              "realizedPNL": 0.0,
+              "execId": "SIM-EXEC-006-03"
+            },
+            "time": "2026-09-18T14:08:30.355977+00:00"
+          },
+          {
+            "contract": {
+              "currency": "USD",
+              "exchange": "SMART",
+              "primaryExchange": "NASDAQ",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "BOT",
+              "shares": 14.0,
+              "price": 13.38,
+              "avgPrice": 13.384097,
+              "cumQty": 631.0,
+              "time": "2026-09-18T12:08:28+00:00",
+              "exchange": "DARK",
+              "execId": "SIM-EXEC-006-04",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-006|BUY_TRAIL",
+              "permId": 900006,
+              "clientId": 7,
+              "orderId": 10006
+            },
+            "commissionReport": {
+              "commission": 0.0,
+              "currency": "",
+              "realizedPNL": 0.0,
+              "execId": "SIM-EXEC-006-04"
+            },
+            "time": "2026-09-18T14:08:30.355977+00:00"
+          },
+          {
+            "contract": {
+              "currency": "USD",
+              "exchange": "SMART",
+              "primaryExchange": "NASDAQ",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "BOT",
+              "shares": 100.0,
+              "price": 13.375,
+              "avgPrice": 13.382852,
+              "cumQty": 731.0,
+              "time": "2026-09-18T12:08:28+00:00",
+              "exchange": "IBKRATS",
+              "execId": "SIM-EXEC-006-05",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-006|BUY_TRAIL",
+              "permId": 900006,
+              "clientId": 7,
+              "orderId": 10006
+            },
+            "commissionReport": {
+              "commission": 0.0,
+              "currency": "",
+              "realizedPNL": 0.0,
+              "execId": "SIM-EXEC-006-05"
+            },
+            "time": "2026-09-18T14:08:30.355977+00:00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "case-07-buy",
+      "archive": "archive-03",
+      "source": "sqlite_exports/broker_events.json",
+      "event_type": "COMMISSION_REPORT",
+      "source_row": 605,
+      "quantity": 238,
+      "kind": "observed_complete",
+      "trade": {
+        "contract": {
+          "currency": "EUR",
+          "exchange": "SMART",
+          "conId": 123,
+          "symbol": "AAPL",
+          "secType": "STK"
+        },
+        "order": {
+          "action": "BUY",
+          "filledQuantity": 238.0,
+          "orderType": "TRAIL",
+          "tif": "GTC",
+          "trailingPercent": 0.3,
+          "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-007|BUY_TRAIL",
+          "account": "SIM",
+          "permId": 900007,
+          "clientId": 7,
+          "orderId": 0
+        },
+        "orderStatus": {
+          "status": "Filled",
+          "filled": 0.0,
+          "remaining": 0.0,
+          "avgFillPrice": 0.0,
+          "lastFillPrice": 0.0,
+          "orderId": 0,
+          "permId": 0,
+          "clientId": 7
+        },
+        "fills": [
+          {
+            "contract": {
+              "currency": "EUR",
+              "exchange": "SMART",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "BOT",
+              "shares": 238.0,
+              "price": 41.835,
+              "avgPrice": 41.835,
+              "cumQty": 238.0,
+              "time": "2026-09-25T12:50:22+00:00",
+              "exchange": "EUDARK",
+              "execId": "SIM-EXEC-007-01",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-007|BUY_TRAIL",
+              "permId": 900007,
+              "clientId": 7,
+              "orderId": 10007
+            },
+            "commissionReport": {
+              "commission": 4.978365,
+              "currency": "EUR",
+              "realizedPNL": 0.0,
+              "execId": "SIM-EXEC-007-01"
+            },
+            "time": "2026-09-25T12:50:22+00:00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "case-08-sell",
+      "archive": "archive-03",
+      "source": "sqlite_exports/broker_events.json",
+      "event_type": "COMMISSION_REPORT",
+      "source_row": 1135,
+      "quantity": 12,
+      "kind": "observed_complete",
+      "trade": {
+        "contract": {
+          "currency": "EUR",
+          "exchange": "SMART",
+          "conId": 123,
+          "symbol": "AAPL",
+          "secType": "STK"
+        },
+        "order": {
+          "action": "SELL",
+          "filledQuantity": 12.0,
+          "orderType": "TRAIL",
+          "tif": "GTC",
+          "trailingPercent": 0.67,
+          "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-008|SELL_TRAIL",
+          "account": "SIM",
+          "permId": 900008,
+          "clientId": 7,
+          "orderId": 0
+        },
+        "orderStatus": {
+          "status": "Filled",
+          "filled": 0.0,
+          "remaining": 0.0,
+          "avgFillPrice": 0.0,
+          "lastFillPrice": 0.0,
+          "orderId": 0,
+          "permId": 0,
+          "clientId": 7
+        },
+        "fills": [
+          {
+            "contract": {
+              "currency": "EUR",
+              "exchange": "SMART",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "SLD",
+              "shares": 12.0,
+              "price": 729.8,
+              "avgPrice": 729.8,
+              "cumQty": 12.0,
+              "time": "2026-10-08T07:04:24+00:00",
+              "exchange": "ENEXT.BE",
+              "execId": "SIM-EXEC-008-01",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-008|SELL_TRAIL",
+              "permId": 900008,
+              "clientId": 7,
+              "orderId": 10008
+            },
+            "commissionReport": {
+              "commission": 5.380772,
+              "currency": "EUR",
+              "realizedPNL": -1179.143972,
+              "execId": "SIM-EXEC-008-01"
+            },
+            "time": "2026-10-08T07:04:24+00:00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "case-09-sell-market",
+      "archive": "archive-03",
+      "source": "sqlite_exports/broker_events.json",
+      "event_type": "COMMISSION_REPORT",
+      "source_row": 952,
+      "quantity": 232,
+      "kind": "observed_complete",
+      "trade": {
+        "contract": {
+          "currency": "EUR",
+          "exchange": "SMART",
+          "primaryExchange": "AEB",
+          "conId": 123,
+          "symbol": "AAPL",
+          "secType": "STK"
+        },
+        "order": {
+          "action": "SELL",
+          "totalQuantity": 232.0,
+          "orderType": "MKT",
+          "tif": "GTC",
+          "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-009|FORCED_SELL_MARKET",
+          "account": "SIM",
+          "permId": 900009,
+          "clientId": 7,
+          "orderId": 10009
+        },
+        "orderStatus": {
+          "status": "Filled",
+          "filled": 232.0,
+          "remaining": 0.0,
+          "avgFillPrice": 42.36,
+          "lastFillPrice": 42.36,
+          "orderId": 10009,
+          "permId": 900009,
+          "clientId": 7
+        },
+        "fills": [
+          {
+            "contract": {
+              "currency": "EUR",
+              "exchange": "SMART",
+              "primaryExchange": "AEB",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "SLD",
+              "shares": 232.0,
+              "price": 42.36,
+              "avgPrice": 42.36,
+              "cumQty": 232.0,
+              "time": "2026-10-02T12:18:33+00:00",
+              "exchange": "EUDARK",
+              "execId": "SIM-EXEC-009-01",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-009|FORCED_SELL_MARKET",
+              "permId": 900009,
+              "clientId": 7,
+              "orderId": 10009
+            },
+            "commissionReport": {
+              "commission": 4.91376,
+              "currency": "EUR",
+              "realizedPNL": -93.38926,
+              "execId": "SIM-EXEC-009-01"
+            },
+            "time": "2026-10-02T14:18:34.869069+00:00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "case-10-observed_working",
+      "archive": "archive-03",
+      "source": "sqlite_exports/broker_events.json",
+      "event_type": "OPEN_ORDER",
+      "source_row": 242,
+      "quantity": 180,
+      "kind": "observed_working",
+      "trade": {
+        "contract": {
+          "currency": "EUR",
+          "exchange": "SMART",
+          "primaryExchange": "AEB",
+          "conId": 123,
+          "symbol": "AAPL",
+          "secType": "STK"
+        },
+        "order": {
+          "action": "BUY",
+          "totalQuantity": 179.0,
+          "orderType": "TRAIL",
+          "tif": "GTC",
+          "trailingPercent": 0.3,
+          "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-010|BUY_TRAIL",
+          "account": "SIM",
+          "permId": 900010,
+          "clientId": 7,
+          "orderId": 10010
+        },
+        "orderStatus": {
+          "status": "Submitted",
+          "filled": 139.0,
+          "remaining": 40.0,
+          "avgFillPrice": 55.245182,
+          "lastFillPrice": 55.2427,
+          "orderId": 10010,
+          "permId": 900010,
+          "clientId": 7
+        },
+        "fills": [
+          {
+            "contract": {
+              "currency": "EUR",
+              "exchange": "SMART",
+              "primaryExchange": "AEB",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "BOT",
+              "shares": 50.0,
+              "price": 55.2496,
+              "avgPrice": 55.2496,
+              "cumQty": 50.0,
+              "time": "2026-09-18T05:05:36+00:00",
+              "exchange": "TRWBEN",
+              "execId": "SIM-EXEC-010-01",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-010|BUY_TRAIL",
+              "permId": 900010,
+              "clientId": 7,
+              "orderId": 10010
+            },
+            "commissionReport": {
+              "commission": 1.41124,
+              "currency": "EUR",
+              "realizedPNL": 0.0,
+              "execId": "SIM-EXEC-010-01"
+            },
+            "time": "2026-09-18T07:05:37.755196+00:00"
+          },
+          {
+            "contract": {
+              "currency": "EUR",
+              "exchange": "SMART",
+              "primaryExchange": "AEB",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "BOT",
+              "shares": 49.0,
+              "price": 55.2427,
+              "avgPrice": 55.246185,
+              "cumQty": 99.0,
+              "time": "2026-09-18T05:05:36+00:00",
+              "exchange": "TRWBDE",
+              "execId": "SIM-EXEC-010-02",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-010|BUY_TRAIL",
+              "permId": 900010,
+              "clientId": 7,
+              "orderId": 10010
+            },
+            "commissionReport": {
+              "commission": 1.383446,
+              "currency": "EUR",
+              "realizedPNL": 0.0,
+              "execId": "SIM-EXEC-010-02"
+            },
+            "time": "2026-09-18T07:05:37.755196+00:00"
+          },
+          {
+            "contract": {
+              "currency": "EUR",
+              "exchange": "SMART",
+              "primaryExchange": "AEB",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "BOT",
+              "shares": 40.0,
+              "price": 55.2427,
+              "avgPrice": 55.245182,
+              "cumQty": 139.0,
+              "time": "2026-09-18T05:05:37+00:00",
+              "exchange": "TRWBDE",
+              "execId": "SIM-EXEC-010-03",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-010|BUY_TRAIL",
+              "permId": 900010,
+              "clientId": 7,
+              "orderId": 10010
+            },
+            "commissionReport": {
+              "commission": 1.134854,
+              "currency": "EUR",
+              "realizedPNL": 0.0,
+              "execId": "SIM-EXEC-010-03"
+            },
+            "time": "2026-09-18T07:05:38.384170+00:00"
+          },
+          {
+            "contract": {
+              "currency": "EUR",
+              "exchange": "SMART",
+              "primaryExchange": "AEB",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "BOT",
+              "shares": 40.0,
+              "price": 55.2496,
+              "avgPrice": 55.246169,
+              "cumQty": 179.0,
+              "time": "2026-09-18T05:05:37+00:00",
+              "exchange": "TRWBEN",
+              "execId": "SIM-EXEC-010-04",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-010|BUY_TRAIL",
+              "permId": 900010,
+              "clientId": 7,
+              "orderId": 10010
+            },
+            "commissionReport": {
+              "commission": 0.0,
+              "currency": "",
+              "realizedPNL": 0.0,
+              "execId": "SIM-EXEC-010-04"
+            },
+            "time": "2026-09-18T07:05:38.513408+00:00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "case-11-observed_cancelled",
+      "archive": "archive-03",
+      "source": "sqlite_exports/broker_events.json",
+      "event_type": "ORDER_STATUS",
+      "source_row": 169,
+      "quantity": 180,
+      "kind": "observed_cancelled",
+      "trade": {
+        "contract": {
+          "currency": "EUR",
+          "exchange": "SMART",
+          "primaryExchange": "AEB",
+          "conId": 123,
+          "symbol": "AAPL",
+          "secType": "STK"
+        },
+        "order": {
+          "action": "BUY",
+          "totalQuantity": 180.0,
+          "orderType": "TRAIL",
+          "tif": "GTC",
+          "trailingPercent": 0.3,
+          "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-011|BUY_TRAIL",
+          "account": "SIM",
+          "permId": 900011,
+          "clientId": 7,
+          "orderId": 10011
+        },
+        "orderStatus": {
+          "status": "Cancelled",
+          "filled": 0.0,
+          "remaining": 180.0,
+          "avgFillPrice": 0.0,
+          "lastFillPrice": 0.0,
+          "orderId": 10011,
+          "permId": 900011,
+          "clientId": 7
+        },
+        "fills": []
+      }
+    },
+    {
+      "id": "case-12-buy",
+      "archive": "archive-04",
+      "source": "sqlite_exports/executions.json",
+      "event_type": "COMMISSION_REPORT",
+      "source_row": 21,
+      "quantity": 41,
+      "kind": "observed_complete",
+      "trade": {
+        "contract": {
+          "currency": "USD",
+          "exchange": "SMART",
+          "conId": 123,
+          "symbol": "AAPL",
+          "secType": "STK"
+        },
+        "order": {
+          "action": "BUY",
+          "filledQuantity": 41.0,
+          "orderType": "TRAIL",
+          "tif": "GTC",
+          "trailingPercent": 0.2,
+          "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-012|BUY_TRAIL",
+          "account": "SIM",
+          "permId": 900012,
+          "clientId": 7,
+          "orderId": 0
+        },
+        "orderStatus": {
+          "status": "Filled",
+          "filled": 0.0,
+          "remaining": 0.0,
+          "avgFillPrice": 0.0,
+          "lastFillPrice": 0.0,
+          "orderId": 0,
+          "permId": 0,
+          "clientId": 7
+        },
+        "fills": [
+          {
+            "contract": {
+              "currency": "USD",
+              "exchange": "SMART",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "BOT",
+              "shares": 41.0,
+              "price": 254.2,
+              "avgPrice": 254.2,
+              "cumQty": 41.0,
+              "time": "2026-08-11T14:40:04+00:00",
+              "exchange": "BATS",
+              "execId": "SIM-EXEC-012-01",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-012|BUY_TRAIL",
+              "permId": 900012,
+              "clientId": 7,
+              "orderId": 10012
+            },
+            "commissionReport": {
+              "commission": 0.48158,
+              "currency": "USD",
+              "realizedPNL": 0.0,
+              "execId": "SIM-EXEC-012-01"
+            },
+            "time": "2026-08-11T14:40:04+00:00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "case-13-sell",
+      "archive": "archive-04",
+      "source": "sqlite_exports/executions.json",
+      "event_type": "COMMISSION_REPORT",
+      "source_row": 20,
+      "quantity": 41,
+      "kind": "observed_complete",
+      "trade": {
+        "contract": {
+          "currency": "USD",
+          "exchange": "SMART",
+          "conId": 123,
+          "symbol": "AAPL",
+          "secType": "STK"
+        },
+        "order": {
+          "action": "SELL",
+          "filledQuantity": 41.0,
+          "orderType": "TRAIL",
+          "tif": "GTC",
+          "trailingPercent": 0.21,
+          "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-013|SELL_TRAIL",
+          "account": "SIM",
+          "permId": 900013,
+          "clientId": 7,
+          "orderId": 0
+        },
+        "orderStatus": {
+          "status": "Filled",
+          "filled": 0.0,
+          "remaining": 0.0,
+          "avgFillPrice": 0.0,
+          "lastFillPrice": 0.0,
+          "orderId": 0,
+          "permId": 0,
+          "clientId": 7
+        },
+        "fills": [
+          {
+            "contract": {
+              "currency": "USD",
+              "exchange": "SMART",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "SLD",
+              "shares": 41.0,
+              "price": 254.12,
+              "avgPrice": 254.12,
+              "cumQty": 41.0,
+              "time": "2026-08-11T14:16:30+00:00",
+              "exchange": "NASDAQ",
+              "execId": "SIM-EXEC-013-01",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-013|SELL_TRAIL",
+              "permId": 900013,
+              "clientId": 7,
+              "orderId": 10013
+            },
+            "commissionReport": {
+              "commission": 0.704205,
+              "currency": "USD",
+              "realizedPNL": 64.209215,
+              "execId": "SIM-EXEC-013-01"
+            },
+            "time": "2026-08-11T14:16:30+00:00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "case-14-sell-market",
+      "archive": "archive-04",
+      "source": "sqlite_exports/broker_events.json",
+      "event_type": "COMMISSION_REPORT",
+      "source_row": 3134,
+      "quantity": 45,
+      "kind": "observed_complete",
+      "trade": {
+        "contract": {
+          "currency": "USD",
+          "exchange": "SMART",
+          "primaryExchange": "NASDAQ",
+          "conId": 123,
+          "symbol": "AAPL",
+          "secType": "STK"
+        },
+        "order": {
+          "action": "SELL",
+          "totalQuantity": 45.0,
+          "orderType": "MKT",
+          "tif": "GTC",
+          "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-014|FORCED_SELL_MARKET",
+          "account": "SIM",
+          "permId": 900014,
+          "clientId": 7,
+          "orderId": 10014
+        },
+        "orderStatus": {
+          "status": "Filled",
+          "filled": 45.0,
+          "remaining": 0.0,
+          "avgFillPrice": 209.4,
+          "lastFillPrice": 209.4,
+          "orderId": 10014,
+          "permId": 900014,
+          "clientId": 7
+        },
+        "fills": [
+          {
+            "contract": {
+              "currency": "USD",
+              "exchange": "SMART",
+              "primaryExchange": "NASDAQ",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "SLD",
+              "shares": 45.0,
+              "price": 209.4,
+              "avgPrice": 209.4,
+              "cumQty": 45.0,
+              "time": "2026-09-21T16:10:28+00:00",
+              "exchange": "NASDAQ",
+              "execId": "SIM-EXEC-014-01",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-014|FORCED_SELL_MARKET",
+              "permId": 900014,
+              "clientId": 7,
+              "orderId": 10014
+            },
+            "commissionReport": {
+              "commission": 0.697281,
+              "currency": "USD",
+              "realizedPNL": 0.0,
+              "execId": "SIM-EXEC-014-01"
+            },
+            "time": "2026-09-21T18:10:30.218133+00:00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "case-15-observed_working",
+      "archive": "archive-04",
+      "source": "sqlite_exports/broker_events.json",
+      "event_type": "OPEN_ORDER",
+      "source_row": 3160,
+      "quantity": 47,
+      "kind": "observed_working",
+      "trade": {
+        "contract": {
+          "currency": "USD",
+          "exchange": "SMART",
+          "primaryExchange": "NASDAQ",
+          "conId": 123,
+          "symbol": "AAPL",
+          "secType": "STK"
+        },
+        "order": {
+          "action": "BUY",
+          "totalQuantity": 47.0,
+          "orderType": "TRAIL",
+          "tif": "GTC",
+          "trailingPercent": 0.3,
+          "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-015|BUY_TRAIL",
+          "account": "SIM",
+          "permId": 900015,
+          "clientId": 7,
+          "orderId": 10015
+        },
+        "orderStatus": {
+          "status": "Submitted",
+          "filled": 33.0,
+          "remaining": 14.0,
+          "avgFillPrice": 209.309394,
+          "lastFillPrice": 209.33,
+          "orderId": 10015,
+          "permId": 900015,
+          "clientId": 7
+        },
+        "fills": [
+          {
+            "contract": {
+              "currency": "USD",
+              "exchange": "SMART",
+              "primaryExchange": "NASDAQ",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "BOT",
+              "shares": 18.0,
+              "price": 209.3,
+              "avgPrice": 209.3,
+              "cumQty": 18.0,
+              "time": "2026-09-21T16:57:18+00:00",
+              "exchange": "NASDAQ",
+              "execId": "SIM-EXEC-015-01",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-015|BUY_TRAIL",
+              "permId": 900015,
+              "clientId": 7,
+              "orderId": 10015
+            },
+            "commissionReport": {
+              "commission": 0.407911,
+              "currency": "USD",
+              "realizedPNL": 0.0,
+              "execId": "SIM-EXEC-015-01"
+            },
+            "time": "2026-09-21T18:57:20.374045+00:00"
+          },
+          {
+            "contract": {
+              "currency": "USD",
+              "exchange": "SMART",
+              "primaryExchange": "NASDAQ",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "BOT",
+              "shares": 14.0,
+              "price": 209.32,
+              "avgPrice": 209.30875,
+              "cumQty": 32.0,
+              "time": "2026-09-21T16:57:19+00:00",
+              "exchange": "ARCA",
+              "execId": "SIM-EXEC-015-02",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-015|BUY_TRAIL",
+              "permId": 900015,
+              "clientId": 7,
+              "orderId": 10015
+            },
+            "commissionReport": {
+              "commission": 0.044842,
+              "currency": "USD",
+              "realizedPNL": 0.0,
+              "execId": "SIM-EXEC-015-02"
+            },
+            "time": "2026-09-21T18:57:21.770592+00:00"
+          },
+          {
+            "contract": {
+              "currency": "USD",
+              "exchange": "SMART",
+              "primaryExchange": "NASDAQ",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "BOT",
+              "shares": 1.0,
+              "price": 209.33,
+              "avgPrice": 209.309394,
+              "cumQty": 33.0,
+              "time": "2026-09-21T16:57:19+00:00",
+              "exchange": "ARCA",
+              "execId": "SIM-EXEC-015-03",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-015|BUY_TRAIL",
+              "permId": 900015,
+              "clientId": 7,
+              "orderId": 10015
+            },
+            "commissionReport": {
+              "commission": 0.003203,
+              "currency": "USD",
+              "realizedPNL": 0.0,
+              "execId": "SIM-EXEC-015-03"
+            },
+            "time": "2026-09-21T18:57:21.897704+00:00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "case-16-observed_cancelled",
+      "archive": "archive-04",
+      "source": "sqlite_exports/broker_events.json",
+      "event_type": "OPEN_ORDER",
+      "source_row": 3169,
+      "quantity": 47,
+      "kind": "observed_cancelled",
+      "trade": {
+        "contract": {
+          "currency": "USD",
+          "exchange": "SMART",
+          "primaryExchange": "NASDAQ",
+          "conId": 123,
+          "symbol": "AAPL",
+          "secType": "STK"
+        },
+        "order": {
+          "action": "BUY",
+          "totalQuantity": 47.0,
+          "orderType": "TRAIL",
+          "tif": "GTC",
+          "trailingPercent": 0.3,
+          "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-016|BUY_TRAIL",
+          "account": "SIM",
+          "permId": 900016,
+          "clientId": 7,
+          "orderId": 10016
+        },
+        "orderStatus": {
+          "status": "Cancelled",
+          "filled": 0.0,
+          "remaining": 0.0,
+          "avgFillPrice": 209.312553,
+          "lastFillPrice": 209.32,
+          "orderId": 10016,
+          "permId": 900016,
+          "clientId": 7
+        },
+        "fills": [
+          {
+            "contract": {
+              "currency": "USD",
+              "exchange": "SMART",
+              "primaryExchange": "NASDAQ",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "BOT",
+              "shares": 18.0,
+              "price": 209.3,
+              "avgPrice": 209.3,
+              "cumQty": 18.0,
+              "time": "2026-09-21T16:57:18+00:00",
+              "exchange": "NASDAQ",
+              "execId": "SIM-EXEC-016-01",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-016|BUY_TRAIL",
+              "permId": 900016,
+              "clientId": 7,
+              "orderId": 10016
+            },
+            "commissionReport": {
+              "commission": 0.407911,
+              "currency": "USD",
+              "realizedPNL": 0.0,
+              "execId": "SIM-EXEC-016-01"
+            },
+            "time": "2026-09-21T18:57:20.374045+00:00"
+          },
+          {
+            "contract": {
+              "currency": "USD",
+              "exchange": "SMART",
+              "primaryExchange": "NASDAQ",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "BOT",
+              "shares": 14.0,
+              "price": 209.32,
+              "avgPrice": 209.30875,
+              "cumQty": 32.0,
+              "time": "2026-09-21T16:57:19+00:00",
+              "exchange": "ARCA",
+              "execId": "SIM-EXEC-016-02",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-016|BUY_TRAIL",
+              "permId": 900016,
+              "clientId": 7,
+              "orderId": 10016
+            },
+            "commissionReport": {
+              "commission": 0.044842,
+              "currency": "USD",
+              "realizedPNL": 0.0,
+              "execId": "SIM-EXEC-016-02"
+            },
+            "time": "2026-09-21T18:57:21.770592+00:00"
+          },
+          {
+            "contract": {
+              "currency": "USD",
+              "exchange": "SMART",
+              "primaryExchange": "NASDAQ",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "BOT",
+              "shares": 1.0,
+              "price": 209.33,
+              "avgPrice": 209.309394,
+              "cumQty": 33.0,
+              "time": "2026-09-21T16:57:19+00:00",
+              "exchange": "ARCA",
+              "execId": "SIM-EXEC-016-03",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-016|BUY_TRAIL",
+              "permId": 900016,
+              "clientId": 7,
+              "orderId": 10016
+            },
+            "commissionReport": {
+              "commission": 0.003203,
+              "currency": "USD",
+              "realizedPNL": 0.0,
+              "execId": "SIM-EXEC-016-03"
+            },
+            "time": "2026-09-21T18:57:21.897704+00:00"
+          },
+          {
+            "contract": {
+              "currency": "USD",
+              "exchange": "SMART",
+              "primaryExchange": "NASDAQ",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "BOT",
+              "shares": 14.0,
+              "price": 209.32,
+              "avgPrice": 209.312553,
+              "cumQty": 47.0,
+              "time": "2026-09-21T16:57:20+00:00",
+              "exchange": "IBKRATS",
+              "execId": "SIM-EXEC-016-04",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-016|BUY_TRAIL",
+              "permId": 900016,
+              "clientId": 7,
+              "orderId": 10016
+            },
+            "commissionReport": {
+              "commission": 0.002842,
+              "currency": "USD",
+              "realizedPNL": 0.0,
+              "execId": "SIM-EXEC-016-04"
+            },
+            "time": "2026-09-21T18:57:23.120172+00:00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "case-17-buy",
+      "archive": "archive-05",
+      "source": "sqlite_exports/broker_events.json",
+      "event_type": "COMMISSION_REPORT",
+      "source_row": 605,
+      "quantity": 238,
+      "kind": "observed_complete",
+      "trade": {
+        "contract": {
+          "currency": "EUR",
+          "exchange": "SMART",
+          "conId": 123,
+          "symbol": "AAPL",
+          "secType": "STK"
+        },
+        "order": {
+          "action": "BUY",
+          "filledQuantity": 238.0,
+          "orderType": "TRAIL",
+          "tif": "GTC",
+          "trailingPercent": 0.3,
+          "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-017|BUY_TRAIL",
+          "account": "SIM",
+          "permId": 900017,
+          "clientId": 7,
+          "orderId": 0
+        },
+        "orderStatus": {
+          "status": "Filled",
+          "filled": 0.0,
+          "remaining": 0.0,
+          "avgFillPrice": 0.0,
+          "lastFillPrice": 0.0,
+          "orderId": 0,
+          "permId": 0,
+          "clientId": 7
+        },
+        "fills": [
+          {
+            "contract": {
+              "currency": "EUR",
+              "exchange": "SMART",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "BOT",
+              "shares": 238.0,
+              "price": 41.835,
+              "avgPrice": 41.835,
+              "cumQty": 238.0,
+              "time": "2026-09-25T12:50:22+00:00",
+              "exchange": "EUDARK",
+              "execId": "SIM-EXEC-017-01",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-017|BUY_TRAIL",
+              "permId": 900017,
+              "clientId": 7,
+              "orderId": 10017
+            },
+            "commissionReport": {
+              "commission": 4.978365,
+              "currency": "EUR",
+              "realizedPNL": 0.0,
+              "execId": "SIM-EXEC-017-01"
+            },
+            "time": "2026-09-25T12:50:22+00:00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "case-18-sell",
+      "archive": "archive-05",
+      "source": "sqlite_exports/broker_events.json",
+      "event_type": "COMMISSION_REPORT",
+      "source_row": 773,
+      "quantity": 238,
+      "kind": "observed_complete",
+      "trade": {
+        "contract": {
+          "currency": "EUR",
+          "exchange": "SMART",
+          "primaryExchange": "AEB",
+          "conId": 123,
+          "symbol": "AAPL",
+          "secType": "STK"
+        },
+        "order": {
+          "action": "SELL",
+          "totalQuantity": 238.0,
+          "orderType": "TRAIL",
+          "tif": "GTC",
+          "trailingPercent": 0.3,
+          "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-018|SELL_TRAIL",
+          "account": "SIM",
+          "permId": 900018,
+          "clientId": 7,
+          "orderId": 10018
+        },
+        "orderStatus": {
+          "status": "Filled",
+          "filled": 238.0,
+          "remaining": 0.0,
+          "avgFillPrice": 42.388887,
+          "lastFillPrice": 42.385,
+          "orderId": 10018,
+          "permId": 900018,
+          "clientId": 7
+        },
+        "fills": [
+          {
+            "contract": {
+              "currency": "EUR",
+              "exchange": "SMART",
+              "primaryExchange": "AEB",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "SLD",
+              "shares": 185.0,
+              "price": 42.39,
+              "avgPrice": 42.39,
+              "cumQty": 185.0,
+              "time": "2026-09-28T05:01:22+00:00",
+              "exchange": "AQEUDE",
+              "execId": "SIM-EXEC-018-01",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-018|SELL_TRAIL",
+              "permId": 900018,
+              "clientId": 7,
+              "orderId": 10018
+            },
+            "commissionReport": {
+              "commission": 4.095493,
+              "currency": "EUR",
+              "realizedPNL": 94.709742,
+              "execId": "SIM-EXEC-018-01"
+            },
+            "time": "2026-09-28T07:01:23.899279+00:00"
+          },
+          {
+            "contract": {
+              "currency": "EUR",
+              "exchange": "SMART",
+              "primaryExchange": "AEB",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "SLD",
+              "shares": 53.0,
+              "price": 42.385,
+              "avgPrice": 42.388887,
+              "cumQty": 238.0,
+              "time": "2026-09-28T05:01:23+00:00",
+              "exchange": "EUDARK",
+              "execId": "SIM-EXEC-018-02",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-018|SELL_TRAIL",
+              "permId": 900018,
+              "clientId": 7,
+              "orderId": 10018
+            },
+            "commissionReport": {
+              "commission": 1.123202,
+              "currency": "EUR",
+              "realizedPNL": 26.918162,
+              "execId": "SIM-EXEC-018-02"
+            },
+            "time": "2026-09-28T07:01:24.754724+00:00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "case-19-sell-market",
+      "archive": "archive-05",
+      "source": "sqlite_exports/broker_events.json",
+      "event_type": "COMMISSION_REPORT",
+      "source_row": 952,
+      "quantity": 232,
+      "kind": "observed_complete",
+      "trade": {
+        "contract": {
+          "currency": "EUR",
+          "exchange": "SMART",
+          "primaryExchange": "AEB",
+          "conId": 123,
+          "symbol": "AAPL",
+          "secType": "STK"
+        },
+        "order": {
+          "action": "SELL",
+          "totalQuantity": 232.0,
+          "orderType": "MKT",
+          "tif": "GTC",
+          "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-019|FORCED_SELL_MARKET",
+          "account": "SIM",
+          "permId": 900019,
+          "clientId": 7,
+          "orderId": 10019
+        },
+        "orderStatus": {
+          "status": "Filled",
+          "filled": 232.0,
+          "remaining": 0.0,
+          "avgFillPrice": 42.36,
+          "lastFillPrice": 42.36,
+          "orderId": 10019,
+          "permId": 900019,
+          "clientId": 7
+        },
+        "fills": [
+          {
+            "contract": {
+              "currency": "EUR",
+              "exchange": "SMART",
+              "primaryExchange": "AEB",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "SLD",
+              "shares": 232.0,
+              "price": 42.36,
+              "avgPrice": 42.36,
+              "cumQty": 232.0,
+              "time": "2026-10-02T12:18:33+00:00",
+              "exchange": "EUDARK",
+              "execId": "SIM-EXEC-019-01",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-019|FORCED_SELL_MARKET",
+              "permId": 900019,
+              "clientId": 7,
+              "orderId": 10019
+            },
+            "commissionReport": {
+              "commission": 4.91376,
+              "currency": "EUR",
+              "realizedPNL": -93.38926,
+              "execId": "SIM-EXEC-019-01"
+            },
+            "time": "2026-10-02T14:18:34.869069+00:00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "case-20-observed_working",
+      "archive": "archive-05",
+      "source": "sqlite_exports/broker_events.json",
+      "event_type": "OPEN_ORDER",
+      "source_row": 242,
+      "quantity": 180,
+      "kind": "observed_working",
+      "trade": {
+        "contract": {
+          "currency": "EUR",
+          "exchange": "SMART",
+          "primaryExchange": "AEB",
+          "conId": 123,
+          "symbol": "AAPL",
+          "secType": "STK"
+        },
+        "order": {
+          "action": "BUY",
+          "totalQuantity": 179.0,
+          "orderType": "TRAIL",
+          "tif": "GTC",
+          "trailingPercent": 0.3,
+          "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-020|BUY_TRAIL",
+          "account": "SIM",
+          "permId": 900020,
+          "clientId": 7,
+          "orderId": 10020
+        },
+        "orderStatus": {
+          "status": "Submitted",
+          "filled": 139.0,
+          "remaining": 40.0,
+          "avgFillPrice": 55.245182,
+          "lastFillPrice": 55.2427,
+          "orderId": 10020,
+          "permId": 900020,
+          "clientId": 7
+        },
+        "fills": [
+          {
+            "contract": {
+              "currency": "EUR",
+              "exchange": "SMART",
+              "primaryExchange": "AEB",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "BOT",
+              "shares": 50.0,
+              "price": 55.2496,
+              "avgPrice": 55.2496,
+              "cumQty": 50.0,
+              "time": "2026-09-18T05:05:36+00:00",
+              "exchange": "TRWBEN",
+              "execId": "SIM-EXEC-020-01",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-020|BUY_TRAIL",
+              "permId": 900020,
+              "clientId": 7,
+              "orderId": 10020
+            },
+            "commissionReport": {
+              "commission": 1.41124,
+              "currency": "EUR",
+              "realizedPNL": 0.0,
+              "execId": "SIM-EXEC-020-01"
+            },
+            "time": "2026-09-18T07:05:37.755196+00:00"
+          },
+          {
+            "contract": {
+              "currency": "EUR",
+              "exchange": "SMART",
+              "primaryExchange": "AEB",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "BOT",
+              "shares": 49.0,
+              "price": 55.2427,
+              "avgPrice": 55.246185,
+              "cumQty": 99.0,
+              "time": "2026-09-18T05:05:36+00:00",
+              "exchange": "TRWBDE",
+              "execId": "SIM-EXEC-020-02",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-020|BUY_TRAIL",
+              "permId": 900020,
+              "clientId": 7,
+              "orderId": 10020
+            },
+            "commissionReport": {
+              "commission": 1.383446,
+              "currency": "EUR",
+              "realizedPNL": 0.0,
+              "execId": "SIM-EXEC-020-02"
+            },
+            "time": "2026-09-18T07:05:37.755196+00:00"
+          },
+          {
+            "contract": {
+              "currency": "EUR",
+              "exchange": "SMART",
+              "primaryExchange": "AEB",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "BOT",
+              "shares": 40.0,
+              "price": 55.2427,
+              "avgPrice": 55.245182,
+              "cumQty": 139.0,
+              "time": "2026-09-18T05:05:37+00:00",
+              "exchange": "TRWBDE",
+              "execId": "SIM-EXEC-020-03",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-020|BUY_TRAIL",
+              "permId": 900020,
+              "clientId": 7,
+              "orderId": 10020
+            },
+            "commissionReport": {
+              "commission": 1.134854,
+              "currency": "EUR",
+              "realizedPNL": 0.0,
+              "execId": "SIM-EXEC-020-03"
+            },
+            "time": "2026-09-18T07:05:38.384170+00:00"
+          },
+          {
+            "contract": {
+              "currency": "EUR",
+              "exchange": "SMART",
+              "primaryExchange": "AEB",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "BOT",
+              "shares": 40.0,
+              "price": 55.2496,
+              "avgPrice": 55.246169,
+              "cumQty": 179.0,
+              "time": "2026-09-18T05:05:37+00:00",
+              "exchange": "TRWBEN",
+              "execId": "SIM-EXEC-020-04",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-020|BUY_TRAIL",
+              "permId": 900020,
+              "clientId": 7,
+              "orderId": 10020
+            },
+            "commissionReport": {
+              "commission": 0.0,
+              "currency": "",
+              "realizedPNL": 0.0,
+              "execId": "SIM-EXEC-020-04"
+            },
+            "time": "2026-09-18T07:05:38.513408+00:00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "case-21-observed_cancelled",
+      "archive": "archive-05",
+      "source": "sqlite_exports/broker_events.json",
+      "event_type": "ORDER_STATUS",
+      "source_row": 169,
+      "quantity": 180,
+      "kind": "observed_cancelled",
+      "trade": {
+        "contract": {
+          "currency": "EUR",
+          "exchange": "SMART",
+          "primaryExchange": "AEB",
+          "conId": 123,
+          "symbol": "AAPL",
+          "secType": "STK"
+        },
+        "order": {
+          "action": "BUY",
+          "totalQuantity": 180.0,
+          "orderType": "TRAIL",
+          "tif": "GTC",
+          "trailingPercent": 0.3,
+          "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-021|BUY_TRAIL",
+          "account": "SIM",
+          "permId": 900021,
+          "clientId": 7,
+          "orderId": 10021
+        },
+        "orderStatus": {
+          "status": "Cancelled",
+          "filled": 0.0,
+          "remaining": 180.0,
+          "avgFillPrice": 0.0,
+          "lastFillPrice": 0.0,
+          "orderId": 10021,
+          "permId": 900021,
+          "clientId": 7
+        },
+        "fills": []
+      }
+    },
+    {
+      "id": "case-22-buy",
+      "archive": "archive-06",
+      "source": "sqlite_exports/broker_events.json",
+      "event_type": "COMMISSION_REPORT",
+      "source_row": 602,
+      "quantity": 60,
+      "kind": "observed_complete",
+      "trade": {
+        "contract": {
+          "currency": "EUR",
+          "exchange": "SMART",
+          "conId": 123,
+          "symbol": "AAPL",
+          "secType": "STK"
+        },
+        "order": {
+          "action": "BUY",
+          "filledQuantity": 60.0,
+          "orderType": "TRAIL",
+          "tif": "GTC",
+          "trailingPercent": 0.2,
+          "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-022|BUY_TRAIL",
+          "account": "SIM",
+          "permId": 900022,
+          "clientId": 7,
+          "orderId": 0
+        },
+        "orderStatus": {
+          "status": "Filled",
+          "filled": 0.0,
+          "remaining": 0.0,
+          "avgFillPrice": 0.0,
+          "lastFillPrice": 0.0,
+          "orderId": 0,
+          "permId": 0,
+          "clientId": 7
+        },
+        "fills": [
+          {
+            "contract": {
+              "currency": "EUR",
+              "exchange": "SMART",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "BOT",
+              "shares": 60.0,
+              "price": 164.32,
+              "avgPrice": 164.32,
+              "cumQty": 60.0,
+              "time": "2026-09-25T08:34:58+00:00",
+              "exchange": "GETTEX2",
+              "execId": "SIM-EXEC-022-01",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-022|BUY_TRAIL",
+              "permId": 900022,
+              "clientId": 7,
+              "orderId": 10022
+            },
+            "commissionReport": {
+              "commission": 4.9296,
+              "currency": "EUR",
+              "realizedPNL": 0.0,
+              "execId": "SIM-EXEC-022-01"
+            },
+            "time": "2026-09-25T08:34:58+00:00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "case-23-sell",
+      "archive": "archive-06",
+      "source": "sqlite_exports/broker_events.json",
+      "event_type": "COMMISSION_REPORT",
+      "source_row": 890,
+      "quantity": 60,
+      "kind": "observed_complete",
+      "trade": {
+        "contract": {
+          "currency": "EUR",
+          "exchange": "SMART",
+          "conId": 123,
+          "symbol": "AAPL",
+          "secType": "STK"
+        },
+        "order": {
+          "action": "SELL",
+          "totalQuantity": 60.0,
+          "orderType": "TRAIL",
+          "tif": "GTC",
+          "trailingPercent": 0.3,
+          "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-023|SELL_TRAIL",
+          "account": "SIM",
+          "permId": 900023,
+          "clientId": 7,
+          "orderId": 10023
+        },
+        "orderStatus": {
+          "status": "Filled",
+          "filled": 60.0,
+          "remaining": 0.0,
+          "avgFillPrice": 165.44,
+          "lastFillPrice": 165.44,
+          "orderId": 10023,
+          "permId": 900023,
+          "clientId": 7
+        },
+        "fills": [
+          {
+            "contract": {
+              "currency": "EUR",
+              "exchange": "SMART",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "SLD",
+              "shares": 60.0,
+              "price": 165.44,
+              "avgPrice": 165.44,
+              "cumQty": 60.0,
+              "time": "2026-10-02T11:56:03+00:00",
+              "exchange": "IBIS2",
+              "execId": "SIM-EXEC-023-01",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-023|SELL_TRAIL",
+              "permId": 900023,
+              "clientId": 7,
+              "orderId": 10023
+            },
+            "commissionReport": {
+              "commission": 5.062611,
+              "currency": "EUR",
+              "realizedPNL": 57.207789,
+              "execId": "SIM-EXEC-023-01"
+            },
+            "time": "2026-10-02T13:56:05.405346+00:00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "case-24-observed_working",
+      "archive": "archive-06",
+      "source": "sqlite_exports/broker_events.json",
+      "event_type": "OPEN_ORDER",
+      "source_row": 154,
+      "quantity": 61,
+      "kind": "observed_working",
+      "trade": {
+        "contract": {
+          "currency": "EUR",
+          "exchange": "SMART",
+          "primaryExchange": "AEB",
+          "conId": 123,
+          "symbol": "AAPL",
+          "secType": "STK"
+        },
+        "order": {
+          "action": "BUY",
+          "totalQuantity": 61.0,
+          "orderType": "TRAIL",
+          "tif": "GTC",
+          "trailingPercent": 0.2,
+          "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-024|BUY_TRAIL",
+          "account": "SIM",
+          "permId": 900024,
+          "clientId": 7,
+          "orderId": 10024
+        },
+        "orderStatus": {
+          "status": "Submitted",
+          "filled": 34.0,
+          "remaining": 27.0,
+          "avgFillPrice": 161.859815,
+          "lastFillPrice": 161.86,
+          "orderId": 10024,
+          "permId": 900024,
+          "clientId": 7
+        },
+        "fills": [
+          {
+            "contract": {
+              "currency": "EUR",
+              "exchange": "SMART",
+              "primaryExchange": "AEB",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "BOT",
+              "shares": 3.0,
+              "price": 161.8579,
+              "avgPrice": 161.8579,
+              "cumQty": 3.0,
+              "time": "2026-09-17T12:38:29+00:00",
+              "exchange": "TRWBEN",
+              "execId": "SIM-EXEC-024-01",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-024|BUY_TRAIL",
+              "permId": 900024,
+              "clientId": 7,
+              "orderId": 10024
+            },
+            "commissionReport": {
+              "commission": 1.28,
+              "currency": "EUR",
+              "realizedPNL": 0.0,
+              "execId": "SIM-EXEC-024-01"
+            },
+            "time": "2026-09-17T14:38:31.211436+00:00"
+          },
+          {
+            "contract": {
+              "currency": "EUR",
+              "exchange": "SMART",
+              "primaryExchange": "AEB",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "BOT",
+              "shares": 31.0,
+              "price": 161.86,
+              "avgPrice": 161.859815,
+              "cumQty": 34.0,
+              "time": "2026-09-17T12:38:29+00:00",
+              "exchange": "EUDARK",
+              "execId": "SIM-EXEC-024-02",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-024|BUY_TRAIL",
+              "permId": 900024,
+              "clientId": 7,
+              "orderId": 10024
+            },
+            "commissionReport": {
+              "commission": 1.501617,
+              "currency": "EUR",
+              "realizedPNL": 0.0,
+              "execId": "SIM-EXEC-024-02"
+            },
+            "time": "2026-09-17T14:38:31.211436+00:00"
+          },
+          {
+            "contract": {
+              "currency": "EUR",
+              "exchange": "SMART",
+              "primaryExchange": "AEB",
+              "conId": 123,
+              "symbol": "AAPL",
+              "secType": "STK"
+            },
+            "execution": {
+              "side": "BOT",
+              "shares": 27.0,
+              "price": 161.8449,
+              "avgPrice": 161.853213,
+              "cumQty": 61.0,
+              "time": "2026-09-17T12:38:30+00:00",
+              "exchange": "TRWBEN",
+              "execId": "SIM-EXEC-024-03",
+              "acctNumber": "SIM",
+              "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-024|BUY_TRAIL",
+              "permId": 900024,
+              "clientId": 7,
+              "orderId": 10024
+            },
+            "commissionReport": {
+              "commission": 0.0,
+              "currency": "",
+              "realizedPNL": 0.0,
+              "execId": "SIM-EXEC-024-03"
+            },
+            "time": "2026-09-17T14:38:32.003819+00:00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "case-25-observed_cancelled",
+      "archive": "archive-06",
+      "source": "sqlite_exports/broker_events.json",
+      "event_type": "ORDER_STATUS",
+      "source_row": 419,
+      "quantity": 60,
+      "kind": "observed_cancelled",
+      "trade": {
+        "contract": {
+          "currency": "EUR",
+          "exchange": "SMART",
+          "primaryExchange": "AEB",
+          "conId": 123,
+          "symbol": "AAPL",
+          "secType": "STK"
+        },
+        "order": {
+          "action": "BUY",
+          "totalQuantity": 60.0,
+          "orderType": "TRAIL",
+          "tif": "GTC",
+          "trailingPercent": 0.2,
+          "orderRef": "IBKRBOT|AAPL|SIM-CYCLE-025|BUY_TRAIL",
+          "account": "SIM",
+          "permId": 900025,
+          "clientId": 7,
+          "orderId": 10025
+        },
+        "orderStatus": {
+          "status": "Cancelled",
+          "filled": 0.0,
+          "remaining": 60.0,
+          "avgFillPrice": 0.0,
+          "lastFillPrice": 0.0,
+          "orderId": 10025,
+          "permId": 900025,
+          "clientId": 7
+        },
+        "fills": []
+      }
+    }
+  ]
+}

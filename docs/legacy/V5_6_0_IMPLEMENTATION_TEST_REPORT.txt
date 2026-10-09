@@ -1,0 +1,160 @@
+BouncyBot v5.6.0 - Implementation and verification report
+Date: 2026-10-04
+Scope: targeted corrections for G01-G15, plus six support-address updates
+Baseline: exact previously delivered 5.5.1 source ZIP
+Baseline source ZIP SHA256:
+2bc4eb868ff63bddeda022580e254c42b939500bd4410fa9a80470a135bf2028
+
+DELIVERED CHANGES
+
+G01 - Current master/per-field ATR checkbox selections own editable inputs.
+      An older queued snapshot cannot replace a newly entered manual value
+      after the operator disables adaptation. Startup hydration and suppression
+      of autosave during programmatic updates remain intact.
+G02 - Reconciliation market SELL shares Stop's potential-loss confirmation,
+      defaulting to Cancel. After the modal, it rechecks probe freshness, cycle
+      identity/order-fill signature, conId and persisted unsold quantity before
+      calling the existing StopAction workflow. Worker guards still apply.
+G03 - Reconciliation compares the full app-owned unsold quantity with broker
+      holdings using the existing 1e-9 tolerance. Unknown/stale positions are
+      labelled unavailable for verification, not consistent.
+G04 - Nonterminal partial fills remain working orders in Reconciliation.
+      Terminal statuses determine whether the remainder is cancellable.
+G05 - Confirmed contract identity drives ribbon/graph display. A retained cycle
+      from another instrument cannot supply old graph prices/levels or profit
+      triggers for the newly confirmed contract.
+G06 - Trailing graph estimates track observed prices per broker order, retain
+      extrema independently of display-buffer pruning and reset on replacement.
+      Same-second observations are handled explicitly. Orders already active
+      at startup, and ambiguous submission-time evidence, show an unavailable
+      estimate instead of reconstructing a stop from pre-order cycle prices.
+      The submitted initial stop remains visible; estimates are not broker stops.
+G07 - Historical flowchart selection follows persisted cycle ID after history
+      changes. If that cycle disappears from the selected results, selection
+      deliberately returns to the current strategy.
+G08 - Historical diagrams reconstruct saved settings and do not inherit today's
+      draft. Missing fields use fixed display defaults, disclosed in the
+      explanation/tooltip. Actual older rows lack auto_repeat, sec_type and tif;
+      the app does not claim their original values were recovered.
+G09 - Inactive next-cycle manual protective percentages are editable consistently
+      with other inputs. Active Stage 3/4, manual-review, ATR and operator locks
+      remain in force. Editing an inactive draft does not alter its retained cycle.
+G10 - CSV applies the same ticker/date/outcome/ATR/paper-live predicates as history
+      and summary, without a row cap. Existing CSV columns and legacy exact-ticker
+      storage calls remain supported. Export failures still show an operator error.
+G11 - A cancelled/unfilled protective reference is not classified as an exit.
+      Badges and SQL use protective filled quantity or an actually filled SELL
+      carrying the protective executing reference; P/L calculations are unchanged.
+G12 - Completion markers use aggregate fill price with the completion timestamp.
+      If only individual execution evidence exists, its own price and timestamp
+      stay paired. Stored executions are not rewritten.
+G13 - Audit Summary keeps legitimate zero percentages and zero P/L instead of
+      discarding them through boolean fallback expressions.
+G14 - Audit Summary derives BUY type from matching stored order evidence and
+      holding duration from valid fill timestamps. Ambiguous/missing order
+      identity and invalid/reversed times remain explicitly unavailable.
+G15 - History rows and flowchart choices refresh with completed-history changes
+      on the existing database cadence. The existing summary metadata query is
+      reused. An in-memory completed-write revision catches same-second late
+      commissions without adding queries or persistent writes to the write path.
+      Unchanged revisions do not reload rows. Failed filter/read requests retry;
+      different filters with equal counts/timestamps cannot retain the old rows.
+
+About > Info > Thank me and README now contain exactly the supplied ADA, ETH,
+NIGHT, SOL, XRP and ZEC strings. ADA was already the supplied value; ETH/NIGHT/SOL
+were replaced; XRP/ZEC were added. All six GUI fields and README entries are
+checked against the literal user-provided values. No transfer or ownership check
+was made or is implied.
+
+SCOPE AND REVIEW
+
+Runtime edits are limited to app/gui.py, app/controller.py and app/storage.py.
+Controller changes are reporting request/result handling and CSV filters.
+Storage changes are reporting predicates/export and memory-only cache/revision
+invalidation after the existing completed-cycle upsert. Its SQL statement,
+transaction and disk-write behavior are unchanged.
+
+Every other app module, main.py and requirements.txt is byte-identical to 5.5.1.
+The strategy engine, broker adapter, order submission/cancellation sequencing,
+RTH/freshness guards, schema, backup policy and cadence intervals are unchanged.
+All 27 tracked Images files are unchanged. Runtime remains standard GIL-enabled
+CPython 3.14.x. Version/build metadata and current release assertions are updated.
+
+Independent reviewers checked the ATR/reconciliation changes, historical/audit
+changes and reporting changes. Review found and corrected two graph edge cases:
+same-second prices and reused references with different broker order IDs.
+It also found the failed-filter equal-revision retry case and the same-second
+commission cache issue; both now have explicit regression coverage.
+
+A transaction-rollback probe preserved committed P/L and database bytes. Five
+forced reporting cadences caused one conservative row refresh after rollback,
+then reused it; no DML/DDL statement ran during those reporting cadences. A
+completed-cycle write for another ticker can conservatively refresh a filtered
+view once. Unchanged periodic snapshots do not repeatedly reload full history.
+
+SUPPLIED AUDIT REPLAY
+
+All 10 completed cycles from the three supplied databases were checked read-only.
+BUY and FINAL SELL marker prices match persisted aggregate fills and corresponding
+fill timestamps. PURR cycle 2 now displays FINAL SELL 13.691500630517025 instead of
+the first partial's 13.71. TDIV cycle 1 Summary now displays TRAIL and 1439.83 min.
+Changing today's ATR/repeat/currency settings leaves reconstructed history fixed.
+No user database, actual account identifier or audit bundle is in the archives.
+
+EXECUTED VERIFICATION
+
+Host: Linux, CPython 3.12.14, SQLite 3.53.1. No live broker connection or order.
+
+- 85 new unittest methods: ATR 10, Reconciliation 18, graph 26, historical/audit
+  16, history reporting/support addresses 15. All passed.
+- All 42 unittest modules: 571 successful methods, no failure/error. Runner:
+  Ran 576 tests, OK (skipped=7). Five skipped methods are part of the 576;
+  two additional native-Qt class-setup skips are listed separately by unittest.
+  ResourceWarning was treated as an error. Skips need native Qt or PowerShell.
+- 1479 function cases passed, no failure/collection error, using the explicitly
+  limited dependency-free fallback runner. This is NOT actual pytest and does
+  not establish coverage. Six focused fallback-runner self-tests also passed.
+- The first broad function run found an obsolete export test-double signature
+  and the not-yet-updated root report version. The double now exercises the
+  filtered API while retaining its permission-error assertion; the report now
+  identifies 5.6.0. The complete function suite passed after those corrections.
+- The repository's own mutation gate passed: 17/17 safety mutants killed.
+- The repository's simulation gate passed: 58 scenarios across 54 CSV files.
+- All 214 Python files compiled. git diff --check passed.
+- 313 local links across 28 documents were checked; none missing.
+- Both source and update ZIPs pass CRC/content verification. Applying the patch
+  or the documented changed-file overlay to the exact 5.5.1 baseline reproduces
+  every 5.6.0 source file. Detailed hashes/evidence are in the update archive.
+
+VALIDATION LIMITS
+
+Renewed attempts to install Python 3.14 and the exact project requirements were
+blocked by HTTP 403. Actual pytest/coverage, Ruff, Pyright, PySide6, ib_async and
+PyInstaller are unavailable. No requirement was relaxed and no global package
+was changed. The required runtime check and
+  python scripts/run_quality_checks.py --require-tools
+were attempted and failed due to the interpreter/missing tools. They did not pass.
+
+This host did not verify native Windows/Qt rendering, high-DPI scaling, real Qt
+event-loop behavior, Python 3.14 execution, actual pytest/branch/callable coverage,
+Windows packaging, or live IB Gateway behavior. Headless method tests and the
+fallback runner are not substitutes for these platform gates. No fresh coverage
+percentage or prebuilt Windows executable is supplied. Run run_all_tests.bat and
+the documented Windows build in the required target environment.
+
+RELEASE CONTENTS
+
+IBKR_Trading_Bot_5.6.0_Source.zip - complete source project.
+IBKR_Trading_Bot_5.6.0_Release_files.zip - exact-baseline changed files, patch,
+  removal/update instructions, hashes and verification evidence.
+BouncyBot_5.5.1_to_5.6.0.patch - alternative exact-baseline update.
+BouncyBot_5.6.0_Implementation_Test_Report.txt - this report.
+BouncyBot_5.6.0_GUI_Fixes.txt - the fifteen-finding correction map and boundaries.
+
+The original 5.5.1 GUI review is retained with a resolution link. Its release note
+and implementation report are archived; the old implementation report is
+byte-for-byte preserved. The changelog has one consolidated 5.6.0 entry.
+
+Close the instance before replacing source. Retain its own database/settings/
+client ID/captures/backups and rebuild any packaged executable. The changed-file
+archive targets exactly 5.5.1; use complete source if your baseline differs.

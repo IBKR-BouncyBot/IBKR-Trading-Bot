@@ -10,7 +10,7 @@ All strategy orders receive an `OrderRef` beginning with:
 IBKRBOT|
 ```
 
-The suffix identifies cycle/side intent. The prefix alone is not ownership proof when several portable installations share a Master API feed. Recovery, cancellation, and callback attribution require the complete `OrderRef` to exactly match a reference already persisted by that installation. Unmatched prefixed orders are left unowned and are never assigned to the active cycle. Cancellation additionally requires the exact broker order to belong to the currently connected API client, and a supplied order ID must match. Manual orders must not reuse an app reference.
+The suffix identifies cycle/side intent. The prefix alone is not ownership proof when several portable installations share a Master API feed. Order recovery, cancellation, and callback attribution use the complete `OrderRef` already persisted by that installation. Recent-execution recovery additionally supports an omitted legacy reference when its permanent ID was recorded for the exact cycle order and available account, contract and side evidence does not conflict. A numeric order ID alone cannot authorize that fallback. Unmatched prefixed orders are left unowned and are never assigned to the active cycle. Cancellation additionally requires the exact broker order to belong to the currently connected API client, and a supplied order ID must match. Manual orders must not reuse an app reference.
 
 ## Before any new BUY
 
@@ -88,18 +88,20 @@ If a Stage-2 BUY has no fill and becomes `Inactive` or `Rejected`, or reaches a 
 
 Order-status polling, execution callbacks, commission callbacks, and recent-execution recovery can report the same economic fill in different orders. SQLite uses the exact IBKR execution ID as the idempotency key. A duplicate callback enriches the existing row rather than adding quantity again. Commission-before-execution callbacks are held briefly and applied when the matching execution arrives; commission-after-execution callbacks update that same row and cycle P/L. A non-zero commission is included in net P/L only when its reported currency matches the cycle/database currency (or IBKR omits the currency). A different-currency commission remains in raw broker/audit data, is excluded from local P/L, and disables Auto-repeat because BouncyBot does not convert currencies.
 
+Conversely, a cached or completed-order object can report stale or zero cumulative fill counters while exact broker executions are available. Recovery checks those executions even when the object exists. The order label or current account position alone cannot supply a missing fill; exact recorded order identity and the existing account/contract/side and execution-ledger checks still apply. New completed-order counter normalization requires full matching attached identities; the separate recent-execution fallback retains the legacy permanent-ID path described above. An unresolved fill discrepancy cannot be treated as fully reconciled. Valid execution timestamps populate missing recovered fill timestamps. Previously validated pending commissions are applied when their matching execution is recorded, including authoritative zero-fee corrections under the existing currency rules. See [completed-order recovery](legacy/V5_6_2_COMPLETED_ORDER_RECOVERY.md).
+
 Order status can expose cumulative filled quantity before individual execution IDs arrive. BouncyBot stores a stable residual cumulative placeholder for only the unrepresented quantity and commission. As real execution callbacks arrive, the placeholder shrinks and is deleted when the callback ledger fully represents the broker cumulative total. This prevents both lost fills and double counting.
 
 When a BUY reports a positive partial fill while still nonterminal:
 
-1. the cycle remains in Stage 2 and starts a fixed 3.0-second grace period;
-2. the original marketable BUY is allowed to finish normally during that grace;
-3. if it remains nonterminal after the timeout, or a configured market/session safety check fails, cancellation of the unfilled remainder is requested once;
+1. the cycle remains in Stage 2 and lets the original marketable BUY finish;
+2. no elapsed partial-fill timeout or change in entry/market-data guards requests cancellation;
+3. explicit operator Stop/close or the separately configured pre-close BUY cancellation can still request cancellation of the remainder;
 4. the original BUY continues to be polled until terminal;
-5. additional fills received before or during cancellation update quantity, weighted average price, and commission;
-6. Stage 3 begins only after terminal settlement, using the final cumulative app-owned BUY quantity.
+5. additional fills, including any racing a requested cancellation, update quantity, weighted average price and commission;
+6. Stage 3 begins only after terminal settlement, using the final cumulative app-owned BUY quantity. A terminal partial does not trigger a replacement top-up BUY.
 
-The timeout is measured from the first positive fill and is not reset by later partial executions. Safety cancellation covers RTH closure, configured live/stale-data requirements, the configured pre-close BUY window, the configured volatility filter, the configured minimum trade price and previous-close gap, and unavailable/crossed/excessive bid/ask spread evidence. If cancellation submission itself fails, the one-shot flag is cleared so a later poll can retry. A missing, malformed, or future first-fill timestamp starts one fresh bounded grace period instead of leaving the remainder working indefinitely. A late BUY execution after an exit order already exists, or any SELL ledger above the app-owned BUY quantity, stops the cycle in `ERROR` for manual review.
+This applies to direct `MKT` BUYs and native `TRAIL` BUYs after they trigger. The first-fill timestamp remains execution evidence, not an automatic cancellation deadline. An already requested cancellation cannot be undone by this policy. A late BUY execution after an exit order already exists, or any SELL ledger above the app-owned BUY quantity, stops the cycle in `ERROR` for manual review.
 
 ## Protective SELL flow
 

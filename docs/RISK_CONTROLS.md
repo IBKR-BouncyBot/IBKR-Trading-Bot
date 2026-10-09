@@ -58,9 +58,9 @@ Native orders accepted by IBKR can remain working according to broker rules. The
 
 ### Working BUY remainder after a partial fill
 
-A positive partial fill proves that the triggered BUY is marketable and has already created an app-owned position. BouncyBot therefore does not cancel merely because the first broker update is partial. It allows the original order a fixed 3.0-second grace period to finish an ordinary multi-print execution, while remaining in Stage 2 and reconciling every execution and commission.
+A positive partial fill shows that the BUY has started execution and has created an app-owned position. BouncyBot keeps that original marketable BUY working until terminal, while remaining in Stage 2 and reconciling every execution and commission. This applies to a direct market BUY and a native trailing BUY after it triggers.
 
-The still-working remainder is cancelled once after the timeout, or immediately when an enabled safety fact becomes unsafe: RTH closes; required live/fresh data is lost; session timing becomes unavailable or enters the configured cancellation window; the volatility ceiling is exceeded; the configured minimum price or previous-close gap is breached/unverifiable; or the configured spread becomes missing, crossed, or excessive. Portfolio P/L limits, cycle counts, and what-if are not rerun after a fill because they govern new submission rather than ownership of shares already bought.
+Elapsed partial-fill time and deteriorating entry or market-data guards do not automatically cancel the remainder. New-order submission checks retain their existing behavior. Explicit operator Stop/close requests and the separately configured pre-close BUY cancellation still apply. Native RTH restrictions remain on the broker order; leaving it working does not enable execution outside its allowed session.
 
 Cancellation is not atomic with exchange execution. More shares, including the full requested quantity, can fill before IBKR confirms the request. Stage 3 begins only after the original BUY is terminal and uses the final reconciled app-owned quantity.
 
@@ -231,11 +231,11 @@ Reviewed guards can be edited during an active cycle. Edits are saved as explici
 | Contract/account, entry budget/reinvestment after entry, parameters embedded in working native orders | Existing stage restrictions remain. A draft edit does not resize, modify, cancel, replace, or reprice a working order. |
 | Optional close-before-RTH liquidation policy | Existing restrictions remain; Stage-4 changes that would change cancellation/liquidation of a working SELL stay locked. |
 
-A working Stage-2 BUY retains its original partial-fill, safety-cancellation, and cutoff policy. A working Stage-4 SELL also retains its submitted terms. Quote-guard changes clear any first Stage-3 confirmation, so the next SELL requires fresh confirmation under the revised policy. BUY-only edits cannot retrospectively alter an already purchased position. Previously saved edits survive an application restart; reverting an edit clears the pending override. No change is made to the default values or trading formulas.
+A working Stage-2 BUY uses the current partial-fill completion policy and retains its configured pre-close cutoff. Pending next-order edits do not rewrite the working order. A working Stage-4 SELL also retains its submitted terms. Quote-guard changes clear any first Stage-3 confirmation, so the next SELL requires fresh confirmation under the revised policy. BUY-only edits cannot retrospectively alter an already purchased position. Previously saved edits survive an application restart; reverting an edit clears the pending override. No change is made to the default values or trading formulas.
 
 ## v5.0.0 entry evidence
 
-The BUY spread ceiling and its numeric validation are independent of the hard-risk master. Whenever the ceiling is nonzero, a valid fresh bid/ask book is required even if the separate stale-data toggle is off. When stale-data protection is enabled, the selected price basis and each quote side are checked independently; settings edits and partial-BUY remainder supervision use the same evidence. A recent ticker/size event cannot refresh an old price field.
+The BUY spread ceiling and its numeric validation are independent of the hard-risk master. Whenever the ceiling is nonzero, a valid fresh bid/ask book is required even if the separate stale-data toggle is off. When stale-data protection is enabled, the selected price basis and each quote side are checked independently; settings edits use the same evidence for subsequent order eligibility. These entry guards do not automatically cancel a partially filled marketable BUY. A recent ticker/size event cannot refresh an old price field.
 
 The weekday RTH fallback and timezone substitution have been removed. Missing authoritative contract-session evidence blocks RTH-restricted submissions and produces no guessed session hours or countdown. A substantive terminal partial-BUY rejection disables automatic repetition while the acquired position continues to be managed.
 

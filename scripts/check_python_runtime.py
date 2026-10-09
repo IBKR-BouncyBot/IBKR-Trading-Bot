@@ -15,11 +15,11 @@ def runtime_requirement_error(
 ) -> str | None:
     if implementation != "CPython" or version != (3, 14):
         return (
-            "BouncyBot 5.6.0 requires standard CPython 3.14.x; "
+            "BouncyBot 5.7.0 requires standard CPython 3.14.x; "
             f"found {implementation} {version[0]}.{version[1]}."
         )
     if gil_disabled:
-        return "BouncyBot 5.6.0 requires the standard GIL-enabled build, not free-threaded Python 3.14t."
+        return "BouncyBot 5.7.0 requires the standard GIL-enabled build, not free-threaded Python 3.14t."
     return None
 
 

@@ -112,7 +112,7 @@ In paper mode with controlled settings:
 - positive BUY trail: verify action, type `TRAIL`, trailing percent, stop, quantity, `GTC`, `outsideRth=False`, app order reference, and optional account behavior in TWS/Gateway;
 - zero BUY trail: verify the drop condition produces a market BUY;
 - slippage buffer: verify quantity is lower/equal compared with unbuffered sizing while the transmitted order type is unchanged;
-- partial fill: verify that the first positive fill receives the fixed 3.0-second completion grace, a full multi-print fill inside the grace is not cancelled, a nonterminal remainder is cancelled after timeout, enabled market/session safety deterioration bypasses the grace, and all fills racing cancellation are reconciled before Stage 3;
+- partial fill: verify that the original marketable BUY remains working beyond three seconds and through changed entry/data guards, completes normally without a replacement order, and stays in Stage 2 until terminal; explicit Stop/close and configured pre-close cancellation must still work, with all fills racing cancellation reconciled before Stage 3;
 - what-if: verify the request uses the broker what-if path with `whatIf=True` and `transmit=True`, and that missing/invalid state or absent finite margin output blocks the live BUY;
 - invalid price/rejection: verify the retained IBKR code and message appear in Live Strategy/Cycle Audit, the cycle moves to `ERROR`, and no automatic fresh-cycle retry occurs;
 - ordinary cancellation: verify `Cancelled`/`ApiCancelled` without a substantive rejection still resets Stage 2 to Stage 1.
@@ -203,7 +203,7 @@ After a successful connection, stop the local TWS/Gateway API endpoint or close 
 
 In paper mode, induce or simulate a Gateway/TWS upstream outage while keeping the local API socket connected:
 
-- verify the Connection indicator changes to **Gateway only** and code 1100/2110 appears in diagnostics;
+- verify the Connection indicator changes to **Waiting for IBKR** and code 1100/2110 appears in diagnostics;
 - verify waiting stages do not advance, actual-update age increases, and repeated cached fields do not increase the update count or ATR bar history;
 - verify app-order polling and every new BUY/SELL submission path remain paused;
 - for 1101 restoration, verify a new market-data subscription identity is created;
@@ -345,3 +345,59 @@ Use deterministic fixtures or a paper account for these checks. Keep native rend
 | G15 | Complete a cycle and update its commission without using Refresh. Verify rows, summary and flowchart choices update together; an unchanged history must not trigger repeated full-table loads. |
 
 Open About > Info and verify all six support address labels and exact strings match README. Check copying the long ADA/NIGHT strings, window resizing, keyboard navigation and both themes.
+
+## Gateway outage recovery in 5.6.1
+
+Use a paper account and retain the pre-test database and audit evidence. Test both a waiting-entry cycle and a settled holding cycle, with the broker's orders and positions independently visible.
+
+- During an active cycle, verify amber **Reconnecting** for temporary local loss, amber **Waiting for IBKR** for upstream loss, and amber **Reconciling** while the broker state is being refreshed. Affected workflow cards must show **Waiting** and Trading must show its paused status. Actual manual-review and trading-risk faults must remain red.
+- Interrupt Gateway connectivity during recovery reads. Verify the saved waiting stage is retained, trading stays paused, and a failed or incomplete request is not presented as proof of no orders or executions. Let connectivity and managed accounts become available and confirm the existing retry path completes reconciliation before fresh data can advance the strategy.
+- With sanitized offline fixtures for the two supported legacy holds, require the exact prior waiting-stage audit and settled ledger, refresh broker facts, and explicitly select **Reconcile and resume**. Verify the recorded restoration and absence of duplicate BUY/SELL submission.
+- Repeat with missing audit history, changed account/contract, unknown submission, a working order, pending exit/protection or insufficient exact position. Each must remain blocked. Do not manufacture these states by editing a live database or clearing its manual-review flags.
+- Interrupt a broker read after explicitly selecting **Reconcile and resume**. Verify that retries retain the request only for that same cycle. Finishing the attempt, operator Disconnect or an application restart must end that intention; a restart must not automatically release the old hold.
+- Check that a disconnected or failed refresh disables broker-dependent resolution actions, and that a normal cold restart still requires explicit Start/resume. Verify the existing RTH, fresh-quote and ATR gates after recovery.
+
+Record native Windows, supported CPython 3.14 and actual broker checks separately from deterministic offline tests. See [the release note](legacy/V5_6_1_OUTAGE_RECOVERY.md#verification-boundaries) and the root implementation report.
+
+## Completed-order execution recovery in 5.6.2
+
+Use a disposable test database and deterministic broker doubles for fault cases; broker integration checks belong in a controlled paper environment.
+
+- Recover an exact final SELL executed during disconnection when the returned order object is stale or reports `Filled` with zero summary quantity. Confirm ledger quantity, fill price, completion timestamp and Stage 5 without another order.
+- Repeat recovery and deliver the same execution/callback again. Confirm no duplicate shares, cost/proceeds or fees.
+- Exercise a partial fill, multiple executions, final and protective SELL ownership, and BUY recovery. Preserve the existing working-remainder and oversell checks.
+- Deliver commission evidence before and after execution; consume validated pending fees only with their matching execution, including authoritative zero corrections. Verify currency and idempotency rules. Retain valid broker fill timestamps rather than assigning the later recovery time.
+- Reject a wrong order reference, account, contract, side, contradictory quantity or unresolved execution evidence. Test the legacy missing-reference fallback only with proven recorded permanent identity; an order ID alone is insufficient. Keep the new completed-order counter normalization stricter, requiring matching complete attached identities and quantity. Status `Filled`, zero position and empty open orders alone must not invent a fill or a replacement order.
+- Interrupt a required broker read and reconnect again. Retain 5.6.1 waiting/retry behavior and require the normal post-recovery quote evidence.
+- Check that the cycle audit and Trade history refresh after a proven complete exit, and that an unresolved mismatch is not reported as fully reconciled.
+
+Use the [5.6.2 release note](legacy/V5_6_2_COMPLETED_ORDER_RECOVERY.md#verification-boundaries) and root implementation report for executed checks; this checklist is not evidence that native Windows or live broker checks ran.
+
+### Windows/Python 3.14 paper-account acceptance gate
+
+**This procedure remains an outstanding acceptance gate, not an executed result of the host tests.** Keep its evidence separate from deterministic regression results. Paper execution demonstrates that environment's integration; it cannot establish live-market execution quality or guarantee every production response shape.
+
+1. Use a separate writable portable folder, a fresh test database and a dedicated API client ID. Select the IBKR **paper** session and independently verify its account identity in TWS/Gateway before any order is created. Do not point the test at a live account or copy a live database into the test. Record Windows, standard GIL-enabled CPython 3.14.x, dependency, Gateway/TWS and application versions.
+2. Run `run_all_tests.bat` from the 5.7.0 source. Preserve its pytest/coverage, Ruff, Pyright and simulation outputs. A missing tool, skipped required gate or failed check is not a pass. Build the Windows executable through the documented build script and record which tests use source versus the executable.
+3. Run a normal connected control first, with Auto-repeat disabled to keep the completed cycle observable. Let the normal strategy create a small valid paper BUY and its final native trailing SELL. Verify the connected SELL completes once, with matching execution IDs, quantities, prices, commissions and Stage 5 in the audit/history. Retain the broker execution record and audit export.
+4. For the outage case, use another paper cycle created by the normal strategy, again with Auto-repeat disabled. Wait until Stage 4 and verify in TWS/Gateway that the exact app-owned native SELL is accepted and working, with the expected account, contract, quantity, order reference, permanent ID, GTC and RTH setting. Record the local BUY quantity and pre-outage ledger. Do not create a manual order with an app reference to simulate this setup.
+5. Use the application's **Disconnect** action while leaving that native order working; confirm in TWS/Gateway that it was not cancelled. Allow the original native order to execute while the app API remains disconnected. Do not replace it with a manual SELL. If no execution occurs, this case is **not exercised**, not passed. Save the actual execution IDs, quantity, prices, timestamps and commissions from the broker. A separate repetition may include a controlled restart of the paper Gateway while the accepted order remains at IBKR; record that as a distinct scenario.
+6. Reconnect the same app instance and resume through the normal **Start strategy** action when required. Also repeat the scenario with an application exit using **Exit app and resume/recover later**, followed by restart, Connect and explicit Start. If a recovery mismatch is presented, record it, obtain a current Reconciliation probe and use **Reconcile and resume** rather than editing the database or marking the cycle handled.
+7. For a complete SELL, require all of these results: each broker execution is represented once in the local ledger; the recorded sold quantity equals the app-owned BUY quantity; actual broker fill timestamps are retained; Stage 5 and Trade history show the completed result; fees agree once authoritative commission reports have arrived; no second SELL or replacement/cancellation was submitted merely to repair the local record. Do not mark the fee comparison passed until authoritative commission reports arrive; a cached zero fee alone is not proof that the broker charged zero.
+8. Repeat Refresh/recovery and restart once more. Confirm that quantities, proceeds, fees and cycle count are unchanged, and no extra SELL was submitted. Retain the after-recovery audit and broker order/execution history so the comparison can be reproduced.
+9. Exercise a partial native fill only if the paper environment can produce and confirm it. A working remainder must remain supervised; a terminal partial SELL with no confirmed working exit must remain incomplete and require review under the existing rules. Do not treat a full fill as partial or use a manual live trade to force this test. If the paper simulator cannot produce the case, mark that integration case **not exercised** and retain its deterministic partial-fill regression as a separate result.
+
+Record each case as **passed**, **failed** or **not exercised**, with the exact source/build version and evidence location. A pass requires the complete expected result, including absence of an extra SELL. Keep account identifiers and raw private exports out of public release artifacts.
+
+The deterministic companion test must also retain the production-shaped response that triggered this defect: a completed order with status `Filled`, zero summary filled/remaining counters, and an attached exact execution carrying the actual quantity and price. A double that always sets a positive summary filled counter cannot exercise this failure. Verify adapter normalization, controller recovery, persistent ledger, commission arrival and stage/history result together; testing each layer's happy path separately is insufficient for this case.
+
+## Partial-BUY completion in 5.7.0
+
+This is an outstanding integration procedure, not an executed host-test result. Use only a separate paper account/database and the supported Windows/Python 3.14 build. Record the account mode, application version and exact order/execution evidence.
+
+- If the paper broker produces a genuine partial `MKT` BUY or a triggered native `TRAIL` BUY, verify that its remainder stays on the original order beyond three seconds and that no automatic entry/data-guard cancellation is sent. Do not treat a full fill as a partial fill; mark this case **not exercised** if the paper simulator cannot produce it.
+- Compare the actual final executions and commissions with the local ledger. A complete order must enter Stage 3 using the complete quantity and weighted average; a broker-terminal partial must use only its acquired quantity without a replacement top-up BUY.
+- In separate reproducible partial-order cases, exercise explicit Stop/close and the configured pre-close BUY cutoff. Confirm cancellation is still requested under the existing rules, Stage 2 remains supervised until terminal and fills racing cancellation are included.
+- Reconnect or restart with a working partial only when its exact broker state is available. Resume through normal reconciliation and confirm there is no cancellation based solely on elapsed first-fill age, no duplicate BUY and no duplicate execution ledger rows.
+
+Keep these paper results separate from deterministic replay evidence. Completion and prices in a paper simulator cannot guarantee live fills.

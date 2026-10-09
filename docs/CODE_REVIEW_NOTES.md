@@ -1,6 +1,6 @@
 # Maintainer review notes
 
-This file records the current review boundaries for v5.6.0. It is not a release changelog and should not be used instead of the behavioral guides.
+This file records the current review boundaries for v5.7.0. It is not a release changelog and should not be used instead of the behavioral guides.
 
 ## Source-of-truth order
 
@@ -99,7 +99,7 @@ When behavior changes:
 
 The public-repository documentation set:
 
-- keeps the application, package and current documentation version aligned at v5.6.0;
+- keeps the application, package and current documentation version aligned at v5.7.0;
 - keeps current operational material in `docs/` and superseded release notes in `docs/legacy/`;
 - treats SQLite files, backups, audit bundles, reports, captures, screenshots, and broker/account data as private unless deliberately sanitized;
 - uses the unmodified PolyForm Noncommercial License 1.0.0 text in the repository root;
@@ -169,10 +169,32 @@ A late result must not overwrite data for newer filters. Retain the existing dat
 
 The separate [GUI review](GUI_REVIEW_5_5_1.md) reports additional confirmed discrepancies and review limits. Those fifteen findings were not included in 5.5.1; their targeted corrections belong to 5.6.0 below. The archived [5.5.1 implementation report](legacy/V5_5_1_IMPLEMENTATION_TEST_REPORT.txt) retains the original executed checks.
 
-## v5.6.0 review boundary
+## Historical v5.6.0 review boundary
 
-Keep each correction tied to a numbered finding in the [5.5.1 GUI review](GUI_REVIEW_5_5_1.md) and the [5.6.0 resolution map](V5_6_0_TARGETED_GUI_FIXES.md). Guard manual input ownership against queued ATR snapshots; add the missing market-SELL confirmation without weakening worker checks; use full owned quantities and nonterminal order status in Reconciliation. Treat ticker identity and each order's lifetime as boundaries for chart data.
+Keep each correction tied to a numbered finding in the [5.5.1 GUI review](GUI_REVIEW_5_5_1.md) and the [5.6.0 resolution map](legacy/V5_6_0_TARGETED_GUI_FIXES.md). Guard manual input ownership against queued ATR snapshots; add the missing market-SELL confirmation without weakening worker checks; use full owned quantities and nonterminal order status in Reconciliation. Treat ticker identity and each order's lifetime as boundaries for chart data.
 
 Preserve historical cycle identity and saved settings, including valid zero values. Share reporting predicates across rows, totals and CSV, retain the CSV schema, and classify protective exits from execution evidence. Refresh rows after completed-history changes through a revision/invalidation signal, retaining the existing worker and avoiding repeated full-history reads while unchanged. No schema migration, new recurring disk writes, backup policy change, strategy threshold change or broker-order sequencing redesign is authorized by these GUI fixes.
 
 Version and address tests must verify the exact requested six support strings in both About > Info and README. Runtime checks, official pytest/coverage, Ruff/Pyright and Windows/native Qt checks must remain distinct from headless fallback evidence. The root implementation report records the exact final execution results and outstanding gates.
+
+## Historical v5.6.1 outage-recovery review boundary
+
+Keep temporary broker-read unavailability separate from a confirmed order, position or identity contradiction. A failed/disconnected authoritative order, execution or position request must defer recovery and preserve its saved stage; a cached empty result must not authorize continuation. Retain the existing worker, retry cadence, ownership checks and fresh-market-data gates.
+
+Previously persisted outage holds may be restored only by explicit **Reconcile and resume**, for the two exact supported errors, after audit evidence proves a waiting stage and the local order/execution ledger is settled. Revalidate current account, exact contract, orders, executions and position before persisting that restoration; reject evidence changed during the reads. Unknown submissions, working/ambiguous exits, protection transitions, missing audit evidence, identity mismatches and insufficient positions remain blocked. Do not infer the prior stage from current holdings alone or clear arbitrary manual-review flags.
+
+The supplied PURR and ASML audit bundles establish these failure patterns, but do not identify their installed source version or prove the state of other instances. Keep private account identifiers and databases out of release artifacts. Record executed tests separately from native Windows, CPython 3.14, actual pytest/coverage, Ruff/Pyright and live-broker gates.
+
+## v5.6.2 completed-order recovery review boundary
+
+Treat an existing order object and its summary fill counters as separate from the execution evidence. A cached/stale object or `Filled` object with zero counters must not suppress exact execution recovery. Keep exact recorded order identity through full `OrderRef` or the established legacy permanent-ID proof, rejecting conflicting account, contract and side evidence; neither an order status label nor a zero broker position may synthesize a fill or authorize another SELL.
+
+Verify complete and partial BUY/final-SELL/protective executions, repeated reconnect/poll/callback evidence, commission-before/after-execution, and conflict or unavailable-evidence cases through the existing ledger and order lifecycle. New completed-order counter normalization must require fully matching attached identities and complete quantity; retain the separate recent-execution fallback’s legacy compatibility. Check valid execution timestamps and consume validated pending commissions only when their matching execution is recorded. Local completion must follow the reconciled quantity, and successful recovery status must not hide a remaining fill discrepancy. A partial SELL without a confirmed working exit remains incomplete and requires review, subject to existing explicit close workflows. Preserve the 5.6.1 incomplete-read deferral, fresh-market-data guard and transmission-uncertainty handling. No strategy redesign, schema migration, new worker, timer change or backup-policy change belongs in this correction.
+
+The user identified the supplied Stage-4 incident as occurring on 5.6.1. Keep account identifiers and raw audit databases out of release artifacts. Record actual replay/test results and review findings in the root report, separate from unavailable Windows, Python 3.14, native Qt and live-broker gates.
+
+## v5.7.0 partial-BUY policy review boundary
+
+Limit executable changes to removal of the controller's partial-fill timeout and post-fill entry/data-guard cancellation. A positive partial fill must leave the original MKT or triggered TRAIL BUY supervised in Stage 2, with no replacement top-up. Retain broker-terminal handling, identity and quantity checks, late-execution/commission accounting, explicit Stop/close, configured pre-close BUY cancellation and exposure-conflict handling. New-order guards, SELL behavior and recovery are outside this change.
+
+The accompanying strategy edit is docstring-only; GUI edits are version strings. Replay the supplied audit/capture boundary using sanitized identities, and distinguish observed data from controlled later executions. Record executed results and tool/platform limitations in the root report. No database, dependency, polling/backup cadence, or GUI layout change belongs in this release.

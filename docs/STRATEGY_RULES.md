@@ -1,6 +1,6 @@
 # Strategy rules
 
-This document is the current functional description of the five-stage strategy in v5.6.0. It describes application decisions; IBKR remains authoritative for accepted order state and execution.
+This document is the current functional description of the five-stage strategy in v5.7.0. It describes application decisions; IBKR remains authoritative for accepted order state and execution.
 
 ## Scope and invariants
 
@@ -76,7 +76,7 @@ A quantity below one blocks order submission. Before intent is stored, the live 
 - `buy_rebound_trail_pct > 0`: submit a native BUY `TRAIL` order.
 - `buy_rebound_trail_pct == 0`: submit a market BUY immediately after the initial-drop condition.
 
-After the first positive BUY fill, the controller starts a fixed 3.0-second grace period so the triggered marketable order can complete an ordinary multi-print execution. No cancellation is sent solely because the first broker update is partial. If the order remains nonterminal after the grace period, or an enabled RTH, data, pre-close, volatility, minimum-price, previous-close-gap, or spread safety condition becomes unsafe, cancellation of the unfilled remainder is requested once. The timer starts at the first persisted fill and is not reset by later partial progress. Every later cumulative fill and execution callback is reconciled before and during that cancellation race. Stage 3 begins only after IBKR reports `Filled`, `Cancelled`, `ApiCancelled`, `Inactive`, or `Rejected`, using the final app-owned quantity, weighted average BUY price, and all commissions received so far. A substantive terminal rejection after a positive fill stops automatic repetition while management of the acquired shares continues.
+After the first positive BUY fill, the controller keeps the original marketable BUY working until IBKR reports a terminal status. This covers direct `MKT` BUYs and triggered native `TRAIL` BUYs. There is no partial-fill completion timeout, and changes in quote freshness, data type, RTH availability, volatility, minimum price, previous-close gap or spread do not themselves cancel the remainder. Explicit operator Stop/close requests and the separately configured pre-close BUY cancellation remain active. Every later cumulative fill and execution callback is reconciled, including fills racing an explicit cancellation. Stage 3 begins only after IBKR reports `Filled`, `Cancelled`, `ApiCancelled`, `Inactive`, or `Rejected`, using the final app-owned quantity, weighted average BUY price, and all commissions received so far. A terminal partial does not create a top-up order. A substantive terminal rejection after a positive fill stops automatic repetition while management of the acquired shares continues.
 
 An unfilled BUY that becomes `Inactive` or `Rejected`, or reaches a terminal state with a substantive broker rejection, stops the cycle in `ERROR` for manual review. It is not automatically retried. An ordinary confirmed cancellation without a substantive rejection still resets Stage 2 to Stage 1.
 
@@ -236,7 +236,7 @@ Reviewed guards can be edited during an active cycle. Edits are saved as explici
 | Contract/account, entry budget/reinvestment after entry, parameters embedded in working native orders | Existing stage restrictions remain. A draft edit does not resize, modify, cancel, replace, or reprice a working order. |
 | Optional close-before-RTH liquidation policy | Existing restrictions remain; Stage-4 changes that would change cancellation/liquidation of a working SELL stay locked. |
 
-A working Stage-2 BUY retains its original partial-fill, safety-cancellation, and cutoff policy. A working Stage-4 SELL also retains its submitted terms. Quote-guard changes clear any first Stage-3 confirmation, so the next SELL requires fresh confirmation under the revised policy. BUY-only edits cannot retrospectively alter an already purchased position. Previously saved edits survive an application restart; reverting an edit clears the pending override. No change is made to the default values or trading formulas.
+A working Stage-2 BUY uses the current partial-fill completion policy and retains its configured pre-close cutoff. Pending next-order edits do not rewrite the working order. A working Stage-4 SELL also retains its submitted terms. Quote-guard changes clear any first Stage-3 confirmation, so the next SELL requires fresh confirmation under the revised policy. BUY-only edits cannot retrospectively alter an already purchased position. Previously saved edits survive an application restart; reverting an edit clears the pending override. No change is made to the default values or trading formulas.
 
 ## Stop behavior
 

@@ -158,16 +158,16 @@ class GuardIdentityTests(unittest.TestCase):
         self.c.price_snapshot["strategy_price_usable"] = False
         self.assertIn("not usable", self.c._stale_data_guard_message_for_buy(self.cycle))
 
-    def test_partial_buy_does_not_cancel_only_because_quote_was_already_consumed(self):
+    def test_working_quote_check_ignores_consumption_but_retains_actual_age(self):
         self.c.price_snapshot["strategy_price_usable"] = False
-        self.assertIsNone(self.c._buy_partial_market_session_safety_reason(self.cycle))
+        self.assertIsNone(self.c._stale_data_guard_message_for_buy(self.cycle, for_working_order=True))
         self.c.price_snapshot["field_update_age_seconds"]["bid"] = 60
-        self.assertEqual(self.c._buy_partial_market_session_safety_reason(self.cycle)[0], "stale_data")
+        self.assertIn("independent bid/ask", self.c._stale_data_guard_message_for_buy(self.cycle, for_working_order=True))
 
-    def test_partial_buy_independent_spread_guard(self):
+    def test_new_buy_spread_guard_is_independent_of_stale_guard(self):
         self.cycle.stale_data_guard_enabled = False
         self.c.price_snapshot["fields"].update(bid=99, ask=101)
-        self.assertEqual(self.c._buy_partial_market_session_safety_reason(self.cycle)[0], "spread")
+        self.assertIn("Spread guard blocked BUY", self.c._spread_guard_message_for_buy(self.cycle))
 
     def test_edit_does_not_advance_cached_selected_price(self):
         self.cycle.last_price = 97

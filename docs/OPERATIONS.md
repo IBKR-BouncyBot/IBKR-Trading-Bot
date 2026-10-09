@@ -1,6 +1,6 @@
 # Operations guide
 
-This guide describes the normal operator workflow for v5.6.0. It does not replace the broker’s API documentation or account controls.
+This guide describes the normal operator workflow for v5.7.0. It does not replace the broker’s API documentation or account controls.
 
 ## Before starting
 
@@ -101,6 +101,10 @@ Operational cadence is intentionally different by condition:
 
 A reduction in audit rows does not mean a guard is evaluated less often. Trading safeguards still run on every normal cadence. Order rejections, terminal partials, quantity mismatches, storage/worker faults, reconciliation uncertainty, and failed confirmed-SELL revalidation remain immediate. The structured raw JSON attached to condition summaries records counts, duration, latest context, reason distribution, and maximum observed numeric metrics.
 
+## Check fills after an outage
+
+A native order may execute at IBKR while the application is disconnected. After recovery, compare the exact order and executions with the local cycle's recorded quantity and result. Version 5.6.2 recovers matching executions even when an order object's fill counters are stale or zero. A complete final SELL can then finish Stage 5; unresolved fill evidence stays under recovery checks. Never send another SELL based only on a stale local Stage-4 display. If the evidence is missing or conflicting, preserve the audit bundle and broker execution history; see [completed-order recovery](legacy/V5_6_2_COMPLETED_ORDER_RECOVERY.md).
+
 ## Expected pauses versus recovery errors
 
 Normal configured pauses, such as ATR warmup, closed RTH, session windows, stale data, or a hard-risk limit, are caution states. They do not mean the local database and broker disagree. Reconciliation therefore disables Reconcile-and-resume, Stop, Cancel, Sell, Leave-working, and Mark-handled actions during an ordinary guard/strategy wait; read-only **Refresh from IBKR/TWS** and audit export remain available.
@@ -189,7 +193,7 @@ Closing the main window invokes the same stop-choice path and uses the same pers
 The application distinguishes two failures:
 
 - **Local socket loss:** the application can no longer reach TWS/Gateway. It pauses, discards subscription handles, and retries the same endpoint every 10 seconds indefinitely. Manual **Disconnect** or application shutdown stops those retries.
-- **Upstream IBKR loss while Gateway/TWS remains local:** broker code 1100 or 2110 invalidates all quote freshness and pauses strategy advancement, app-order polling, and new order submission without claiming that the local process disconnected. The status bar shows **Gateway only**. Contract search, ticker confirmation, strategy start, broker refresh, cancellation, and market-close commands are rejected until the upstream link is ready; the workflow bar disables actions that require the broker session.
+- **Upstream IBKR loss while Gateway/TWS remains local:** broker code 1100 or 2110 invalidates all quote freshness and pauses strategy advancement, app-order polling, and new order submission without claiming that the local process disconnected. The status bar shows **Waiting for IBKR**. Contract search, ticker confirmation, strategy start, broker refresh, cancellation, and market-close commands are rejected until the upstream link is ready; the workflow bar disables actions that require the broker session.
 
 On restoration:
 
@@ -197,6 +201,10 @@ On restoration:
 - **1102 (data maintained):** existing handles stay in place, but their old update identity is invalidated;
 - both paths reconcile app-owned open orders and recent executions before ordinary processing resumes;
 - both paths require new post-recovery price-field updates before a selected-price basis can advance Stage 1/3 or enter ATR/volatility history; a callback for another field, a size, or a timestamp does not freshen cached Last/bid/ask values.
+
+During an active cycle, temporary local loss shows amber **Reconnecting**, upstream loss shows amber **Waiting for IBKR**, and pending broker reconciliation shows amber **Reconciling**. The affected workflow cards show **Waiting**, and Trading shows **Paused: reconnecting** or **Paused: reconciling**. Actual manual-review and trading-risk faults remain red.
+
+An incomplete recovery read keeps the saved stage intact and shows that broker recovery is waiting for complete data while trading remains paused. Timeouts, request errors, a connection dropping during a read, and managed accounts not yet populated are retried through the existing recovery path. A failed request is not treated as an empty broker result.
 
 Native orders already accepted by IBKR are not cancelled merely because the connection is interrupted. They may continue at the broker. A BUY fill received only after recovery can delay application-side follow-up, including protective SELL placement, until broker reconciliation succeeds.
 
@@ -213,12 +221,16 @@ Automatic process replacement cannot log into or restart TWS/IB Gateway, approve
 After any outage or restart:
 
 1. Inspect app-owned orders, fills, and positions directly in TWS/Gateway.
-2. Confirm the Connection indicator no longer shows **Gateway only** or **Reconciling**.
+2. Confirm the Connection indicator no longer shows **Waiting for IBKR** or **Reconciling**.
 3. Confirm a new actual market update has arrived and the Data tooltip no longer reports a pending post-recovery update. A green Connection box alone does not establish data readiness.
 4. Open Reconciliation and press **Refresh from IBKR/TWS**.
 5. Confirm the status says **Current**, then compare the local cycle, order references, fills, position, and executions.
-6. Use **Reconcile and resume** only when the comparison is understood. Broker-dependent resolution actions disable again when the probe becomes stale.
+6. Use **Reconcile and resume** only when the comparison is understood. For the two supported legacy outage holds, this action rechecks prior waiting-stage audit evidence, the settled local ledger and fresh broker facts before restoring monitoring; see [legacy outage holds](RECOVERY_AND_FAILSAFE.md#legacy-outage-holds). Broker-dependent resolution actions disable again when the probe becomes stale.
 7. Use **Mark manually handled** only for the current recovery cycle when its position/order was resolved outside the application. Use the separate **Review historical blockers** action for a completed/stopped historical cycle, after verifying its exact IBKR orders, executions and remaining shares. The historical acknowledgement preserves the active cycle and requires a separate explicit Start afterward; it does not cancel orders, sell shares or repair missing fills.
+
+If an explicit **Reconcile and resume** attempt encounters another incomplete broker read, the request stays in memory for that same cycle while the existing recovery retries run. It ends when the attempt finishes or the operator disconnects; it does not survive an application restart or authorize another cycle.
+
+Do not edit the database or use **Mark manually handled** merely to bypass an outage hold. If a current comparison still cannot resume, retain a new audit bundle with the exact status text; unknown submissions and unresolved positions/orders require separate investigation.
 
 Raw ATR observation history starts empty after an application or Windows restart. A compatible, validated saved RTH ATR estimate can supply the starting value while new bars are collected; it cannot replace fresh quote evidence or broker reconciliation. A stale active cycle is intentionally held for explicit reconciliation. The recovery probe itself is point-in-time: normal terminal order polls can retire an older matching probe row; after any TWS-side change, use **Refresh from IBKR/TWS** to obtain a newer authoritative probe.
 
@@ -226,9 +238,9 @@ Raw ATR observation history starts empty after an application or Windows restart
 
 Before unattended live use, reproduce the Stage-2 partial-BUY and field-level Stage-3 gates in paper mode with a liquid and a thinly traded instrument:
 
-- verify a normal multi-execution BUY can finish during the 3.0-second grace without an unnecessary cancellation;
-- verify a still-working remainder receives one cancellation request after the grace expires;
-- verify RTH closure, stale/non-live data, the configured pre-close cutoff, excessive volatility, and an unavailable/crossed/excessive spread bypass the remaining grace;
+- verify a multi-execution marketable BUY remains working beyond three seconds without automatic remainder cancellation;
+- verify stale/non-live quotes and changed entry guards do not cancel the already partially filled order;
+- verify explicit Stop/close and the separately configured pre-close cutoff still cancel the remainder under their existing rules;
 - verify every fill received before or during the cancellation race is included in the final Stage-3 quantity and average price;
 - verify a wide quote does not arm the final SELL even when `marketPrice` or Last is above the trigger;
 - verify a missing bid or independently stale quote side keeps Stage 3 waiting;
@@ -292,7 +304,7 @@ Reviewed guards can be edited during an active cycle. Edits are saved as explici
 | Contract/account, entry budget/reinvestment after entry, parameters embedded in working native orders | Existing stage restrictions remain. A draft edit does not resize, modify, cancel, replace, or reprice a working order. |
 | Optional close-before-RTH liquidation policy | Existing restrictions remain; Stage-4 changes that would change cancellation/liquidation of a working SELL stay locked. |
 
-A working Stage-2 BUY retains its original partial-fill, safety-cancellation, and cutoff policy. A working Stage-4 SELL also retains its submitted terms. Quote-guard changes clear any first Stage-3 confirmation, so the next SELL requires fresh confirmation under the revised policy. BUY-only edits cannot retrospectively alter an already purchased position. Previously saved edits survive an application restart; reverting an edit clears the pending override. No change is made to the default values or trading formulas.
+A working Stage-2 BUY uses the current partial-fill completion policy and retains its configured pre-close cutoff. Pending next-order edits do not rewrite the working order. A working Stage-4 SELL also retains its submitted terms. Quote-guard changes clear any first Stage-3 confirmation, so the next SELL requires fresh confirmation under the revised policy. BUY-only edits cannot retrospectively alter an already purchased position. Previously saved edits survive an application restart; reverting an edit clears the pending override. No change is made to the default values or trading formulas.
 
 ## GUI and exit choices
 

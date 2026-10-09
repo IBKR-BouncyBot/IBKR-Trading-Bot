@@ -363,11 +363,15 @@ def test_execution_identity_aggregation_and_recording(controller_module: Any, tm
     assert controller._execution_matches_order(cycle, {"side": "BUY", "perm_id": 202}, "BUY") is True
     assert controller._execution_matches_order(cycle, {"side": "BUY", "perm_id": "bad"}, "BUY") is False
 
+    # A malformed execution for this exact order makes the batch incomplete;
+    # do not infer a settled quantity by silently dropping that evidence.
+    assert controller._aggregate_recovered_executions(cycle, "BUY") == (0, 0.0, 0.0, [])
+    adapter.executions = [first, second, wrong_side]
     quantity, average, commission, rows = controller._aggregate_recovered_executions(cycle, "BUY")
     assert quantity == 2
     assert average == pytest.approx(99.0)
     assert commission == pytest.approx(0.5)
-    assert len(rows) == 2
+    assert len(rows) == 1
 
     controller._record_recovered_executions(cycle, [first, second], "BUY")
     controller._record_recovered_executions(cycle, [first], "BUY")

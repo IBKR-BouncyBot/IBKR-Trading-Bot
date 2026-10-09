@@ -110,6 +110,7 @@ def test_risk_guard_max_cycles_counts_total_not_only_today(tmp_path, monkeypatch
 def test_auto_repeat_stops_when_total_max_cycles_reached(tmp_path, monkeypatch):
     controller = _controller(tmp_path, monkeypatch)
     controller.adapter = RthFakeAdapter(is_open=True)
+    controller.connected = True
     controller.connection.account = "SIM"
     controller.contract = controller.adapter.qualify_stock("AAPL", "SMART", "USD", con_id=123)
     settings = StrategySettings(

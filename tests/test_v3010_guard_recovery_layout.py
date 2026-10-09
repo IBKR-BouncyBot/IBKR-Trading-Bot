@@ -160,6 +160,7 @@ def test_terminal_sell_poll_retires_older_recovery_probe_order(tmp_path, monkeyp
     storage = BotStorage(tmp_path / "bot_state.sqlite")
     controller = controller_module.TradingController(storage=storage)
     controller.adapter = RthFakeAdapter(is_open=True)
+    controller.connected = True
     controller.connection.account = "SIM"
     controller.contract = controller.adapter.qualify_stock("AAPL", "SMART", "USD", con_id=123)
     settings = _settings(

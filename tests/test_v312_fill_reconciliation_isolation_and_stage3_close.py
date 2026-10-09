@@ -262,7 +262,7 @@ def test_terminal_cumulative_fill_is_not_double_counted_by_late_callbacks(tmp_pa
     assert sum(float(row["commission"]) for row in rows) == pytest.approx(0.30)
 
 
-def test_failed_partial_buy_cancel_is_retried_without_losing_fill_tracking(tmp_path, monkeypatch) -> None:
+def test_failed_configured_partial_buy_cancel_is_retried_without_losing_fill_tracking(tmp_path, monkeypatch) -> None:
     controller, broker = _controller(tmp_path, monkeypatch)
     cycle = _buy_cycle(controller, broker, quantity=10)
     partial = broker.fill_order(
@@ -281,19 +281,20 @@ def test_failed_partial_buy_cancel_is_retried_without_losing_fill_tracking(tmp_p
     assert controller.active_cycle.buy_remainder_cancel_requested is False
     assert broker.cancelled_orders == []
 
-    controller.active_cycle.buy_filled_at = (
-        dt.datetime.now(dt.timezone.utc)
-        - dt.timedelta(seconds=controller.BUY_PARTIAL_FILL_GRACE_SECONDS + 1.0)
-    ).isoformat()
-    controller.storage.upsert_cycle(controller.active_cycle)
+    controller.active_cycle.session_timing_guard_enabled = True
+    controller.active_cycle.cancel_buy_before_close_minutes = 5
+    controller._session_minutes_from_rth_status = lambda: {
+        "available": True, "minutes_to_close": 2.0,
+    }
     broker.fail_operations.add("cancel")
-    controller._handle_buy_order_poll(controller.active_cycle, partial)
+    controller._cancel_buy_before_close_if_needed(controller.active_cycle)
 
     assert controller.active_cycle.buy_remainder_cancel_requested is False
+    assert controller.active_cycle.buy_filled_qty == 4
     assert broker.cancelled_orders == []
 
     broker.fail_operations.remove("cancel")
-    controller._handle_buy_order_poll(controller.active_cycle, partial)
+    controller._cancel_buy_before_close_if_needed(controller.active_cycle)
 
     assert controller.active_cycle.buy_remainder_cancel_requested is True
     assert broker.cancelled_orders == [cycle.buy_order_ref]
